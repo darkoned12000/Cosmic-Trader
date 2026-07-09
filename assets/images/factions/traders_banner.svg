@@ -1,0 +1,8 @@
+<svg width="800" height="200" viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="200" fill="#0A1F3D"/>
+  <rect x="50" y="30" width="700" height="140" fill="#B8860B" rx="10"/>
+  <text x="400" y="95" font-family="Arial Black, sans-serif" font-size="46" fill="#0A1F3D" text-anchor="middle" font-weight="bold">TRADERS GUILD</text>
+  <text x="400" y="135" font-family="Arial" font-size="19" fill="#0A1F3D" text-anchor="middle">TRADE TURNS THE STARS</text>
+  <!-- Simple ship icon -->
+  <polygon points="680,80 720,80 730,110 670,110" fill="#0A1F3D"/>
+</svg>

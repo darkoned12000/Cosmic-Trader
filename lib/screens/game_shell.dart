@@ -1,0 +1,537 @@
+import 'package:flutter/material.dart';
+import 'package:tradewars_2050/core/tw_layout.dart';
+import 'package:tradewars_2050/data/models/game_settings.dart';
+import 'package:tradewars_2050/data/models/npc_ship.dart';
+import 'package:tradewars_2050/data/models/player.dart';
+import 'package:tradewars_2050/data/storage/npc_storage.dart';
+import 'package:tradewars_2050/data/storage/player_storage.dart';
+import 'package:tradewars_2050/data/storage/settings_storage.dart';
+import 'package:tradewars_2050/data/storage/universe_storage.dart';
+import 'package:tradewars_2050/screens/computer_screen.dart';
+import 'package:tradewars_2050/screens/galaxy_map.dart';
+import 'package:tradewars_2050/screens/login_screen.dart';
+import 'package:tradewars_2050/screens/port_screen.dart';
+import 'package:tradewars_2050/screens/sector_view.dart';
+import 'package:tradewars_2050/screens/settings_screen.dart';
+import 'package:tradewars_2050/screens/ship_status.dart';
+import 'package:tradewars_2050/services/audio_service.dart';
+import 'package:tradewars_2050/services/game_tick_service.dart';
+import 'package:tradewars_2050/widgets/combat_screen.dart';
+import 'package:tradewars_2050/widgets/equalizer_widget.dart';
+
+class GameShell extends StatefulWidget {
+  final Player initialPlayer;
+
+  const GameShell({super.key, required this.initialPlayer});
+
+  @override
+  State<GameShell> createState() => _GameShellState();
+}
+
+class _GameShellState extends State<GameShell> {
+  late Player _player;
+  int _currentIndex = 0;
+  Key _universeKey = UniqueKey();
+  Key _computerKey = UniqueKey();
+  GameSettings _settings = GameSettings.defaults();
+  int _playerUpdateVersion = 0;
+  List<NpcShip> _npcs = [];
+  final GameTickService _tickService = GameTickService(
+    tickInterval: const Duration(seconds: 30),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _player = widget.initialPlayer;
+    _loadSettings();
+    _loadNpcs();
+    _tickService.onTickComplete = (_) => _reloadNpcs();
+    _tickService.onTickError = (error) {
+      debugPrint('[GameShell] Tick error: $error');
+    };
+    _tickService.onNpcAttacksPlayer = _handleNpcAttack;
+    _tickService.start();
+    // Mark the tick service with the FedSpace boundary after settings load
+    _loadSettings().then((_) {
+      _tickService.fedSpaceEnd = _settings.fedSpaceEnd;
+    });
+  }
+
+  @override
+  void dispose() {
+    _tickService.stop();
+    super.dispose();
+  }
+
+  Future<void> _loadNpcs() async {
+    try {
+      final loaded = await NpcStorage().loadAll();
+      if (mounted) setState(() => _npcs = loaded);
+    } catch (_) {}
+  }
+
+  Future<void> _reloadNpcs() async {
+    try {
+      final loaded = await NpcStorage().loadAll();
+      if (mounted) setState(() => _npcs = loaded);
+    } catch (_) {}
+  }
+
+  void _handleNpcAttack(NpcAttackEvent event) {
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CombatScreen(
+          player: event.player,
+          npc: event.npc,
+          sectorWarps: event.sectorWarps,
+          onCombatEnd: (updatedPlayer, updatedNpc) {
+            _updatePlayer(updatedPlayer);
+            final idx = _npcs.indexWhere((n) => n.id == updatedNpc.id);
+            if (idx >= 0) {
+              setState(() => _npcs[idx] = updatedNpc);
+            }
+            NpcStorage().saveAll(_npcs);
+            GameTickService.unlockNpc(updatedNpc.id);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadSettings() async {
+    final saved = await SettingsStorage.instance.load();
+    if (saved != null && mounted) {
+      setState(() => _settings = saved);
+    }
+  }
+
+  Future<void> _handleRegenerateUniverse(GameSettings settings) async {
+    try {
+      await UniverseStorage.instance.deleteUniverse();
+      final actualSettings =
+          await UniverseStorage.instance.generateWithSettings(settings);
+      await SettingsStorage.instance.save(actualSettings);
+      if (settings.deleteAllPlayersOnRegen) {
+        await PlayerStorage.instance.savePlayers([]);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('All player accounts deleted'),
+              backgroundColor: Colors.orange.shade800,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          );
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (route) => false,
+          );
+        }
+        return;
+      }
+      setState(() {
+        _settings = actualSettings;
+        if (settings.resetPlayersOnRegen) {
+          _player = _player.copyWith(
+            currentSectorId: 1,
+            turns: settings.initTurns,
+            maxTurns: settings.initTurns,
+            credits: settings.initCredits,
+            maxCargo: settings.initHolds,
+            cargoSize: settings.initHolds,
+            drones: settings.initDrones,
+            maxDrones: settings.initDrones,
+            hull: 100,
+            shields: 100,
+            cargo: const {},
+            cargoUsed: 0,
+          );
+        }
+        _universeKey = UniqueKey();
+      });
+      _updatePlayer(_player);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Universe regenerated successfully'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('Failed to regenerate universe: $e');
+      }
+    }
+  }
+
+  Future<void> _updatePlayer(Player updated) async {
+    final version = ++_playerUpdateVersion;
+    try {
+      await PlayerStorage.instance.savePlayer(updated);
+      if (mounted && version == _playerUpdateVersion) {
+        setState(() => _player = updated);
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('Failed to save player: $e');
+      }
+    }
+  }
+
+  Future<void> _handleSettingsChanged(GameSettings updated) async {
+    await SettingsStorage.instance.save(updated);
+    if (mounted) {
+      setState(() => _settings = updated);
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  void _onSectorSelected(int sectorId) {
+    setState(() {
+      _player = _player.copyWith(currentSectorId: sectorId);
+    });
+    _updatePlayer(_player);
+    setState(() => _currentIndex = 0);
+  }
+
+  Future<void> _handleLogout() async {
+    await PlayerStorage.instance.savePlayer(_player);
+    await PlayerStorage.instance.clearPlayer();
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth > TWLayout.largeScreenMinWidth) {
+          return _buildLargeScreenLayout(constraints.maxWidth);
+        }
+        return _buildSmallScreenLayout();
+      },
+    );
+  }
+
+  Widget _buildSmallScreenLayout() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Tradewars 2050'),
+        actions: [
+          ListenableBuilder(
+            listenable: Listenable.merge([
+              AudioService.isMusicEnabled,
+              AudioService.isPlaying,
+            ]),
+            builder: (context, _) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  EqualizerWidget(
+                    bandCount: 14,
+                    barWidth: 2.5,
+                    barSpacing: 1.5,
+                    height: 18,
+                  ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => AudioService.instance.toggleMusicEnabled(),
+                    child: Icon(
+                      AudioService.isMusicEnabled.value
+                          ? Icons.music_note_rounded
+                          : Icons.music_off_rounded,
+                      size: 20,
+                      color: AudioService.isMusicEnabled.value
+                          ? null
+                          : Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.4),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(
+              _currentIndex == 5
+                  ? Icons.settings_rounded
+                  : Icons.settings_outlined,
+            ),
+            onPressed: () => setState(() => _currentIndex = 5),
+            tooltip: 'Settings',
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout_rounded),
+            onPressed: _handleLogout,
+            tooltip: 'Logout',
+          ),
+        ],
+      ),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          SectorView(
+            key: _universeKey,
+            npcs: _npcs,
+            player: _player,
+            onPlayerUpdate: _updatePlayer,
+            onRefreshNpcs: _reloadNpcs,
+            onOpenPort: () => setState(() => _currentIndex = 4),
+            fedSpaceEnd: _settings.fedSpaceEnd,
+          ),
+          GalaxyMap(
+            key: _universeKey,
+            npcs: _npcs,
+            currentSectorId: _player.currentSectorId,
+            onSectorSelected: _onSectorSelected,
+          ),
+          ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
+          ComputerScreen(
+            key: _universeKey,
+            player: _player,
+            onPlayerUpdate: _updatePlayer,
+          ),
+          PortScreen(
+            key: _universeKey,
+            player: _player,
+            onPlayerUpdate: _updatePlayer,
+          ),
+          SettingsScreen(
+            key: ValueKey('settings_${_settings.seed}'),
+            currentSettings: _settings,
+            onRegenerate: _handleRegenerateUniverse,
+            onSettingsChanged: _handleSettingsChanged,
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex < 5 ? _currentIndex : 0,
+        onDestinationSelected: (index) => setState(() {
+          _currentIndex = index;
+          if (index == 3) _computerKey = UniqueKey();
+          _tickService.playerDocked = (index == 4);
+        }),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.location_on_outlined),
+            selectedIcon: Icon(Icons.location_on_rounded),
+            label: 'Sector',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map_rounded),
+            label: 'Galaxy Map',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.rocket_launch_outlined),
+            selectedIcon: Icon(Icons.rocket_launch_rounded),
+            label: 'Ship',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.computer_outlined),
+            selectedIcon: Icon(Icons.computer_rounded),
+            label: 'Computer',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.store_outlined),
+            selectedIcon: Icon(Icons.store_rounded),
+            label: 'Port',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLargeScreenLayout(double maxWidth) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Tradewars 2050'),
+        actions: [
+          ListenableBuilder(
+            listenable: Listenable.merge([
+              AudioService.isMusicEnabled,
+              AudioService.isPlaying,
+            ]),
+            builder: (context, _) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  EqualizerWidget(
+                    bandCount: 14,
+                    barWidth: 2.5,
+                    barSpacing: 1.5,
+                    height: 18,
+                  ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => AudioService.instance.toggleMusicEnabled(),
+                    child: Icon(
+                      AudioService.isMusicEnabled.value
+                          ? Icons.music_note_rounded
+                          : Icons.music_off_rounded,
+                      size: 20,
+                      color: AudioService.isMusicEnabled.value
+                          ? null
+                          : Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.4),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: Row(
+        children: [
+          // Left Navigation Rail
+          IntrinsicWidth(
+            child: Container(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: NavigationRail(
+                      minWidth: 88,
+                      selectedIndex: _currentIndex < 5 ? _currentIndex : 0,
+                      onDestinationSelected: (index) => setState(() {
+                        _currentIndex = index;
+                        if (index == 3) _computerKey = UniqueKey();
+                      }),
+                      labelType: NavigationRailLabelType.all,
+                      destinations: const [
+                        NavigationRailDestination(
+                          icon: Icon(Icons.location_on_outlined),
+                          selectedIcon: Icon(Icons.location_on_rounded),
+                          label: Text('Sector'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.map_outlined),
+                          selectedIcon: Icon(Icons.map_rounded),
+                          label: Text('Galaxy Map'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.rocket_launch_outlined),
+                          selectedIcon: Icon(Icons.rocket_launch_rounded),
+                          label: Text('Ship'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.computer_outlined),
+                          selectedIcon: Icon(Icons.computer_rounded),
+                          label: Text('Computer'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.store_outlined),
+                          selectedIcon: Icon(Icons.store_rounded),
+                          label: Text('Port'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  // Bottom buttons (Settings + Logout)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: TextButton.icon(
+                      onPressed: () => setState(() => _currentIndex = 5),
+                      icon: Icon(
+                        _currentIndex == 5
+                            ? Icons.settings_rounded
+                            : Icons.settings_outlined,
+                        size: 18,
+                      ),
+                      label: const Text('Settings'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: TextButton.icon(
+                      onPressed: _handleLogout,
+                      icon: const Icon(Icons.logout_rounded, size: 18),
+                      label: const Text('Logout'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const VerticalDivider(thickness: 1, width: 1),
+
+          // Main Content Area
+          Expanded(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: [
+                SectorView(
+                  key: _universeKey,
+                  npcs: _npcs,
+                  player: _player,
+                  onPlayerUpdate: _updatePlayer,
+                  onRefreshNpcs: _reloadNpcs,
+                  onOpenPort: () => setState(() => _currentIndex = 4),
+                  fedSpaceEnd: _settings.fedSpaceEnd,
+                ),
+                GalaxyMap(
+                  key: _universeKey,
+                  npcs: _npcs,
+                  currentSectorId: _player.currentSectorId,
+                  onSectorSelected: _onSectorSelected,
+                ),
+                ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
+                ComputerScreen(
+                  key: _computerKey,
+                  player: _player,
+                  onPlayerUpdate: _updatePlayer,
+                ),
+                PortScreen(
+                  key: _universeKey,
+                  player: _player,
+                  onPlayerUpdate: _updatePlayer,
+                ),
+                SettingsScreen(
+                  key: ValueKey('settings_${_settings.seed}'),
+                  currentSettings: _settings,
+                  onRegenerate: _handleRegenerateUniverse,
+                  onSettingsChanged: _handleSettingsChanged,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

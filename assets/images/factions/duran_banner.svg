@@ -1,0 +1,9 @@
+<svg width="800" height="200" viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="200" fill="#2C0A0A"/>
+  <rect x="50" y="30" width="700" height="140" fill="#8B0000" rx="10"/>
+  <text x="400" y="95" font-family="Arial Black, sans-serif" font-size="52" fill="#FF4500" text-anchor="middle" font-weight="bold">DURAN HEGEMONY</text>
+  <text x="400" y="135" font-family="Arial" font-size="18" fill="#FFD700" text-anchor="middle">CONQUER OR BE CONQUERED</text>
+  <!-- Chitin symbol placeholder -->
+  <circle cx="120" cy="100" r="45" fill="#1A0000"/>
+  <polygon points="120,65 135,95 165,95 140,115 150,145 120,125 90,145 100,115 75,95 105,95" fill="#FF4500"/>
+</svg>
