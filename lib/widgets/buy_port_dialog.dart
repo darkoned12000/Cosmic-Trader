@@ -17,6 +17,7 @@ class BuyPortDialog extends StatefulWidget {
   final VoidCallback onCancel;
 
   const BuyPortDialog({
+    super.key,
     required this.port,
     required this.player,
     required this.onPlayerUpdate,

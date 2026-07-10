@@ -373,8 +373,8 @@ class _TacticalMapPainter extends CustomPainter {
           startAngle: 0.0,
           endAngle: math.pi / 4, // 45 degree cone
           colors: [
-            const Color(0xFF00FFFF).withOpacity(0.0),
-            const Color(0xFF00FFFF).withOpacity(0.15),
+            const Color(0xFF00FFFF).withValues(alpha: 0.0),
+            const Color(0xFF00FFFF).withValues(alpha: 0.15),
           ],
           transform: GradientRotation(sweepAngle - math.pi / 4),
         ).createShader(Rect.fromCircle(center: center, radius: radius * 0.92));
@@ -383,7 +383,7 @@ class _TacticalMapPainter extends CustomPainter {
 
       // Sweep Line
       final sweepLinePaint = Paint()
-        ..color = const Color(0xFF00FFFF).withOpacity(0.6)
+        ..color = const Color(0xFF00FFFF).withValues(alpha: 0.6)
         ..strokeWidth = 2;
       canvas.drawLine(
           center,
@@ -473,7 +473,7 @@ class _TacticalMapPainter extends CustomPainter {
         // IMPROVEMENT: Highlight selected target warp line
         final linePaint = Paint()
           ..color = isTarget
-              ? const Color(0xFF00FF41).withOpacity(0.8)
+              ? const Color(0xFF00FF41).withValues(alpha: 0.8)
               : const Color(0xFF00FFFF).withValues(alpha: 0.3)
           ..strokeWidth = isTarget ? 3.0 : 1.5
           ..style = PaintingStyle.stroke;
@@ -589,7 +589,7 @@ class _TacticalMapPainter extends CustomPainter {
     if (isTarget) {
       borderColor = const Color(0xFF00FF41);
       final glowPaint = Paint()
-        ..color = const Color(0xFF00FF41).withOpacity(0.3)
+        ..color = const Color(0xFF00FF41).withValues(alpha: 0.3)
         ..style = PaintingStyle.fill;
       canvas.drawCircle(pos, nodeRadius + 8, glowPaint);
     } else if (isCurrent) {

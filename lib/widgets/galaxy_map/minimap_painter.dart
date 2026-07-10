@@ -87,5 +87,5 @@ class MinimapPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(MinimapPainter old) => true;
+  bool shouldRepaint(MinimapPainter oldDelegate) => true;
 }

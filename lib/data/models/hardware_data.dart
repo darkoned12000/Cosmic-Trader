@@ -102,7 +102,7 @@ final moduleDefs = <ModuleDef>[
     name: 'Auto-Repair System',
     description: 'Nanite drones repair hull damage over time',
     icon: Icons.healing_rounded,
-    statLine: (l) => 'Hull Regen +${l}/turn',
+    statLine: (l) => 'Hull Regen +$l/turn',
   ),
   ModuleDef(
     id: 'shieldCapacitor',

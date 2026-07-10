@@ -35,7 +35,7 @@ class AudioSettingsWidget extends StatelessWidget {
       child: Theme(
         data: theme.copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: true,
+          initiallyExpanded: false,
           leading: Icon(Icons.audiotrack_rounded, color: accent),
           title: Row(
             mainAxisSize: MainAxisSize.min,

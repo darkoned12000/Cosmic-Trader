@@ -220,7 +220,7 @@ class _SystemResourcesWidgetState extends State<SystemResourcesWidget> {
       child: Theme(
         data: theme.copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: true,
+          initiallyExpanded: false,
           leading: const Icon(Icons.monitor_rounded, color: Colors.orange),
           title: const Text('System Resources (Dev)',
               style: TextStyle(fontWeight: FontWeight.bold)),

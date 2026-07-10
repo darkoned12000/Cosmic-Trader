@@ -14,6 +14,7 @@ class HoldButton extends StatefulWidget {
   final double fontSize;
 
   const HoldButton({
+    super.key,
     required this.enabled,
     required this.onPressed,
     required this.backgroundColor,

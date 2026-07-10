@@ -547,7 +547,7 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
                 transformationController: _transformationController,
                 minScale: 0.1,
                 maxScale: 5.0,
-                child: Container(
+                child: SizedBox(
                   key: _canvasKey,
                   width: canvasW,
                   height: canvasH,
@@ -724,23 +724,6 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
     });
   }
 
-  // IMPROVEMENT: Human-readable "Last Visited" formatting
-  String _formatLastVisited(DateTime? lastVisited) {
-    if (lastVisited == null) return 'Never';
-    final now = DateTime.now().toUtc();
-    final diff = now.difference(lastVisited);
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}m ago';
-    }
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 30) return '${diff.inDays}d ago';
-    final months = (diff.inDays / 30).floor();
-    if (months < 12) return '${months}mo ago';
-    final years = (diff.inDays / 365).floor();
-    return '${years}y ago';
-  }
-
   // IMPROVEMENT: Compact detail panel shown for sectors the player hasn't
   // actually flown to yet. Deliberately withholds name/ports/planets/NPCs —
   // only what's visible from the outside (id, and that it connects here)
@@ -806,67 +789,6 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // IMPROVEMENT: Compact card version of the unknown-sector state, used in
-  // the mobile/stacked layout.
-  Widget _unknownSectorCard(Sector sector) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.help_outline,
-                        size: 18, color: cs.onSurface.withValues(alpha: 0.5)),
-                    const SizedBox(width: 6),
-                    Text('Unknown Sector',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: cs.onSurface.withValues(alpha: 0.7))),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => setState(() => _selectedSectorId = null),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Sector #${sector.id} • not yet explored',
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: cs.onSurface.withValues(alpha: 0.6)),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => widget.onSectorSelected?.call(sector.id),
-                icon: const Icon(Icons.navigation_rounded, size: 18),
-                label: Text('Move to Sector #${sector.id}'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

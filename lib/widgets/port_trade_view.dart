@@ -22,6 +22,7 @@ class PortTradeView extends StatelessWidget {
   final int maxHackAttempts;
 
   const PortTradeView({
+    super.key,
     required this.port,
     required this.player,
     required this.onPlayerUpdate,

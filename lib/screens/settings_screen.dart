@@ -7,6 +7,8 @@ import 'package:tradewars_2050/data/models/game_settings.dart';
 import 'package:tradewars_2050/services/audio_service.dart';
 import 'package:tradewars_2050/widgets/audio_settings_widget.dart';
 import 'package:tradewars_2050/widgets/system_resources_widget.dart';
+import 'package:tradewars_2050/widgets/font_settings_widget.dart';
+import 'package:tradewars_2050/widgets/video_settings_widget.dart';
 
 class SettingsScreen extends StatefulWidget {
   final GameSettings currentSettings;
@@ -63,6 +65,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _unlockAllShips;
   double _musicVolume = 0.5;
   double _sfxVolume = 0.7;
+  bool _fullscreen = false;
+  int _resolutionWidth = 1280;
+  int _resolutionHeight = 720;
+  double _animationSpeed = 0.5;
+  String _fontFamily = '';
+  double _fontSize = 14;
 
   @override
   void initState() {
@@ -137,6 +145,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _unlockAllShips = s.unlockAllShips;
     _musicVolume = s.musicVolume;
     _sfxVolume = s.sfxVolume;
+    _fullscreen = s.fullscreen;
+    _resolutionWidth = s.resolutionWidth;
+    _resolutionHeight = s.resolutionHeight;
+    _animationSpeed = s.tacticalDisplaySpeed;
+    _fontFamily = s.fontFamily;
+    _fontSize = s.fontSize;
 
     for (final c in [
       _warp1PctController,
@@ -246,6 +260,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       initCredits: int.tryParse(_initCreditsController.text) ?? 1000000,
       initHolds: int.tryParse(_initHoldsController.text) ?? 50,
       initDrones: int.tryParse(_initDronesController.text) ?? 100,
+      tacticalDisplaySpeed: _animationSpeed,
+      fullscreen: _fullscreen,
+      windowScale: 0.75,
+      resolutionWidth: _resolutionWidth,
+      resolutionHeight: _resolutionHeight,
+      fontFamily: _fontFamily,
+      fontSize: _fontSize,
       musicVolume: _musicVolume,
       sfxVolume: _sfxVolume,
       musicFolderPath: AudioService.musicFolderPath.value,
@@ -282,6 +303,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _themePicker(cs, theme),
                   _brightnessToggle(cs, theme),
+                  const SizedBox(height: 8),
+                  FontSettingsWidget(
+                    fontFamily: _fontFamily,
+                    fontSize: _fontSize,
+                    onFontFamilyChanged: (v) {
+                      setState(() => _fontFamily = v);
+                      ThemeService.fontFamilyNotifier.value = v;
+                    },
+                    onFontSizeChanged: (v) {
+                      setState(() => _fontSize = v);
+                      ThemeService.fontSizeNotifier.value = v;
+                    },
+                    buildSettings: _buildSettings,
+                    onSaveSettings: widget.onSettingsChanged,
+                  ),
                 ],
               ),
             ),
@@ -505,44 +541,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
 
           // ==================== VIDEO SETTINGS ====================
-          Card(
-            elevation: 0,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Theme(
-              data: theme.copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                initiallyExpanded: false,
-                leading: const Icon(Icons.video_settings_rounded),
-                title: Text('Video Settings',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Tactical Display',
-                          style: theme.textTheme.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Animation speed for display effects is controlled '
-                          'via the slider on the Tactical Display header.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: cs.onSurface.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          VideoSettingsWidget(
+            fullscreen: _fullscreen,
+            resolutionWidth: _resolutionWidth,
+            resolutionHeight: _resolutionHeight,
+            animationSpeed: _animationSpeed,
+            onFullscreenChanged: (v) => setState(() => _fullscreen = v),
+            onResolutionWidthChanged: (v) =>
+                setState(() => _resolutionWidth = v),
+            onResolutionHeightChanged: (v) =>
+                setState(() => _resolutionHeight = v),
+            onAnimationSpeedChanged: (v) =>
+                setState(() => _animationSpeed = v),
+            buildSettings: _buildSettings,
+            onSaveSettings: widget.onSettingsChanged,
           ),
 
           const SizedBox(height: 12),

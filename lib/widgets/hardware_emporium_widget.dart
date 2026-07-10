@@ -282,7 +282,7 @@ class _ServicesTab extends StatelessWidget {
           description:
               'Add a combat/utility drone (${player.drones}/${player.maxDrones})',
           cost:
-              '${droneCostCredits} cr${droneCostScrapMetal > 0 ? ' + ${droneCostScrapMetal}M' : ''}${droneCostScrapTech > 0 ? ' + ${droneCostScrapTech}T' : ''}',
+              '$droneCostCredits cr${droneCostScrapMetal > 0 ? ' + ${droneCostScrapMetal}M' : ''}${droneCostScrapTech > 0 ? ' + ${droneCostScrapTech}T' : ''}',
           canAfford: player.credits >= droneCostCredits &&
               player.scrapMetal >= droneCostScrapMetal &&
               player.scrapTech >= droneCostScrapTech,

@@ -72,6 +72,16 @@ class GameSettings {
   /// Animation speed multiplier for tactical display effects (ping ripple, data scroll).
   final double tacticalDisplaySpeed;
 
+  // --- Video ---
+  final bool fullscreen;
+  final double windowScale;
+  final int resolutionWidth;
+  final int resolutionHeight;
+
+  // --- Font ---
+  final String fontFamily;
+  final double fontSize;
+
   // --- Audio ---
   final double musicVolume;
   final double sfxVolume;
@@ -121,6 +131,12 @@ class GameSettings {
     this.pirateDensity = 0.05,
     this.npcStartingCredits = 10000,
     this.tacticalDisplaySpeed = 0.5,
+    this.fullscreen = false,
+    this.windowScale = 0.75,
+    this.resolutionWidth = 1280,
+    this.resolutionHeight = 720,
+    this.fontFamily = '',
+    this.fontSize = 14,
     this.musicVolume = 0.5,
     this.sfxVolume = 0.7,
     this.musicFolderPath = 'assets/music',
@@ -153,6 +169,12 @@ class GameSettings {
       pirateDensity: 0.05,
       npcStartingCredits: 10000,
       tacticalDisplaySpeed: 0.5,
+      fullscreen: false,
+      windowScale: 0.75,
+      resolutionWidth: 1280,
+      resolutionHeight: 720,
+      fontFamily: '',
+      fontSize: 14,
       musicVolume: 0.5,
       sfxVolume: 0.7,
       musicFolderPath: 'assets/music',
@@ -208,6 +230,12 @@ class GameSettings {
     double? pirateDensity,
     int? npcStartingCredits,
     double? tacticalDisplaySpeed,
+    bool? fullscreen,
+    double? windowScale,
+    int? resolutionWidth,
+    int? resolutionHeight,
+    String? fontFamily,
+    double? fontSize,
     double? musicVolume,
     double? sfxVolume,
     String? musicFolderPath,
@@ -259,6 +287,12 @@ class GameSettings {
       unlockAllShips: unlockAllShips ?? this.unlockAllShips,
       tacticalDisplaySpeed:
           tacticalDisplaySpeed ?? this.tacticalDisplaySpeed,
+      fullscreen: fullscreen ?? this.fullscreen,
+      windowScale: windowScale ?? this.windowScale,
+      resolutionWidth: resolutionWidth ?? this.resolutionWidth,
+      resolutionHeight: resolutionHeight ?? this.resolutionHeight,
+      fontFamily: fontFamily ?? this.fontFamily,
+      fontSize: fontSize ?? this.fontSize,
       musicVolume: musicVolume ?? this.musicVolume,
       sfxVolume: sfxVolume ?? this.sfxVolume,
       musicFolderPath: musicFolderPath ?? this.musicFolderPath,
@@ -310,6 +344,12 @@ class GameSettings {
       'pirateDensity': pirateDensity,
       'npcStartingCredits': npcStartingCredits,
       'tacticalDisplaySpeed': tacticalDisplaySpeed,
+      'fullscreen': fullscreen,
+      'windowScale': windowScale,
+      'resolutionWidth': resolutionWidth,
+      'resolutionHeight': resolutionHeight,
+      'fontFamily': fontFamily,
+      'fontSize': fontSize,
       'musicVolume': musicVolume,
       'sfxVolume': sfxVolume,
       'musicFolderPath': musicFolderPath,
@@ -367,6 +407,12 @@ class GameSettings {
       npcStartingCredits: json['npcStartingCredits'] as int? ?? 10000,
       tacticalDisplaySpeed:
           (json['tacticalDisplaySpeed'] as num?)?.toDouble() ?? 0.5,
+      fullscreen: json['fullscreen'] as bool? ?? false,
+      windowScale: (json['windowScale'] as num?)?.toDouble() ?? 0.75,
+      resolutionWidth: json['resolutionWidth'] as int? ?? 1280,
+      resolutionHeight: json['resolutionHeight'] as int? ?? 720,
+      fontFamily: json['fontFamily'] as String? ?? '',
+      fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14,
       musicVolume: (json['musicVolume'] as num?)?.toDouble() ?? 0.5,
       sfxVolume: (json['sfxVolume'] as num?)?.toDouble() ?? 0.7,
       musicFolderPath: json['musicFolderPath'] as String? ?? 'assets/music',

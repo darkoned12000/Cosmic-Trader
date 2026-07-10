@@ -36,4 +36,8 @@ class ThemeService {
       ValueNotifier<Color>(themePresets[0].seed);
   static final ValueNotifier<Brightness> brightnessNotifier =
       ValueNotifier<Brightness>(Brightness.dark);
+  static final ValueNotifier<String> fontFamilyNotifier =
+      ValueNotifier<String>('');
+  static final ValueNotifier<double> fontSizeNotifier =
+      ValueNotifier<double>(14);
 }

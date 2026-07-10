@@ -1,4 +1,4 @@
-import 'dart:math' as Math;
+import 'dart:math' as math;
 
 class NpcNameGenerator {
   static const List<String> factionFirstNames = [
@@ -253,7 +253,7 @@ class NpcNameGenerator {
   ];
 
   static String generatePilotName({bool isPirate = false, int? seed}) {
-    final rng = seed != null ? Math.Random(seed) : Math.Random();
+    final rng = seed != null ? math.Random(seed) : math.Random();
     if (isPirate) {
       return '${pirateFirstNames[rng.nextInt(pirateFirstNames.length)]} '
           '${pirateLastNames[rng.nextInt(pirateLastNames.length)]}';
@@ -263,7 +263,7 @@ class NpcNameGenerator {
   }
 
   static String generateShipName({int? seed}) {
-    final rng = seed != null ? Math.Random(seed) : Math.Random();
+    final rng = seed != null ? math.Random(seed) : math.Random();
     return shipNames[rng.nextInt(shipNames.length)];
   }
 }
