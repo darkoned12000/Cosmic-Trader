@@ -6,6 +6,7 @@ import '../../core/npc_name_generator.dart';
 import '../../services/npc_ai/npc_goal.dart';
 import '../../services/npc_ai/npc_memory.dart';
 import '../../services/npc_ai/npc_personality.dart';
+import 'commodity.dart';
 import 'faction.dart';
 import 'ship_templates.dart';
 
@@ -66,7 +67,7 @@ class NpcShip {
   /// Global reputation score (0.0 to 100.0).
   final double notoriety;
 
-  const NpcShip({
+  NpcShip({
     required this.id,
     required this.pilotName,
     required this.shipName,
@@ -80,7 +81,7 @@ class NpcShip {
     required this.shields,
     required this.maxShields,
     this.cargoUsed = 0,
-    this.cargo = const {'minerals': 0, 'organics': 0, 'industrial': 0},
+    this.cargo = const {},
     this.bankBalance = 0,
     this.lastInterestTime,
     this.hullEquipmentLevel = 1,
@@ -309,7 +310,7 @@ class NpcShip {
       maxHull: shipDef.maxHullCapacity,
       shields: shipDef.maxShields,
       maxShields: shipDef.maxShields,
-      cargo: {'minerals': 0, 'organics': 0, 'industrial': 0},
+      cargo: {for (final name in CommodityRegistry.names) name: 0},
       weaponSlots: weaponSlots,
       personality: assignPersonalityForFaction(faction, rng),
       memory: const NpcMemory(),

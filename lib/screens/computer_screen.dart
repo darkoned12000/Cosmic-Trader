@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/player.dart';
 import 'package:tradewars_2050/data/models/port.dart';
 import 'package:tradewars_2050/data/models/sector.dart';
@@ -267,8 +268,8 @@ class _ComputerScreenState extends State<ComputerScreen> {
     );
   }
 
-  static const _commodities = ['minerals', 'organics', 'industrial'];
-  static const _commodityLabels = <String, String>{
+  static List<String> get _commodities => CommodityRegistry.names;
+  static const _commodityLabels = {
     'minerals': 'Minerals',
     'organics': 'Organics',
     'industrial': 'Industrial',

@@ -12,7 +12,6 @@ class Sector {
   // Content fields are mutable so the generator can populate them
   bool hasPort;
   bool hasPlanet;
-  String? planetType;
   String? anomaly;
   int traderCount;
   int duranCount;
@@ -36,7 +35,6 @@ class Sector {
     required this.warpRoutes,
     this.hasPort = false,
     this.hasPlanet = false,
-    this.planetType,
     this.anomaly,
     this.traderCount = 0,
     this.duranCount = 0,
@@ -59,7 +57,6 @@ class Sector {
       'warpRoutes': warpRoutes,
       'hasPort': hasPort,
       'hasPlanet': hasPlanet,
-      'planetType': planetType,
       'anomaly': anomaly,
       'traderCount': traderCount,
       'duranCount': duranCount,
@@ -84,7 +81,6 @@ class Sector {
           (json['warpRoutes'] as List<dynamic>).map((e) => e as int).toList(),
       hasPort: json['hasPort'] as bool? ?? false,
       hasPlanet: json['hasPlanet'] as bool? ?? false,
-      planetType: json['planetType'] as String?,
       anomaly: json['anomaly'] as String?,
       traderCount: json['traderCount'] as int? ?? 0,
       duranCount: json['duranCount'] as int? ?? 0,

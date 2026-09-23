@@ -640,7 +640,7 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
                     _legendItem(
                         cs.onSurface.withValues(alpha: 0.4), 'Unexplored'),
                     _legendItem(Colors.greenAccent, '◆ Port'),
-                    _legendItem(Colors.cyanAccent, '● Planet'),
+                    _legendItem(Colors.brown, '● Planet'),
                     _legendItem(Colors.lightBlueAccent, '● Trader'),
                     _legendItem(Colors.redAccent, '● Duran'),
                     _legendItem(Colors.tealAccent, '● Vinari'),
@@ -874,7 +874,7 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
                           .toString()),
                   _detailRow(cs, 'Port', sector.hasPort ? 'Yes' : 'No'),
                   if (sector.hasPlanet)
-                    _detailRow(cs, 'Planet', sector.planetType ?? 'Unknown'),
+                    _detailRow(cs, 'Planet', sector.planet?.planetType ?? 'Unknown'),
                   if (sector.anomaly != null)
                     _detailRow(cs, 'Anomaly', sector.anomaly!),
                 ],

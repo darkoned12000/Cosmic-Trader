@@ -46,7 +46,7 @@ Current status: **Active development with a full feature base in place.** The co
 ### Implemented
 
 - **Procedural universe generation** — 8-phase algorithm creates a fully connected, balanced graph of sectors with ports, planets, NPCs, anomalies, and aliens
-- **Port trading** — Buy and sell 3 commodities (minerals, organics, industrial) with finite supply and demand per port
+- **Port trading** — Buy and sell commodities (minerals, organics, industrial by default) with finite supply and demand per port; data-driven `CommodityConfig` system makes adding new commodities trivial
 - **Adaptive UI** — Navigation bar (mobile) / navigation rail (desktop) layout adapts to screen width
 - **Galaxy map** — Interactive zoomable map with force-directed layout, tap-to-navigate, and search
 - **Warp navigation** — Travel between connected sectors at the cost of 1 turn
@@ -158,13 +158,15 @@ All settings are configurable from the **Settings** screen (gear icon in the App
 
 ### Economy ranges
 
-Each commodity has configurable min/max price and quantity ranges:
+Each commodity has its own configurable price/quantity range via the `CommodityRegistry` data model. Defaults:
 
-| Commodity | Price Range | Quantity Range |
-|-----------|-------------|----------------|
-| Minerals | 5 - 25 cr | 10,000 - 50,000 |
-| Organics | 10 - 50 cr | 5,000 - 40,000 |
-| Industrial | 20 - 100 cr | 3,000 - 30,000 |
+| Commodity | Sell Range (player pays) | Buy Range (player receives) | Quantity Range |
+|-----------|-------------------------|---------------------------|----------------|
+| Minerals | 5 - 14 cr | 15 - 25 cr | 10,000 - 50,000 |
+| Organics | 10 - 29 cr | 30 - 50 cr | 5,000 - 40,000 |
+| Industrial | 20 - 59 cr | 60 - 100 cr | 40,000 - 30,000 |
+
+Sell and buy ranges are **guaranteed non-overlapping** — the mid-point (`splitPoint`) divides each commodity's total `[priceMin, priceMax]` range so the highest sell price is always below the lowest buy price. Every trade route is inherently profitable.
 
 ### Player starting values
 
@@ -206,45 +208,38 @@ The galaxy is home to three major factions:
 
 ### Economy & Trading
 
-The economy revolves around three commodities traded at ports:
+The economy revolves around commodities traded at ports. By default, three commodities exist, but the data-driven `CommodityRegistry` system makes adding new ones trivial (two entries in `commodity.dart`):
 
-- **Minerals** — Basic raw materials (5-25 cr base)
-- **Organics** — Biological resources (10-50 cr base)
-- **Industrial** — Manufactured goods (20-100 cr base)
+- **Minerals** — Basic raw materials
+- **Organics** — Biological resources
+- **Industrial** — Manufactured goods
 
 **Port types:**
 
-Each port is assigned one of 8 TradeWars-style type strings. Each character position corresponds to a commodity (minerals, organics, industrial):
+Each port is assigned a dynamic type string where each character corresponds to a commodity (in registry order). `S` = port sells (you buy), `B` = port buys (you sell). Type strings are generated at port-creation time with at least one `S` and one `B`. A port never buys and sells the same commodity.
 
-```
-'SBB' → Sell minerals, Buy organics, Buy industrial
-'SBS' → Sell minerals, Buy organics, Sell industrial
-'SSB' → Sell minerals, Sell organics, Buy industrial
-'BSS' → Buy minerals, Sell organics, Sell industrial
-'BBS' → Buy minerals, Buy organics, Sell industrial
-'BSB' → Buy minerals, Sell organics, Buy industrial
-'SSS' → Sell all 3 commodities
-'BBB' → Buy all 3 commodities
-```
+A port class (Federal/Free/Independent) affects appearance and reputation only — all classes draw from the same type-generation logic.
 
-A port class (Federal/Free/Independent) affects appearance and reputation only — all classes draw from the same 8 type strings, so a port never buys **and** sells the same commodity.
+**How prices work (guaranteed profitable):**
 
-**How prices work:**
+Each commodity's `[priceMin, priceMax]` range is split at the mid-point (`splitPoint`):
 
-Each port generates a random *base price* for each commodity within its configured range. For each commodity:
-- **Sell price** (what you pay to buy from the port) = base price
-- **Buy price** (what you receive when selling to the port) = 75-95% of base price
+- **Sell price** (what you pay to buy from the port) = random in `[priceMin, splitPoint)` — the **lower half**
+- **Buy price** (what you receive when selling to the port) = random in `[splitPoint, priceMax]` — the **upper half**
+
+This guarantees `maxSellPrice < minBuyPrice` for every commodity at every port. **Every trade route is inherently profitable.**
 
 **Making a profit:**
 
-Since no single port offers a buy price higher than its sell price, profit comes from *inter-port arbitrage* — buying cheap at one port and selling at another that happens to have a higher base price.
+Since sell prices are always in the lower half and buy prices always in the upper half, every port pair generates a profit:
 
-For example:
-1. Port A has minerals at a base of 5 cr (sell price). You buy.
-2. Port B has minerals at a base of 25 cr. It buys at ~23.75 cr (95% of 25).
-3. Your profit: 23.75 - 5 = 18.75 cr per unit (375% return).
+```
+Port A (sell price): 8 cr     ← lower half of [5, 25]
+Port B (buy price): 22 cr     ← upper half of [5, 25]
+Profit: 22 - 8 = 14 cr per unit (175% return)
+```
 
-**Note:** With the default price ranges (minerals 5-25, organics 10-50, industrial 20-100), finding ports at opposite ends of the spread can yield returns of 200-400%.
+Returns typically range from 30% to 300%+ depending on the random roll within each half. Larger spreads are found by visiting many ports and comparing prices.
 
 ### Banking
 
@@ -355,7 +350,7 @@ Defense level contributes to port net worth: Level 1 = 250,000 cr, Level 2 = +50
 ### Phase 1: Core Systems (✅ Complete)
 - [x] Universe generation (8-phase algorithm)
 - [x] Navigation & warp (adjacent, long-range)
-- [x] Port trading (3 commodities, finite supply/demand)
+- [x] Port trading (data-driven commodity system, guaranteed profitable spreads)
 - [x] Ship management (hull, shields, cargo, drones, turns)
 - [x] Banking (deposit, withdraw, 1% daily interest)
 - [x] Lottery mini-game (pick-6, animated draw, 10M jackpot)

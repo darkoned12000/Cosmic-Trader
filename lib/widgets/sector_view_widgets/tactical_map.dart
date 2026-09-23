@@ -299,6 +299,7 @@ class _TacticalMapState extends State<TacticalMap>
                 _LegendItem(color: const Color(0xFF00FF41), label: 'YOU'),
                 _LegendItem(color: const Color(0xFF00FFFF), label: 'WARP'),
                 _LegendItem(color: Colors.amber.shade300, label: 'PORT'),
+                _LegendItem(color: Colors.brown, label: 'PLANET'),
                 _LegendItem(color: Colors.blue, label: 'TRADER'),
                 _LegendItem(color: Colors.red, label: 'DURAN'),
                 _LegendItem(color: Colors.teal, label: 'VINARI'),
@@ -621,6 +622,23 @@ class _TacticalMapPainter extends CustomPainter {
         pos + Offset(nodeRadius * 0.7, -nodeRadius * 0.7),
         4,
         portPaint,
+      );
+    }
+
+    // Planet indicator (brown dot with ring)
+    if (sector.hasPlanet) {
+      final planetPaint = Paint()
+        ..color = Colors.brown
+        ..style = PaintingStyle.fill;
+      final planetPos = pos + Offset(-nodeRadius * 0.7, nodeRadius * 0.7);
+      canvas.drawCircle(planetPos, 4, planetPaint);
+      canvas.drawCircle(
+        planetPos,
+        6,
+        Paint()
+          ..color = Colors.brown.withValues(alpha: 0.4)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
       );
     }
 

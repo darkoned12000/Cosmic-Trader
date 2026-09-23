@@ -1,12 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/npc_ship.dart';
 import 'package:tradewars_2050/data/models/player.dart';
-
-const _basePrices = <String, int>{
-  'minerals': 15,
-  'organics': 30,
-  'industrial': 60,
-};
 
 class NpcTradeDialog extends StatefulWidget {
   final Player player;
@@ -63,10 +58,12 @@ class _NpcTradeDialogState extends State<NpcTradeDialog> {
       _sellQuantities.values.any((v) => v > 0);
 
   int _npcSellPrice(String commodity) =>
-      ((_basePrices[commodity] ?? 15) * 1.2).round();
+      ((CommodityRegistry.defaultsMap[commodity]?.splitPoint ?? 15) * 1.2)
+          .round();
 
   int _npcBuyPrice(String commodity) =>
-      ((_basePrices[commodity] ?? 15) * 0.8).round();
+      ((CommodityRegistry.defaultsMap[commodity]?.splitPoint ?? 15) * 0.8)
+          .round();
 
   void _confirm() {
     final player = widget.player;

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/player.dart';
 
 class FrequencyJammingWidget extends StatefulWidget {
@@ -126,8 +127,7 @@ class _FrequencyJammingWidgetState extends State<FrequencyJammingWidget>
   }
 
   void _stealResources() {
-    final commodities = ['minerals', 'organics', 'industrial'];
-    final available = commodities.where((c) {
+    final available = CommodityRegistry.names.where((c) {
       final current = widget.player.cargo[c] ?? 0;
       return current < widget.player.maxCargo;
     }).toList();

@@ -12,8 +12,6 @@ import 'package:tradewars_2050/services/npc_ai/npc_ai_service.dart';
 import 'package:tradewars_2050/widgets/dev_profiler.dart';
 
 /// Describes an NPC-initated attack on a player during a tick.
-
-/// Describes an NPC-initated attack on a player during a tick.
 class NpcAttackEvent {
   final NpcShip npc;
   final Player player;

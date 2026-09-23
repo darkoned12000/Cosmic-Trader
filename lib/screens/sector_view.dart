@@ -16,6 +16,7 @@ class SectorView extends StatefulWidget {
   final Player player;
   final Function(Player) onPlayerUpdate;
   final VoidCallback? onOpenPort;
+  final VoidCallback? onOpenPlanet;
   final List<NpcShip> npcs;
   final VoidCallback? onRefreshNpcs;
   final int fedSpaceEnd;
@@ -25,6 +26,7 @@ class SectorView extends StatefulWidget {
     required this.player,
     required this.onPlayerUpdate,
     this.onOpenPort,
+    this.onOpenPlanet,
     this.npcs = const [],
     this.onRefreshNpcs,
     this.fedSpaceEnd = 0,
@@ -195,6 +197,7 @@ class _SectorViewState extends State<SectorView> {
               onPlayerUpdate: widget.onPlayerUpdate,
               onRefreshNpcs: widget.onRefreshNpcs,
               fedSpaceEnd: widget.fedSpaceEnd,
+              onLandOnPlanet: widget.onOpenPlanet,
             ),
           ),
           const SizedBox(height: 12),
@@ -273,6 +276,7 @@ class _SectorViewState extends State<SectorView> {
                         onPlayerUpdate: widget.onPlayerUpdate,
                         onRefreshNpcs: widget.onRefreshNpcs,
                         fedSpaceEnd: widget.fedSpaceEnd,
+                        onLandOnPlanet: widget.onOpenPlanet,
                       ),
                     ),
                   ],
@@ -383,7 +387,8 @@ class _SectorViewState extends State<SectorView> {
                             player: widget.player,
                             onPlayerUpdate: widget.onPlayerUpdate,
                             onRefreshNpcs: widget.onRefreshNpcs,
-                            fedSpaceEnd: widget.fedSpaceEnd),
+                            fedSpaceEnd: widget.fedSpaceEnd,
+                            onLandOnPlanet: widget.onOpenPlanet),
                         const SizedBox(height: 12),
                         ShipStatusSummary(player: widget.player),
                       ],

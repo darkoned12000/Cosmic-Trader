@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/faction.dart';
 import 'package:tradewars_2050/data/models/player.dart';
 import 'package:tradewars_2050/data/models/port.dart';
@@ -646,7 +647,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
               ),
             ),
             const SizedBox(height: 12),
-            ...['minerals', 'organics', 'industrial'].map((c) {
+            ...CommodityRegistry.names.map((c) {
               final base = _port.maxSupply[c] ?? 0;
               final effective = _port.effectiveMaxSupply(c);
               return Padding(
@@ -830,7 +831,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
               ],
             ),
             const SizedBox(height: 16),
-            ...['minerals', 'organics', 'industrial'].map((c) {
+            ...CommodityRegistry.names.map((c) {
               final current = override[c];
               final basePrice = _port.getSellPrice(c);
               return Padding(
@@ -949,7 +950,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
               ),
             ),
             const SizedBox(height: 12),
-            ...['minerals', 'organics', 'industrial'].map((c) {
+            ...CommodityRegistry.names.map((c) {
               final buy = _port.getEffectiveBuyPrice(c);
               final sell = _port.getEffectiveSellPrice(c);
               return Padding(

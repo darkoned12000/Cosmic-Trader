@@ -659,21 +659,30 @@ class UniverseGenerator {
     return '${names[sectorId % names.length]} Hardware Emporium';
   }
 
-  static const _portTypes = [
-    'SBB',
-    'SBS',
-    'SSB',
-    'BSS',
-    'BBS',
-    'BSB',
-    'SSS',
-    'BBB',
-  ];
+  /// Dynamically generates a random port type string
+  /// based on how many commodities are configured.
+  /// Ensures at least one 'S' and one 'B' character.
+  String _randomPortType(math.Random rng) {
+    final count = settings.commodityConfigs.length;
+    final chars = List<String>.generate(count, (_) => '');
+    // Pick at which indices to place the mandatory S and B.
+    final sIdx = rng.nextInt(count);
+    var bIdx = rng.nextInt(count);
+    while (bIdx == sIdx) {
+      bIdx = rng.nextInt(count);
+    }
+    for (int i = 0; i < count; i++) {
+      chars[i] = (i == sIdx)
+          ? 'S'
+          : (i == bIdx) ? 'B' : (rng.nextBool() ? 'S' : 'B');
+    }
+    return chars.join();
+  }
 
   Port _createPort(Sector sector, math.Random rng,
       {bool forceFederal = false, String? name}) {
     final portClass = forceFederal ? PortClass.federal : _pickPortClass(rng);
-    final portType = _portTypes[rng.nextInt(_portTypes.length)];
+    final portType = _randomPortType(rng);
     final prices = _generatePortPrices(portType, rng);
     final qty = _generatePortQuantities(portType, rng);
     final defenseLevel = _pickDefenseLevel(rng);
@@ -766,13 +775,12 @@ class UniverseGenerator {
   double _calculatePortCredits(String portType, _PortPrices prices,
       _PortQuantities qty, math.Random rng) {
     double neededCredits = 0;
-    const commodities = ['minerals', 'organics', 'industrial'];
+    final configs = settings.commodityConfigs.values.toList();
 
-    for (int i = 0; i < commodities.length; i++) {
+    for (int i = 0; i < configs.length; i++) {
       if (portType[i] == 'B') {
-        final commodity = commodities[i];
-        final buyPrice = prices.buyPrices[commodity] ?? 0;
-        final demand = qty.demand[commodity] ?? 0;
+        final buyPrice = prices.buyPrices[configs[i].name] ?? 0;
+        final demand = qty.demand[configs[i].name] ?? 0;
         neededCredits += buyPrice * demand;
       }
     }
@@ -789,32 +797,40 @@ class UniverseGenerator {
     return PortClass.independent;
   }
 
+  /// Generates non-overlapping buy/sell prices per commodity.
+  ///
+  /// Sell prices (port sells → player buys) occupy the lower half
+  /// of the price range: [priceMin, splitPoint).
+  /// Buy prices (port buys → player sells) occupy the upper half:
+  /// [splitPoint, priceMax].
+  ///
+  /// This guarantees that no matter which two ports a player trades
+  /// between, the sell price they pay is always lower than the buy
+  /// price they receive — every trade is profitable.
   _PortPrices _generatePortPrices(String portType, math.Random rng) {
-    const commodities = ['minerals', 'organics', 'industrial'];
-    final priceMins = [
-      settings.mineralPriceMin,
-      settings.organicsPriceMin,
-      settings.industrialPriceMin,
-    ];
-    final priceMaxs = [
-      settings.mineralPriceMax,
-      settings.organicsPriceMax,
-      settings.industrialPriceMax,
-    ];
+    final configs = settings.commodityConfigs.values.toList();
 
     final buyPrices = <String, double>{};
     final sellPrices = <String, double>{};
 
-    double randomPrice(int i) =>
-        priceMins[i] + rng.nextDouble() * (priceMaxs[i] - priceMins[i]);
-
-    for (int i = 0; i < commodities.length; i++) {
-      final base = randomPrice(i);
+    for (int i = 0; i < configs.length; i++) {
+      final c = configs[i];
+      final split = c.splitPoint;
       if (portType[i] == 'S') {
-        sellPrices[commodities[i]] = base.roundToDouble();
+        // Port sells to player: pick from lower half [priceMin, splitPoint)
+        final maxSell = split - 0.01;
+        if (maxSell <= c.priceMin) {
+          sellPrices[c.name] = c.priceMin;
+        } else {
+          sellPrices[c.name] =
+              (c.priceMin + rng.nextDouble() * (maxSell - c.priceMin))
+                  .roundToDouble();
+        }
       } else {
-        buyPrices[commodities[i]] =
-            (base * (0.75 + rng.nextDouble() * 0.2)).roundToDouble();
+        // Port buys from player: pick from upper half [splitPoint, priceMax]
+        buyPrices[c.name] =
+            (split + rng.nextDouble() * (c.priceMax - split))
+                .roundToDouble();
       }
     }
 
@@ -822,27 +838,18 @@ class UniverseGenerator {
   }
 
   _PortQuantities _generatePortQuantities(String portType, math.Random rng) {
-    const commodities = ['minerals', 'organics', 'industrial'];
-    final qtyMins = [
-      settings.mineralQtyMin,
-      settings.organicsQtyMin,
-      settings.industrialQtyMin,
-    ];
-    final qtyMaxs = [
-      settings.mineralQtyMax,
-      settings.organicsQtyMax,
-      settings.industrialQtyMax,
-    ];
+    final configs = settings.commodityConfigs.values.toList();
 
     final supply = <String, int>{};
     final demand = <String, int>{};
 
-    for (int i = 0; i < commodities.length; i++) {
-      final qty = qtyMins[i] + rng.nextInt(qtyMaxs[i] - qtyMins[i] + 1);
+    for (int i = 0; i < configs.length; i++) {
+      final c = configs[i];
+      final qty = c.qtyMin + rng.nextInt(c.qtyMax - c.qtyMin + 1);
       if (portType[i] == 'S') {
-        supply[commodities[i]] = qty;
+        supply[c.name] = qty;
       } else {
-        demand[commodities[i]] = qty;
+        demand[c.name] = qty;
       }
     }
 
@@ -860,7 +867,6 @@ class UniverseGenerator {
         if (!s.hasPlanet && rng.nextDouble() < 0.5) {
           s.hasPlanet = true;
           s.planet = _createPlanet(s, rng);
-          s.planetType = _planetTypeName(s.planet!.planetClass);
         }
       }
     }
@@ -870,30 +876,171 @@ class UniverseGenerator {
       if (rng.nextDouble() < settings.planetDensity) {
         s.hasPlanet = true;
         s.planet = _createPlanet(s, rng);
-        s.planetType = _planetTypeName(s.planet!.planetClass);
       }
+    }
+
+    _assignHomeworlds(sectors, rng);
+  }
+
+  void _assignHomeworlds(List<Sector> sectors, math.Random rng) {
+    // Assign one homeworld per major faction (excluding pirate)
+    final factions = [
+      FactionClass.duran,
+      FactionClass.vinari,
+      FactionClass.trader,
+    ];
+
+    for (final faction in factions) {
+      // Faction homeworld type preferences
+      final preferredTypes = _homeworldTypes(faction);
+      final candidates = <Sector>[];
+      for (final s in sectors) {
+        if (s.id <= settings.fedSpaceEnd) continue;
+        if (!s.hasPlanet || s.planet == null) continue;
+        if (preferredTypes.contains(s.planet!.planetType)) {
+          candidates.add(s);
+        }
+      }
+      // Pick a random preferred sector, or any planet sector
+      final pool = candidates.isNotEmpty ? candidates : sectors.where((s) => s.hasPlanet && s.id > settings.fedSpaceEnd).toList();
+      if (pool.isEmpty) {
+        // Create a planet in a random non-FedSpace sector
+        final nonFed = sectors.where((s) => s.id > settings.fedSpaceEnd).toList();
+        if (nonFed.isEmpty) continue;
+        final sector = nonFed[rng.nextInt(nonFed.length)];
+        if (!sector.hasPlanet) {
+          sector.hasPlanet = true;
+          sector.planet = _createPlanet(sector, rng);
+          final type = faction == FactionClass.duran ? 'Lava'
+              : faction == FactionClass.vinari ? 'Terran' : 'Desert';
+          sector.planet = _setupHomeworld(sector.planet!, faction, type, rng);
+        }
+        continue;
+      }
+      final chosen = pool[rng.nextInt(pool.length)];
+      chosen.planet = _setupHomeworld(chosen.planet!, faction, chosen.planet!.planetType, rng);
+    }
+  }
+
+  List<String> _homeworldTypes(FactionClass faction) {
+    switch (faction) {
+      case FactionClass.duran:
+        return ['Lava', 'Toxic', 'Barren', 'Moon'];
+      case FactionClass.vinari:
+        return ['Terran', 'Jungle', 'Ocean'];
+      case FactionClass.trader:
+        return ['Terran', 'Desert', 'Moon'];
+      default:
+        return ['Terran'];
+    }
+  }
+
+  Planet _setupHomeworld(Planet planet, FactionClass faction, String type, math.Random rng) {
+    final homeworldName = _homeworldName(faction);
+    return Planet(
+      name: homeworldName ?? planet.name,
+      planetType: type,
+      atmosphere: Planet.planetAtmospheres[type]?.atmosphere ?? 'Unknown',
+      owner: faction,
+      isHomeworld: true,
+      homeworldOf: faction,
+      population: 10000 + rng.nextInt(5000),
+      colonistsMinerals: 3000,
+      colonistsOrganics: 3000,
+      colonistsIndustrial: 2000,
+      colonistsFighters: 2000,
+      productionEfficiency: 1.0,
+      storedMinerals: 5000,
+      storedOrganics: 3000,
+      storedIndustrial: 2000,
+      storedFighters: 500,
+      maxStorage: 250000,
+      level: 4,
+      levelProgress: 0,
+      requiredMinerals: 50000,
+      requiredOrganics: 30000,
+      requiredIndustrial: 20000,
+      requiredColonists: 500000,
+      defenseLevel: 4,
+      shield: 8000,
+      maxShield: 8000,
+      hull: 20000,
+      maxHull: 20000,
+      productionTimer: 8,
+      spawnInterval: 10,
+      imagePath: _randomPlanetImage(type, rng),
+      scanned: true,
+    );
+  }
+
+  String? _homeworldName(FactionClass faction) {
+    switch (faction) {
+      case FactionClass.duran:
+        return 'Kravos';
+      case FactionClass.vinari:
+        return 'Celestara';
+      case FactionClass.trader:
+        return 'Vionis';
+      default:
+        return null;
     }
   }
 
   Planet _createPlanet(Sector sector, math.Random rng) {
-    final planetClass = _pickPlanetClass(sector, rng);
+    final type = _pickPlanetType(sector, rng);
     final efficiency = 0.5 + rng.nextDouble() * 1.0;
+    final startingResources = 50 + rng.nextInt(200);
+    final baseName = Planet.planetNames[sector.id % Planet.planetNames.length];
+    final defenseLevel = rng.nextInt(3); // 0-2
+    final baseArmor = 1000 + defenseLevel * 2000;
+    final level = 1;
+    final cost = Planet.levelUpCosts[level - 1];
     return Planet(
-      name: _planetName(sector.id, rng),
-      planetClass: planetClass,
+      name: Planet.generateVariantName(baseName, sector.id * 7 + rng.nextInt(9999)),
+      planetType: type,
+      atmosphere: Planet.planetAtmospheres[type]?.atmosphere ?? 'Unknown',
       productionEfficiency: (efficiency * 10).roundToDouble() / 10,
+      storedMinerals: startingResources,
+      storedOrganics: startingResources ~/ 2,
+      storedIndustrial: startingResources ~/ 3,
+      storedFighters: 10 + rng.nextInt(40),
+      maxStorage: 5000,
+      level: level,
+      requiredMinerals: cost.requiredMinerals,
+      requiredOrganics: cost.requiredOrganics,
+      requiredIndustrial: cost.requiredIndustrial,
+      requiredColonists: cost.requiredColonists,
+      defenseLevel: defenseLevel,
+      hull: baseArmor.toDouble(),
+      maxHull: baseArmor.toDouble(),
+      imagePath: _randomPlanetImage(type, rng),
+      scanned: false,
     );
   }
 
-  PlanetClass _pickPlanetClass(Sector sector, math.Random rng) {
+  String _randomPlanetImage(String type, math.Random rng) {
+    final pool = Planet.imagePool[type];
+    if (pool == null || pool.isEmpty) return 'Unknown_World_1.gif';
+    return 'assets/images/planets/${pool[rng.nextInt(pool.length)]}';
+  }
+
+  String _pickPlanetType(Sector sector, math.Random rng) {
     if (sector.id <= settings.fedSpaceEnd && rng.nextDouble() < 0.6) {
-      return PlanetClass.human;
+      return 'Terran';
     }
-    final r = rng.nextDouble();
-    if (r < 0.25) return PlanetClass.mammat;
-    if (r < 0.5) return PlanetClass.kron;
-    if (r < 0.75) return PlanetClass.slyland;
-    return PlanetClass.human;
+    const weightedTypes = [
+      'Terran', 'Terran', 'Terran',
+      'Jungle', 'Jungle',
+      'Desert', 'Desert',
+      'Ocean', 'Ocean',
+      'Ice',
+      'Lava', 'Lava',
+      'Gas Giant',
+      'Moon', 'Moon',
+      'Barren',
+      'Toxic', 'Toxic',
+    ];
+    return weightedTypes[rng.nextInt(weightedTypes.length)];
   }
 
   void _assignNpcsAndAliens(List<Sector> sectors, math.Random rng) {
@@ -1073,54 +1220,6 @@ class UniverseGenerator {
     return '${names[sectorId % names.length]} Station';
   }
 
-  String _planetName(int sectorId, math.Random rng) {
-    const names = [
-      'Terra',
-      'Aethel',
-      'Boreas',
-      'Caelum',
-      'Draconis',
-      'Erebus',
-      'Fenrir',
-      'Gaea',
-      'Helios',
-      'Ignis',
-      'Janus',
-      'Krios',
-      'Luna',
-      'Mnemosyne',
-      'Nyx',
-      'Orion',
-      'Pallas',
-      'Quintus',
-      'Rhea',
-      'Sol',
-      'Tethys',
-      'Umbra',
-      'Vulcan',
-      'Weyland',
-      'Xylos',
-      'Yggdrasil',
-      'Zenith',
-      'Aegis',
-      'Bast',
-      'Cerberus',
-    ];
-    return names[sectorId % names.length];
-  }
-
-  String _planetTypeName(PlanetClass pc) {
-    switch (pc) {
-      case PlanetClass.mammat:
-        return 'M-Class';
-      case PlanetClass.kron:
-        return 'K-Class';
-      case PlanetClass.slyland:
-        return 'L-Class';
-      case PlanetClass.human:
-        return 'H-Class';
-    }
-  }
 }
 
 // =============================================================================

@@ -9,6 +9,7 @@ import 'package:tradewars_2050/data/storage/settings_storage.dart';
 import 'package:tradewars_2050/data/storage/universe_storage.dart';
 import 'package:tradewars_2050/screens/computer_screen.dart';
 import 'package:tradewars_2050/screens/galaxy_map.dart';
+import 'package:tradewars_2050/screens/planet_screen.dart';
 import 'package:tradewars_2050/screens/login_screen.dart';
 import 'package:tradewars_2050/screens/port_screen.dart';
 import 'package:tradewars_2050/screens/sector_view.dart';
@@ -33,6 +34,7 @@ class _GameShellState extends State<GameShell> {
   int _currentIndex = 0;
   Key _universeKey = UniqueKey();
   Key _computerKey = UniqueKey();
+  Key _planetKey = UniqueKey();
   GameSettings _settings = GameSettings.defaults();
   int _playerUpdateVersion = 0;
   List<NpcShip> _npcs = [];
@@ -280,11 +282,11 @@ class _GameShellState extends State<GameShell> {
           const SizedBox(width: 8),
           IconButton(
             icon: Icon(
-              _currentIndex == 5
+              _currentIndex == 6
                   ? Icons.settings_rounded
                   : Icons.settings_outlined,
             ),
-            onPressed: () => setState(() => _currentIndex = 5),
+            onPressed: () => setState(() => _currentIndex = 6),
             tooltip: 'Settings',
           ),
           IconButton(
@@ -304,7 +306,11 @@ class _GameShellState extends State<GameShell> {
             onPlayerUpdate: _updatePlayer,
             onRefreshNpcs: _reloadNpcs,
             onOpenPort: () => setState(() => _currentIndex = 4),
-            fedSpaceEnd: _settings.fedSpaceEnd,
+                  onOpenPlanet: () => setState(() {
+                    _currentIndex = 5;
+                    _planetKey = UniqueKey();
+                  }),
+                  fedSpaceEnd: _settings.fedSpaceEnd,
           ),
           GalaxyMap(
             key: _universeKey,
@@ -323,7 +329,12 @@ class _GameShellState extends State<GameShell> {
             player: _player,
             onPlayerUpdate: _updatePlayer,
           ),
-          SettingsScreen(
+                PlanetScreen(
+                  key: _planetKey,
+                  player: _player,
+                  onPlayerUpdate: _updatePlayer,
+                ),
+                SettingsScreen(
             key: ValueKey('settings_${_settings.seed}'),
             currentSettings: _settings,
             onRegenerate: _handleRegenerateUniverse,
@@ -332,11 +343,12 @@ class _GameShellState extends State<GameShell> {
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex < 5 ? _currentIndex : 0,
+        selectedIndex: _currentIndex < 6 ? _currentIndex : 0,
         onDestinationSelected: (index) => setState(() {
           _currentIndex = index;
           if (index == 3) _computerKey = UniqueKey();
-          _tickService.playerDocked = (index == 4);
+          if (index == 5) _planetKey = UniqueKey();
+          _tickService.playerDocked = (index == 4 || index == 5);
         }),
         destinations: const [
           NavigationDestination(
@@ -363,6 +375,11 @@ class _GameShellState extends State<GameShell> {
             icon: Icon(Icons.store_outlined),
             selectedIcon: Icon(Icons.store_rounded),
             label: 'Port',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.public_outlined),
+            selectedIcon: Icon(Icons.public_rounded),
+            label: 'Planet',
           ),
         ],
       ),
@@ -423,10 +440,12 @@ class _GameShellState extends State<GameShell> {
                   Expanded(
                     child: NavigationRail(
                       minWidth: 88,
-                      selectedIndex: _currentIndex < 5 ? _currentIndex : 0,
+                      selectedIndex: _currentIndex < 6 ? _currentIndex : 0,
                       onDestinationSelected: (index) => setState(() {
                         _currentIndex = index;
                         if (index == 3) _computerKey = UniqueKey();
+                        if (index == 5) _planetKey = UniqueKey();
+                        _tickService.playerDocked = (index == 4 || index == 5);
                       }),
                       labelType: NavigationRailLabelType.all,
                       destinations: const [
@@ -455,6 +474,11 @@ class _GameShellState extends State<GameShell> {
                           selectedIcon: Icon(Icons.store_rounded),
                           label: Text('Port'),
                         ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.public_outlined),
+                          selectedIcon: Icon(Icons.public_rounded),
+                          label: Text('Planet'),
+                        ),
                       ],
                     ),
                   ),
@@ -464,9 +488,9 @@ class _GameShellState extends State<GameShell> {
                     width: double.infinity,
                     height: 48,
                     child: TextButton.icon(
-                      onPressed: () => setState(() => _currentIndex = 5),
+                      onPressed: () => setState(() => _currentIndex = 6),
                       icon: Icon(
-                        _currentIndex == 5
+                        _currentIndex == 6
                             ? Icons.settings_rounded
                             : Icons.settings_outlined,
                         size: 18,
@@ -502,22 +526,31 @@ class _GameShellState extends State<GameShell> {
                   onPlayerUpdate: _updatePlayer,
                   onRefreshNpcs: _reloadNpcs,
                   onOpenPort: () => setState(() => _currentIndex = 4),
-                  fedSpaceEnd: _settings.fedSpaceEnd,
-                ),
-                GalaxyMap(
-                  key: _universeKey,
-                  npcs: _npcs,
-                  currentSectorId: _player.currentSectorId,
-                  onSectorSelected: _onSectorSelected,
-                ),
-                ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
-                ComputerScreen(
-                  key: _computerKey,
-                  player: _player,
-                  onPlayerUpdate: _updatePlayer,
-                ),
-                PortScreen(
-                  key: _universeKey,
+            onOpenPlanet: () => setState(() {
+              _currentIndex = 5;
+              _planetKey = UniqueKey();
+            }),
+            fedSpaceEnd: _settings.fedSpaceEnd,
+          ),
+          GalaxyMap(
+            key: _universeKey,
+            npcs: _npcs,
+            currentSectorId: _player.currentSectorId,
+            onSectorSelected: _onSectorSelected,
+          ),
+          ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
+          ComputerScreen(
+            key: _computerKey,
+            player: _player,
+            onPlayerUpdate: _updatePlayer,
+          ),
+          PortScreen(
+            key: _universeKey,
+            player: _player,
+            onPlayerUpdate: _updatePlayer,
+          ),
+          PlanetScreen(
+            key: _planetKey,
                   player: _player,
                   onPlayerUpdate: _updatePlayer,
                 ),

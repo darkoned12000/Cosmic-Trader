@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:tradewars_2050/data/models/commodity.dart';
+
 /// Configuration for universe generation and game economy.
 class GameSettings {
   // --- Universe generation ---
@@ -38,19 +40,8 @@ class GameSettings {
 
   final List<String> anomalyTypes;
 
-  // --- Economy ---
-  final double mineralPriceMin;
-  final double mineralPriceMax;
-  final double organicsPriceMin;
-  final double organicsPriceMax;
-  final double industrialPriceMin;
-  final double industrialPriceMax;
-  final int mineralQtyMin;
-  final int mineralQtyMax;
-  final int organicsQtyMin;
-  final int organicsQtyMax;
-  final int industrialQtyMin;
-  final int industrialQtyMax;
+  // --- Economy (data-driven commodity configs) ---
+  final Map<String, CommodityConfig> commodityConfigs;
 
   // --- Player initial values ---
   final int initTurns;
@@ -102,18 +93,7 @@ class GameSettings {
     required this.bubbleChance,
     required this.maxBubbleSize,
     required this.anomalyTypes,
-    this.mineralPriceMin = 5,
-    this.mineralPriceMax = 25,
-    this.organicsPriceMin = 10,
-    this.organicsPriceMax = 50,
-    this.industrialPriceMin = 20,
-    this.industrialPriceMax = 100,
-    this.mineralQtyMin = 10000,
-    this.mineralQtyMax = 50000,
-    this.organicsQtyMin = 5000,
-    this.organicsQtyMax = 40000,
-    this.industrialQtyMin = 3000,
-    this.industrialQtyMax = 3000,
+    this.commodityConfigs = CommodityRegistry.defaultsMap,
     this.pct1Warp = 0.10,
     this.pct2Warp = 0.30,
     this.pct3Warp = 0.28,
@@ -144,7 +124,7 @@ class GameSettings {
 
   /// Default settings matching original TW2052 behavior.
   factory GameSettings.defaults() {
-    return GameSettings(
+    return const GameSettings(
       totalSectors: 50,
       seed: 0,
       portDensity: 0.35,
@@ -157,7 +137,6 @@ class GameSettings {
       fedSpaceEnd: 9,
       bubbleChance: 0.15,
       maxBubbleSize: 6,
-      resetPlayersOnRegen: true,
       anomalyTypes: [
         'Asteroid Field',
         'Nebula',
@@ -201,18 +180,7 @@ class GameSettings {
     double? bubbleChance,
     int? maxBubbleSize,
     List<String>? anomalyTypes,
-    double? mineralPriceMin,
-    double? mineralPriceMax,
-    double? organicsPriceMin,
-    double? organicsPriceMax,
-    double? industrialPriceMin,
-    double? industrialPriceMax,
-    int? mineralQtyMin,
-    int? mineralQtyMax,
-    int? organicsQtyMin,
-    int? organicsQtyMax,
-    int? industrialQtyMin,
-    int? industrialQtyMax,
+    Map<String, CommodityConfig>? commodityConfigs,
     int? initTurns,
     int? initCredits,
     int? initHolds,
@@ -256,18 +224,7 @@ class GameSettings {
       bubbleChance: bubbleChance ?? this.bubbleChance,
       maxBubbleSize: maxBubbleSize ?? this.maxBubbleSize,
       anomalyTypes: anomalyTypes ?? this.anomalyTypes,
-      mineralPriceMin: mineralPriceMin ?? this.mineralPriceMin,
-      mineralPriceMax: mineralPriceMax ?? this.mineralPriceMax,
-      organicsPriceMin: organicsPriceMin ?? this.organicsPriceMin,
-      organicsPriceMax: organicsPriceMax ?? this.organicsPriceMax,
-      industrialPriceMin: industrialPriceMin ?? this.industrialPriceMin,
-      industrialPriceMax: industrialPriceMax ?? this.industrialPriceMax,
-      mineralQtyMin: mineralQtyMin ?? this.mineralQtyMin,
-      mineralQtyMax: mineralQtyMax ?? this.mineralQtyMax,
-      organicsQtyMin: organicsQtyMin ?? this.organicsQtyMin,
-      organicsQtyMax: organicsQtyMax ?? this.organicsQtyMax,
-      industrialQtyMin: industrialQtyMin ?? this.industrialQtyMin,
-      industrialQtyMax: industrialQtyMax ?? this.industrialQtyMax,
+      commodityConfigs: commodityConfigs ?? this.commodityConfigs,
       pct1Warp: pct1Warp ?? this.pct1Warp,
       pct2Warp: pct2Warp ?? this.pct2Warp,
       pct3Warp: pct3Warp ?? this.pct3Warp,
@@ -325,18 +282,8 @@ class GameSettings {
       'deleteAllPlayersOnRegen': deleteAllPlayersOnRegen,
       'unlockAllShips': unlockAllShips,
       'anomalyTypes': anomalyTypes,
-      'mineralPriceMin': mineralPriceMin,
-      'mineralPriceMax': mineralPriceMax,
-      'organicsPriceMin': organicsPriceMin,
-      'organicsPriceMax': organicsPriceMax,
-      'industrialPriceMin': industrialPriceMin,
-      'industrialPriceMax': industrialPriceMax,
-      'mineralQtyMin': mineralQtyMin,
-      'mineralQtyMax': mineralQtyMax,
-      'organicsQtyMin': organicsQtyMin,
-      'organicsQtyMax': organicsQtyMax,
-      'industrialQtyMin': industrialQtyMin,
-      'industrialQtyMax': industrialQtyMax,
+      'commodityConfigs':
+          commodityConfigs.map((k, v) => MapEntry(k, v.toJson())),
       'initTurns': initTurns,
       'initCredits': initCredits,
       'initHolds': initHolds,
@@ -384,21 +331,9 @@ class GameSettings {
           json['deleteAllPlayersOnRegen'] as bool? ?? false,
       unlockAllShips: json['unlockAllShips'] as bool? ?? true,
       anomalyTypes: (json['anomalyTypes'] as List?)?.cast<String>() ??
-          _defaultAnomalies(),
-      mineralPriceMin: (json['mineralPriceMin'] as num?)?.toDouble() ?? 5,
-      mineralPriceMax: (json['mineralPriceMax'] as num?)?.toDouble() ?? 25,
-      organicsPriceMin: (json['organicsPriceMin'] as num?)?.toDouble() ?? 10,
-      organicsPriceMax: (json['organicsPriceMax'] as num?)?.toDouble() ?? 50,
-      industrialPriceMin:
-          (json['industrialPriceMin'] as num?)?.toDouble() ?? 20,
-      industrialPriceMax:
-          (json['industrialPriceMax'] as num?)?.toDouble() ?? 100,
-      mineralQtyMin: json['mineralQtyMin'] as int? ?? 10000,
-      mineralQtyMax: json['mineralQtyMax'] as int? ?? 50000,
-      organicsQtyMin: json['organicsQtyMin'] as int? ?? 5000,
-      organicsQtyMax: json['organicsQtyMax'] as int? ?? 40000,
-      industrialQtyMin: json['industrialQtyMin'] as int? ?? 3000,
-      industrialQtyMax: json['industrialQtyMax'] as int? ?? 3000,
+          ['Asteroid Field', 'Nebula', 'Debris Field', 'Gravity Well',
+           'Radiation Storm', 'Dark Matter Cloud'],
+      commodityConfigs: _readCommodityConfigs(json),
       initTurns: json['initTurns'] as int? ?? 1000,
       initCredits: json['initCredits'] as int? ?? 1000000,
       initHolds: json['initHolds'] as int? ?? 50,
@@ -419,12 +354,51 @@ class GameSettings {
     );
   }
 
-  static List<String> _defaultAnomalies() => [
-        'Asteroid Field',
-        'Nebula',
-        'Debris Field',
-        'Gravity Well',
-        'Radiation Storm',
-        'Dark Matter Cloud',
-      ];
+  static Map<String, CommodityConfig> _readCommodityConfigs(
+      Map<String, dynamic> json) {
+    final raw = json['commodityConfigs'];
+    if (raw is Map) {
+      return raw.map((k, v) => MapEntry(
+          k as String,
+          CommodityConfig.fromJson(v as Map<String, dynamic>)));
+    }
+    // Legacy: individual fields (pre-commodity-registry).
+    return _legacyConfigs(json);
+  }
+
+  static Map<String, CommodityConfig> _legacyConfigs(
+      Map<String, dynamic> json) {
+    final configs = <String, CommodityConfig>{};
+    if (json.containsKey('mineralPriceMin')) {
+      configs['minerals'] = CommodityConfig(
+        name: 'minerals',
+        displayName: 'Minerals',
+        priceMin: (json['mineralPriceMin'] as num?)?.toDouble() ?? 5,
+        priceMax: (json['mineralPriceMax'] as num?)?.toDouble() ?? 25,
+        qtyMin: json['mineralQtyMin'] as int? ?? 10000,
+        qtyMax: json['mineralQtyMax'] as int? ?? 50000,
+      );
+    }
+    if (json.containsKey('organicsPriceMin')) {
+      configs['organics'] = CommodityConfig(
+        name: 'organics',
+        displayName: 'Organics',
+        priceMin: (json['organicsPriceMin'] as num?)?.toDouble() ?? 10,
+        priceMax: (json['organicsPriceMax'] as num?)?.toDouble() ?? 50,
+        qtyMin: json['organicsQtyMin'] as int? ?? 5000,
+        qtyMax: json['organicsQtyMax'] as int? ?? 40000,
+      );
+    }
+    if (json.containsKey('industrialPriceMin')) {
+      configs['industrial'] = CommodityConfig(
+        name: 'industrial',
+        displayName: 'Industrial',
+        priceMin: (json['industrialPriceMin'] as num?)?.toDouble() ?? 20,
+        priceMax: (json['industrialPriceMax'] as num?)?.toDouble() ?? 100,
+        qtyMin: json['industrialQtyMin'] as int? ?? 3000,
+        qtyMax: json['industrialQtyMax'] as int? ?? 30000,
+      );
+    }
+    return configs.isNotEmpty ? configs : CommodityRegistry.freshDefaults();
+  }
 }

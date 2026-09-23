@@ -5,6 +5,7 @@ import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
 import 'package:tradewars_2050/data/models/player.dart';
 import 'package:tradewars_2050/data/models/sector.dart';
 import 'package:tradewars_2050/data/storage/npc_storage.dart';
+import 'package:tradewars_2050/data/storage/universe_storage.dart';
 import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:tradewars_2050/services/game_tick_service.dart';
 import 'package:tradewars_2050/widgets/combat_screen.dart';
@@ -31,6 +32,7 @@ class SectorInteractionPanel extends StatefulWidget {
   final Function(Player) onPlayerUpdate;
   final VoidCallback? onRefreshNpcs;
   final int fedSpaceEnd;
+  final VoidCallback? onLandOnPlanet;
 
   const SectorInteractionPanel({
     super.key,
@@ -40,6 +42,7 @@ class SectorInteractionPanel extends StatefulWidget {
     required this.onPlayerUpdate,
     this.onRefreshNpcs,
     this.fedSpaceEnd = 0,
+    this.onLandOnPlanet,
   });
 
   bool get isFedSpace =>
@@ -102,70 +105,195 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       ));
     }
 
+    // Planet in this sector
+    if (s.hasPlanet && s.planet != null) {
+      final p = s.planet!;
+      entries.add(_SectorEntry(
+        id: 'planet_${s.id}',
+        type: _EntryType.planet,
+        label: p.name.toUpperCase(),
+        detail: p.isHomeworld && p.homeworldOf != null
+            ? '${p.planetType}  •  ${p.homeworldOf!.name.toUpperCase()} HOMEWORLD'
+            : '${p.planetType}  •  ${p.scanned ? (p.owner != null ? 'OWNED: ${p.owner!.name.toUpperCase()}' : 'UNCLAIMED') : 'NOT SCANNED'}',
+        color: Colors.brown,
+        icon: Icons.public_rounded,
+      ));
+    }
+
     return entries;
   }
 
   Future<void> _handleScan(_SectorEntry entry) async {
     if (entry.npcShip case final npc?) {
       if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text('SCAN — ${npc.shipName}'),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _detailRow('Ship', npc.shipDef.name),
-                _detailRow(
-                    'Class', npc.shipDef.shipClass.name.toUpperCase()),
-                _detailRow('Faction', npc.faction.name.toUpperCase()),
-                _detailRow('Personality', npc.personality.name.toUpperCase()),
-                _detailRow('Hull', '${npc.hull}/${npc.maxHull}'),
-                _detailRow('Shields', '${npc.shields}/${npc.maxShields}'),
-                _detailRow('Credits', '${npc.credits} cr'),
-                _detailRow('Cargo', '${npc.cargoUsed} units'),
-                _detailRow('Sector', '#${npc.currentSectorId}'),
-                const SizedBox(height: 8),
-                Text(
-                  'Weapons:',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.cyan.shade300,
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-                const SizedBox(height: 4),
-                for (final e in npc.weaponSlots.entries)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('SCAN — ${npc.shipName}'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _detailRow('Ship', npc.shipDef.name),
+                  _detailRow(
+                      'Class', npc.shipDef.shipClass.name.toUpperCase()),
+                  _detailRow('Faction', npc.faction.name.toUpperCase()),
+                  _detailRow(
+                      'Personality', npc.personality.name.toUpperCase()),
+                  _detailRow('Hull', '${npc.hull}/${npc.maxHull}'),
+                  _detailRow('Shields', '${npc.shields}/${npc.maxShields}'),
+                  _detailRow('Credits', '${npc.credits} cr'),
+                  _detailRow('Cargo', '${npc.cargoUsed} units'),
+                  _detailRow('Sector', '#${npc.currentSectorId}'),
+                  const SizedBox(height: 8),
                   Text(
-                    () {
-                      final idx = npc.shipDef.weaponSlots.indexOf(e.key);
-                      final wt = (idx >= 0 &&
-                              idx < npc.shipDef.preferredWeapons.length)
-                          ? npc.shipDef.preferredWeapons[idx]
-                          : null;
-                      final typeName = wt?.name.replaceAllMapped(
-                              RegExp(r'[A-Z]'), (m) => ' ${m.group(0)}') ??
-                          e.key;
-                      final dmg = wt != null ? wt.damage * e.value : 0;
-                      return '  $typeName Lv${e.value}  ${dmg}dmg';
-                    }(),
-                    style: const TextStyle(
-                        fontSize: 11, fontFamily: 'monospace'),
+                    'Weapons:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.cyan.shade300,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
                   ),
-              ],
+                  const SizedBox(height: 4),
+                  for (final e in npc.weaponSlots.entries)
+                    Text(
+                      () {
+                        final idx = npc.shipDef.weaponSlots.indexOf(e.key);
+                        final wt = (idx >= 0 &&
+                                idx < npc.shipDef.preferredWeapons.length)
+                            ? npc.shipDef.preferredWeapons[idx]
+                            : null;
+                        final typeName = wt?.name.replaceAllMapped(
+                                RegExp(r'[A-Z]'), (m) => ' ${m.group(0)}') ??
+                            e.key;
+                        final dmg = wt != null ? wt.damage * e.value : 0;
+                        return '  $typeName Lv${e.value}  ${dmg}dmg';
+                      }(),
+                      style: const TextStyle(
+                          fontSize: 11, fontFamily: 'monospace'),
+                    ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Close'),
+        );
+      });
+      return;
+    }
+
+    if (entry.type == _EntryType.planet) {
+      final planet = widget.currentSector.planet;
+      if (planet == null) return;
+
+      if (!planet.scanned) {
+        if (widget.player.turns <= 0) {
+          if (!mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Scan Failed'),
+                content: const Text('Not enough turns remaining.'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          });
+          return;
+        }
+        widget.onPlayerUpdate(widget.player.copyWith(
+          turns: widget.player.turns - 1,
+        ));
+        planet.scanned = true;
+        await UniverseStorage.instance.saveSectors([widget.currentSector]);
+        ActionLogProvider.global.info(
+          'Scan complete: ${planet.name} — ${planet.planetType}',
+        );
+      }
+
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(planet.name),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (planet.imagePath != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.asset(
+                          planet.imagePath!,
+                          height: 120,
+                          width: double.infinity,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => Container(
+                            height: 120,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            child: Center(
+                              child: Icon(
+                                Icons.image_not_supported_rounded,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.3),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  _detailRow('Type', 'Planet Type: ${planet.planetType}'),
+                  _detailRow('Atmosphere', planet.atmosphere),
+                  _detailRow('Population', planet.population.toString()),
+                  _detailRow('Level', planet.level.toString()),
+                  if (planet.owner != null)
+                    _detailRow('Owner', planet.owner!.displayName),
+                  _detailRow(
+                      'Status', planet.isHomeworld ? 'HOMEWORLD' : 'Colony'),
+                  const SizedBox(height: 8),
+                  _detailRow('Shields',
+                      '${planet.shield.toInt()} / ${planet.maxShield.toInt()}'),
+                  _detailRow('Armor',
+                      '${planet.hull.toInt()} / ${planet.maxHull.toInt()}'),
+                  _detailRow(
+                      'Defense Level', '${planet.defenseLevel} / 4'),
+                ],
+              ),
             ),
-          ],
-        ),
-      );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+      });
+      return;
     }
   }
 
@@ -319,7 +447,13 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
         _handleTrade(entry);
       case 'attack':
         _handleAttack(entry);
+      case 'land':
+        _handleLand(entry);
     }
+  }
+
+  void _handleLand(_SectorEntry entry) {
+    widget.onLandOnPlanet?.call();
   }
 
   @override
@@ -522,6 +656,27 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   }
 
   Widget _interactionButtons(_SectorEntry entry) {
+    if (entry.type == _EntryType.planet) {
+      return Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          _interactionButton(
+            icon: Icons.science_rounded,
+            label: 'SCAN',
+            color: Colors.cyan,
+            onTap: () => _handleInteraction('scan', entry),
+          ),
+          _interactionButton(
+            icon: Icons.public_rounded,
+            label: 'LAND',
+            color: Colors.brown,
+            onTap: () => _handleInteraction('land', entry),
+          ),
+        ],
+      );
+    }
+
     return Wrap(
       spacing: 6,
       runSpacing: 4,
@@ -600,7 +755,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   }
 }
 
-enum _EntryType { hazard, anomaly, npc }
+enum _EntryType { hazard, anomaly, npc, planet }
 
 class _SectorEntry {
   final String id;

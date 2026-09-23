@@ -1,3 +1,4 @@
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/sector.dart';
 import 'package:tradewars_2050/services/npc_ai/npc_memory.dart';
 import 'package:tradewars_2050/services/npc_ai/pathfinding_service.dart';
@@ -26,11 +27,7 @@ class TradeRoute {
 
 class TradeEvaluator {
   /// Commodities in the game economy.
-  static const List<String> commodities = [
-    'minerals',
-    'organics',
-    'industrial'
-  ];
+  static List<String> get commodities => CommodityRegistry.names;
 
   /// Find the best trade route from discovered ports.
   ///

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/faction.dart';
 import 'package:tradewars_2050/data/models/player.dart';
 import 'package:tradewars_2050/data/models/port.dart';
@@ -35,7 +36,7 @@ class PortTradeView extends StatelessWidget {
     required this.maxHackAttempts,
   });
 
-  static const _commodities = ['minerals', 'organics', 'industrial'];
+  static List<String> get _commodities => CommodityRegistry.names;
   static const _commodityIcons = {
     'minerals': Icons.diamond_rounded,
     'organics': Icons.eco_rounded,
@@ -481,8 +482,8 @@ class PortTradeView extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(flex: 3, child: _colHeader(cs, 'commodity')),
-                    Expanded(flex: 1, child: _colHeader(cs, 'sell')),
                     Expanded(flex: 1, child: _colHeader(cs, 'buy')),
+                    Expanded(flex: 1, child: _colHeader(cs, 'sell')),
                     Expanded(flex: 2, child: _colHeader(cs, 'supply/dem')),
                     Expanded(flex: 1, child: _colHeader(cs, 'hold')),
                     Expanded(
@@ -640,7 +641,7 @@ class PortTradeView extends StatelessWidget {
                     onPressed: () => _sell(commodity),
                     backgroundColor: Colors.green.shade700,
                     foregroundColor: Colors.white,
-                    label: 'buy',
+                    label: 'sell',
                     height: 28,
                     fontSize: 11,
                   ),
@@ -652,7 +653,7 @@ class PortTradeView extends StatelessWidget {
                     onPressed: () => _buy(commodity),
                     backgroundColor: cs.primary,
                     foregroundColor: cs.onPrimary,
-                    label: 'sell',
+                    label: 'buy',
                     height: 28,
                     fontSize: 11,
                   ),

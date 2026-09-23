@@ -222,7 +222,7 @@ class GalaxyMapPainter extends CustomPainter {
       // Planet indicator (circled dot)
       if (sector.hasPlanet) {
         final planetPaint = Paint()
-          ..color = Colors.cyanAccent
+          ..color = Colors.brown
           ..style = PaintingStyle.fill;
         final planetPos =
             Offset(pos.dx - nodeRadius - 4, pos.dy - nodeRadius - 4);
@@ -231,7 +231,7 @@ class GalaxyMapPainter extends CustomPainter {
           planetPos,
           6,
           Paint()
-            ..color = Colors.cyanAccent.withValues(alpha: 0.4)
+            ..color = Colors.brown.withValues(alpha: 0.4)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1,
         );

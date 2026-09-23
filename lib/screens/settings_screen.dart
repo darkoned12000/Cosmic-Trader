@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tradewars_2050/core/theme_service.dart';
+import 'package:tradewars_2050/data/models/commodity.dart';
 import 'package:tradewars_2050/data/models/game_settings.dart';
 import 'package:tradewars_2050/services/audio_service.dart';
 import 'package:tradewars_2050/widgets/audio_settings_widget.dart';
@@ -26,6 +27,27 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+class _CommodityControllers {
+  final TextEditingController priceMin;
+  final TextEditingController priceMax;
+  final TextEditingController qtyMin;
+  final TextEditingController qtyMax;
+
+  _CommodityControllers({
+    required this.priceMin,
+    required this.priceMax,
+    required this.qtyMin,
+    required this.qtyMax,
+  });
+
+  void dispose() {
+    priceMin.dispose();
+    priceMax.dispose();
+    qtyMin.dispose();
+    qtyMax.dispose();
+  }
+}
+
 class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _seedController;
   late TextEditingController _sectorCountController;
@@ -37,18 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _duranDensityController;
   late TextEditingController _vinariDensityController;
   late TextEditingController _pirateDensityController;
-  late TextEditingController _mineralPriceMinController;
-  late TextEditingController _mineralPriceMaxController;
-  late TextEditingController _organicsPriceMinController;
-  late TextEditingController _organicsPriceMaxController;
-  late TextEditingController _industrialPriceMinController;
-  late TextEditingController _industrialPriceMaxController;
-  late TextEditingController _mineralQtyMinController;
-  late TextEditingController _mineralQtyMaxController;
-  late TextEditingController _organicsQtyMinController;
-  late TextEditingController _organicsQtyMaxController;
-  late TextEditingController _industrialQtyMinController;
-  late TextEditingController _industrialQtyMaxController;
+  late Map<String, _CommodityControllers> _commodityControllers;
   late TextEditingController _initTurnsController;
   late TextEditingController _initCreditsController;
   late TextEditingController _initHoldsController;
@@ -96,30 +107,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextEditingController(text: (s.vinariDensity * 100).toStringAsFixed(0));
     _pirateDensityController =
         TextEditingController(text: (s.pirateDensity * 100).toStringAsFixed(0));
-    _mineralPriceMinController =
-        TextEditingController(text: s.mineralPriceMin.toStringAsFixed(0));
-    _mineralPriceMaxController =
-        TextEditingController(text: s.mineralPriceMax.toStringAsFixed(0));
-    _organicsPriceMinController =
-        TextEditingController(text: s.organicsPriceMin.toStringAsFixed(0));
-    _organicsPriceMaxController =
-        TextEditingController(text: s.organicsPriceMax.toStringAsFixed(0));
-    _industrialPriceMinController =
-        TextEditingController(text: s.industrialPriceMin.toStringAsFixed(0));
-    _industrialPriceMaxController =
-        TextEditingController(text: s.industrialPriceMax.toStringAsFixed(0));
-    _mineralQtyMinController =
-        TextEditingController(text: s.mineralQtyMin.toString());
-    _mineralQtyMaxController =
-        TextEditingController(text: s.mineralQtyMax.toString());
-    _organicsQtyMinController =
-        TextEditingController(text: s.organicsQtyMin.toString());
-    _organicsQtyMaxController =
-        TextEditingController(text: s.organicsQtyMax.toString());
-    _industrialQtyMinController =
-        TextEditingController(text: s.industrialQtyMin.toString());
-    _industrialQtyMaxController =
-        TextEditingController(text: s.industrialQtyMax.toString());
+    _commodityControllers = {};
+    for (final entry in s.commodityConfigs.entries) {
+      _commodityControllers[entry.key] = _CommodityControllers(
+        priceMin: TextEditingController(
+            text: entry.value.priceMin.toStringAsFixed(0)),
+        priceMax: TextEditingController(
+            text: entry.value.priceMax.toStringAsFixed(0)),
+        qtyMin: TextEditingController(text: entry.value.qtyMin.toString()),
+        qtyMax: TextEditingController(text: entry.value.qtyMax.toString()),
+      );
+    }
     _initTurnsController = TextEditingController(text: s.initTurns.toString());
     _initCreditsController =
         TextEditingController(text: s.initCredits.toString());
@@ -177,18 +175,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _duranDensityController.dispose();
     _vinariDensityController.dispose();
     _pirateDensityController.dispose();
-    _mineralPriceMinController.dispose();
-    _mineralPriceMaxController.dispose();
-    _organicsPriceMinController.dispose();
-    _organicsPriceMaxController.dispose();
-    _industrialPriceMinController.dispose();
-    _industrialPriceMaxController.dispose();
-    _mineralQtyMinController.dispose();
-    _mineralQtyMaxController.dispose();
-    _organicsQtyMinController.dispose();
-    _organicsQtyMaxController.dispose();
-    _industrialQtyMinController.dispose();
-    _industrialQtyMaxController.dispose();
+    for (final c in _commodityControllers.values) {
+      c.dispose();
+    }
     _initTurnsController.dispose();
     _initCreditsController.dispose();
     _initHoldsController.dispose();
@@ -242,20 +231,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       deleteAllPlayersOnRegen: _deleteAllPlayers,
       unlockAllShips: _unlockAllShips,
       anomalyTypes: widget.currentSettings.anomalyTypes,
-      mineralPriceMin: double.tryParse(_mineralPriceMinController.text) ?? 8,
-      mineralPriceMax: double.tryParse(_mineralPriceMaxController.text) ?? 12,
-      organicsPriceMin: double.tryParse(_organicsPriceMinController.text) ?? 16,
-      organicsPriceMax: double.tryParse(_organicsPriceMaxController.text) ?? 24,
-      industrialPriceMin:
-          double.tryParse(_industrialPriceMinController.text) ?? 40,
-      industrialPriceMax:
-          double.tryParse(_industrialPriceMaxController.text) ?? 60,
-      mineralQtyMin: int.tryParse(_mineralQtyMinController.text) ?? 10000,
-      mineralQtyMax: int.tryParse(_mineralQtyMaxController.text) ?? 50000,
-      organicsQtyMin: int.tryParse(_organicsQtyMinController.text) ?? 5000,
-      organicsQtyMax: int.tryParse(_organicsQtyMaxController.text) ?? 40000,
-      industrialQtyMin: int.tryParse(_industrialQtyMinController.text) ?? 3000,
-      industrialQtyMax: int.tryParse(_industrialQtyMaxController.text) ?? 30000,
+      commodityConfigs: _buildCommodityConfigs(),
       initTurns: int.tryParse(_initTurnsController.text) ?? 1000,
       initCredits: int.tryParse(_initCreditsController.text) ?? 1000000,
       initHolds: int.tryParse(_initHoldsController.text) ?? 50,
@@ -271,6 +247,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       sfxVolume: _sfxVolume,
       musicFolderPath: AudioService.musicFolderPath.value,
     );
+  }
+
+  Map<String, CommodityConfig> _buildCommodityConfigs() {
+    final configs = <String, CommodityConfig>{};
+    for (final entry in _commodityControllers.entries) {
+      final c = entry.value;
+      configs[entry.key] = CommodityConfig(
+        name: entry.key,
+        displayName: entry.key,
+        priceMin: double.tryParse(c.priceMin.text) ?? 5,
+        priceMax: double.tryParse(c.priceMax.text) ?? 25,
+        qtyMin: int.tryParse(c.qtyMin.text) ?? 10000,
+        qtyMax: int.tryParse(c.qtyMax.text) ?? 50000,
+      );
+    }
+    return configs;
   }
 
   @override
@@ -425,27 +417,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             style: theme.textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
-                        _rangeField('Minerals', _mineralPriceMinController,
-                            _mineralPriceMaxController),
-                        _rangeField('Organics', _organicsPriceMinController,
-                            _organicsPriceMaxController),
-                        _rangeField('Industrial', _industrialPriceMinController,
-                            _industrialPriceMaxController),
+                        ..._commodityControllers.entries.map((e) =>
+                            _rangeField(
+                                '${e.key} (price)', e.value.priceMin,
+                                e.value.priceMax)),
 
                         const SizedBox(height: 16),
                         Text('Economy (quantity ranges)',
                             style: theme.textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
-                        _rangeField('Minerals', _mineralQtyMinController,
-                            _mineralQtyMaxController,
-                            isInt: true),
-                        _rangeField('Organics', _organicsQtyMinController,
-                            _organicsQtyMaxController,
-                            isInt: true),
-                        _rangeField('Industrial', _industrialQtyMinController,
-                            _industrialQtyMaxController,
-                            isInt: true),
+                        ..._commodityControllers.entries.map((e) =>
+                            _rangeField(
+                                '${e.key} (qty)', e.value.qtyMin,
+                                e.value.qtyMax,
+                                isInt: true)),
 
                         const SizedBox(height: 24),
 
