@@ -35,6 +35,7 @@ class _PortScreenState extends State<PortScreen> {
   bool _showBuyPort = false;
   int _hackFailCount = 0;
   static const _maxHackAttempts = 3;
+  static const _maxHackSessionAttempts = 5;
 
   Timer? _saveTimer;
   bool _dirty = false;
@@ -101,7 +102,7 @@ class _PortScreenState extends State<PortScreen> {
   Port? get _port => _currentSector?.port;
 
   void _applyHackPenalty(int failCount) {
-    final penalties = <int, int>{1: 500, 2: 2500, 3: 5000};
+    final penalties = <int, int>{1: 500, 2: 2500, 3: 5000, 4: 7500, 5: 10000};
     final penalty = penalties[failCount] ?? 0;
     final actualPenalty = min(penalty, widget.player.credits);
     final updated = widget.player.copyWith(
@@ -293,8 +294,10 @@ class _PortScreenState extends State<PortScreen> {
     if (_showHacking) {
       return HackingWidget(
         player: widget.player,
+        port: _port,
         failCount: _hackFailCount,
-        maxAttempts: _maxHackAttempts,
+        maxAttempts: _maxHackSessionAttempts,
+        maxFailures: _maxHackAttempts,
         onSuccess: (updated) {
           widget.onPlayerUpdate(updated);
           setState(() => _showHacking = false);

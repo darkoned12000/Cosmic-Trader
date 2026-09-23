@@ -479,6 +479,10 @@ class _GameShellState extends State<GameShell> {
                 children: [
                   Expanded(
                     child: NavigationRail(
+                      // NavigationRail's built-in scrolling keeps all
+                      // destinations available when a short desktop panel
+                      // cannot fit the full labelled rail.
+                      scrollable: true,
                       minWidth: 88,
                       selectedIndex: _currentIndex < 6 ? _currentIndex : 0,
                       onDestinationSelected: (index) => setState(() {

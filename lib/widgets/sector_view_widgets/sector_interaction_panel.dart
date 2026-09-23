@@ -242,23 +242,30 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: Image.asset(
-                          planet.imagePath!,
-                          height: 120,
-                          width: double.infinity,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => Container(
+                        child: ConstrainedBox(
+                          // AlertDialog measures its content with an
+                          // IntrinsicWidth. A double.infinity width on the
+                          // image makes that measurement infinite. Keep a
+                          // finite maximum so the image can still shrink
+                          // with the dialog on smaller panels.
+                          constraints: const BoxConstraints(maxWidth: 220),
+                          child: Image.asset(
+                            planet.imagePath!,
                             height: 120,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            child: Center(
-                              child: Icon(
-                                Icons.image_not_supported_rounded,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurface
-                                    .withValues(alpha: 0.3),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => Container(
+                              height: 120,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              child: Center(
+                                child: Icon(
+                                  Icons.image_not_supported_rounded,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.3),
+                                ),
                               ),
                             ),
                           ),

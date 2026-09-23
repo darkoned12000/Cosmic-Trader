@@ -142,4 +142,15 @@ void main() {
 
     await unmountShell(tester);
   });
+
+  testWidgets('rail remains usable in a short desktop panel',
+      (WidgetTester tester) async {
+    await pumpShell(tester, const Size(700, 500));
+
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(tester.takeException(), isNull,
+        reason: 'a short desktop panel must not overflow the navigation rail');
+
+    await unmountShell(tester);
+  });
 }
