@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
@@ -409,7 +410,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
 
   Widget _detailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: EdgeInsets.symmetric(vertical: UiScale.spacing(2)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -479,15 +480,19 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
               children: [
                 Icon(Icons.radar, size: 18, color: cs.primary),
                 const SizedBox(width: 8),
-                Text(
-                  'SECTOR CONTENTS',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: cs.primary,
-                    letterSpacing: 1,
+                Expanded(
+                  child: Text(
+                    'SECTOR CONTENTS',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: cs.primary,
+                      letterSpacing: 1,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -536,7 +541,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     return ListView.separated(
       padding: EdgeInsets.zero,
       itemCount: entries.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      separatorBuilder: (_, __) => SizedBox(height: UiScale.spacing(6)),
       itemBuilder: (context, index) {
         final entry = entries[index];
         return _entryTile(entry);
@@ -729,7 +734,8 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding:
+              EdgeInsets.symmetric(horizontal: 8, vertical: UiScale.spacing(4)),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

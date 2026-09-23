@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/npc_ship.dart';
+import 'file_safe.dart';
 
 class NpcStorage {
   static final NpcStorage _instance = NpcStorage._internal();
@@ -37,7 +38,7 @@ class NpcStorage {
     try {
       final file = await _getFile();
       final data = {'npcs': npcs.map((npc) => npc.toJson()).toList()};
-      await file.writeAsString(json.encode(data));
+      await FileSafe.writeString(file, json.encode(data));
     } catch (e) {
       // Silently fail to not break universe generation
     }

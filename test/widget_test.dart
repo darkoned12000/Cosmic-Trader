@@ -16,5 +16,17 @@ void main() {
       expect(app.theme!.useMaterial3, isTrue);
       expect(app.theme!.brightness, Brightness.dark);
     });
+
+    testWidgets('LoginScreen exposes an Exit Game button that is harmless',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(const CosmicTraderApp());
+      expect(find.byTooltip('Exit Game'), findsOneWidget,
+          reason: 'login screen should offer a clean way to quit');
+
+      await tester.tap(find.byTooltip('Exit Game'));
+      await tester.pump();
+      expect(tester.takeException(), isNull,
+          reason: 'Exit Game must not throw on any platform');
+    });
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 
 /// Configuration for universe generation and game economy.
@@ -69,6 +70,19 @@ class GameSettings {
   final int resolutionWidth;
   final int resolutionHeight;
 
+  // --- UI scale ---
+  /// Magnification of the whole interface (>= 1.0). The font-size setting
+  /// scales text on top of this.
+  final double uiScale;
+
+  /// When true, [uiScale] is auto-detected from the primary display on launch.
+  final bool uiScaleAuto;
+
+  /// Layout density (compact / normal / cozy). Independent of [uiScale] —
+  /// this only adjusts spacing tokens, so Compact fits more content on screen
+  /// at any scale while Cozy adds breathing room.
+  final UiDensity uiDensity;
+
   // --- Font ---
   final String fontFamily;
   final double fontSize;
@@ -115,6 +129,9 @@ class GameSettings {
     this.windowScale = 0.75,
     this.resolutionWidth = 1280,
     this.resolutionHeight = 720,
+    this.uiScale = 1.0,
+    this.uiScaleAuto = true,
+    this.uiDensity = UiDensity.normal,
     this.fontFamily = '',
     this.fontSize = 14,
     this.musicVolume = 0.5,
@@ -152,6 +169,9 @@ class GameSettings {
       windowScale: 0.75,
       resolutionWidth: 1280,
       resolutionHeight: 720,
+      uiScale: 1.0,
+      uiScaleAuto: true,
+      uiDensity: UiDensity.normal,
       fontFamily: '',
       fontSize: 14,
       musicVolume: 0.5,
@@ -202,6 +222,9 @@ class GameSettings {
     double? windowScale,
     int? resolutionWidth,
     int? resolutionHeight,
+    double? uiScale,
+    bool? uiScaleAuto,
+    UiDensity? uiDensity,
     String? fontFamily,
     double? fontSize,
     double? musicVolume,
@@ -247,6 +270,9 @@ class GameSettings {
       windowScale: windowScale ?? this.windowScale,
       resolutionWidth: resolutionWidth ?? this.resolutionWidth,
       resolutionHeight: resolutionHeight ?? this.resolutionHeight,
+      uiScale: uiScale ?? this.uiScale,
+      uiScaleAuto: uiScaleAuto ?? this.uiScaleAuto,
+      uiDensity: uiDensity ?? this.uiDensity,
       fontFamily: fontFamily ?? this.fontFamily,
       fontSize: fontSize ?? this.fontSize,
       musicVolume: musicVolume ?? this.musicVolume,
@@ -294,6 +320,9 @@ class GameSettings {
       'windowScale': windowScale,
       'resolutionWidth': resolutionWidth,
       'resolutionHeight': resolutionHeight,
+      'uiScale': uiScale,
+      'uiScaleAuto': uiScaleAuto,
+      'uiDensity': uiDensity.name,
       'fontFamily': fontFamily,
       'fontSize': fontSize,
       'musicVolume': musicVolume,
@@ -351,6 +380,10 @@ class GameSettings {
       windowScale: (json['windowScale'] as num?)?.toDouble() ?? 0.75,
       resolutionWidth: json['resolutionWidth'] as int? ?? 1280,
       resolutionHeight: json['resolutionHeight'] as int? ?? 720,
+      uiScale: (json['uiScale'] as num?)?.toDouble() ?? 1.0,
+      uiScaleAuto: json['uiScaleAuto'] as bool? ?? true,
+      uiDensity: UiDensity.values.asNameMap()[json['uiDensity'] as String?] ??
+          UiDensity.normal,
       fontFamily: json['fontFamily'] as String? ?? '',
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14,
       musicVolume: (json['musicVolume'] as num?)?.toDouble() ?? 0.5,

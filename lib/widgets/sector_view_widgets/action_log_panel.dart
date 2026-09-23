@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
 import 'action_log_provider.dart';
 
 class ActionLogPanel extends StatefulWidget {
@@ -58,25 +59,36 @@ class _ActionLogPanelState extends State<ActionLogPanel> {
                   children: [
                     Icon(Icons.history_rounded, size: 18, color: cs.primary),
                     const SizedBox(width: 8),
-                    Text(
-                      'ACTION LOG',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: cs.primary,
-                        letterSpacing: 1,
+                    Expanded(
+                      child: Text(
+                        'ACTION LOG',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: cs.primary,
+                          letterSpacing: 1,
+                        ),
                       ),
                     ),
-                    const Spacer(),
-                    Text(
-                      '${entries.length}/$rawCount',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: cs.onSurface.withValues(alpha: 0.5),
-                        fontFamily: 'monospace',
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          '${entries.length}/$rawCount',
+                          maxLines: 1,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurface.withValues(alpha: 0.5),
+                            fontFamily: 'monospace',
+                          ),
+                        ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: UiScale.spacing(8)),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
@@ -151,7 +163,8 @@ class _FilterChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding:
+            EdgeInsets.symmetric(horizontal: 10, vertical: UiScale.spacing(4)),
         decoration: BoxDecoration(
           color: selected ? c.withValues(alpha: 0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
@@ -187,7 +200,7 @@ class _LogEntryTile extends StatelessWidget {
     final color = _logTypeColor(entry.type);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: EdgeInsets.symmetric(vertical: UiScale.spacing(2)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

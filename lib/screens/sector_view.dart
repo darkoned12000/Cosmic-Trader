@@ -188,17 +188,14 @@ class _SectorViewState extends State<SectorView> {
             ),
           ),
           const SizedBox(height: 12),
-          SizedBox(
-            height: 200,
-            child: SectorInteractionPanel(
-              currentSector: _currentSector!,
-              npcs: _npcsInSector,
-              player: widget.player,
-              onPlayerUpdate: widget.onPlayerUpdate,
-              onRefreshNpcs: widget.onRefreshNpcs,
-              fedSpaceEnd: widget.fedSpaceEnd,
-              onLandOnPlanet: widget.onOpenPlanet,
-            ),
+          SectorInteractionPanel(
+            currentSector: _currentSector!,
+            npcs: _npcsInSector,
+            player: widget.player,
+            onPlayerUpdate: widget.onPlayerUpdate,
+            onRefreshNpcs: widget.onRefreshNpcs,
+            fedSpaceEnd: widget.fedSpaceEnd,
+            onLandOnPlanet: widget.onOpenPlanet,
           ),
           const SizedBox(height: 12),
           ShipStatusSummary(player: widget.player),
@@ -267,17 +264,14 @@ class _SectorViewState extends State<SectorView> {
                       highlightedSectorId: _selectedWarpTargetId,
                     ),
                     const SizedBox(height: 12),
-                    SizedBox(
-                      height: 200,
-                      child: SectorInteractionPanel(
-                        currentSector: _currentSector!,
-                        npcs: _npcsInSector,
-                        player: widget.player,
-                        onPlayerUpdate: widget.onPlayerUpdate,
-                        onRefreshNpcs: widget.onRefreshNpcs,
-                        fedSpaceEnd: widget.fedSpaceEnd,
-                        onLandOnPlanet: widget.onOpenPlanet,
-                      ),
+                    SectorInteractionPanel(
+                      currentSector: _currentSector!,
+                      npcs: _npcsInSector,
+                      player: widget.player,
+                      onPlayerUpdate: widget.onPlayerUpdate,
+                      onRefreshNpcs: widget.onRefreshNpcs,
+                      fedSpaceEnd: widget.fedSpaceEnd,
+                      onLandOnPlanet: widget.onOpenPlanet,
                     ),
                   ],
                 ),
@@ -291,13 +285,17 @@ class _SectorViewState extends State<SectorView> {
                     const SizedBox(height: 12),
                     if (_currentSector!.hasPort) _openPortButton(),
                     const SizedBox(height: 12),
-                    Expanded(
-                      flex: 3,
+                    // Fixed heights inside a scroll view — vertical
+                    // Expanded children are invalid under unbounded
+                    // height constraints (UI scale can shrink the
+                    // logical view size into this layout).
+                    SizedBox(
+                      height: 300,
                       child: ActionLogPanel(),
                     ),
                     const SizedBox(height: 12),
-                    Expanded(
-                      flex: 2,
+                    SizedBox(
+                      height: 250,
                       child: CommunicationsPanel(),
                     ),
                   ],
@@ -317,85 +315,92 @@ class _SectorViewState extends State<SectorView> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_statusMessage != null) _statusBanner(),
+          // On very wide displays (4K), cap the row width so panels don't
+          // stretch into unreadable columns; the extra space is centered.
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: ActionLogPanel(),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1760),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: ActionLogPanel(),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            flex: 2,
+                            child: CommunicationsPanel(),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        flex: 2,
-                        child: CommunicationsPanel(),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 4,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: TacticalMap(
-                          currentSector: _currentSector!,
-                          allSectors: _allSectors,
-                          player: widget.player,
-                          npcs: widget.npcs,
-                          // NEW: Listen for taps on the tactical map
-                          onWarpTargetSelected: (targetId) {
-                            setState(() {
-                              _selectedWarpTargetId = targetId;
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (_currentSector!.hasPort)
-                        SizedBox(
-                          width: double.infinity,
-                          child: _openPortButton(),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 3,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        WarpConsole(
-                          currentSector: _currentSector!,
-                          allSectors: _allSectors,
-                          player: widget.player,
-                          onWarp: _warpTo,
-                          // NEW: Pass the selected ID down to the WarpConsole
-                          highlightedSectorId: _selectedWarpTargetId,
-                        ),
-                        const SizedBox(height: 12),
-                        SectorInteractionPanel(
-                            currentSector: _currentSector!,
-                            npcs: _npcsInSector,
-                            player: widget.player,
-                            onPlayerUpdate: widget.onPlayerUpdate,
-                            onRefreshNpcs: widget.onRefreshNpcs,
-                            fedSpaceEnd: widget.fedSpaceEnd,
-                            onLandOnPlanet: widget.onOpenPlanet),
-                        const SizedBox(height: 12),
-                        ShipStatusSummary(player: widget.player),
-                      ],
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 4,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: TacticalMap(
+                              currentSector: _currentSector!,
+                              allSectors: _allSectors,
+                              player: widget.player,
+                              npcs: widget.npcs,
+                              // NEW: Listen for taps on the tactical map
+                              onWarpTargetSelected: (targetId) {
+                                setState(() {
+                                  _selectedWarpTargetId = targetId;
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          if (_currentSector!.hasPort)
+                            SizedBox(
+                              width: double.infinity,
+                              child: _openPortButton(),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 3,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            WarpConsole(
+                              currentSector: _currentSector!,
+                              allSectors: _allSectors,
+                              player: widget.player,
+                              onWarp: _warpTo,
+                              // NEW: Pass the selected ID down to the WarpConsole
+                              highlightedSectorId: _selectedWarpTargetId,
+                            ),
+                            const SizedBox(height: 12),
+                            SectorInteractionPanel(
+                                currentSector: _currentSector!,
+                                npcs: _npcsInSector,
+                                player: widget.player,
+                                onPlayerUpdate: widget.onPlayerUpdate,
+                                onRefreshNpcs: widget.onRefreshNpcs,
+                                fedSpaceEnd: widget.fedSpaceEnd,
+                                onLandOnPlanet: widget.onOpenPlanet),
+                            const SizedBox(height: 12),
+                            ShipStatusSummary(player: widget.player),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ],

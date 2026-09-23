@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 
 class ShipStatusSummary extends StatefulWidget {
@@ -28,7 +29,8 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
           borderRadius: BorderRadius.circular(6),
           onTap: () => setState(() => _cargoExpanded = !_cargoExpanded),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            padding: EdgeInsets.symmetric(
+                vertical: UiScale.spacing(4), horizontal: 4),
             child: Row(
               children: [
                 Icon(
@@ -157,7 +159,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(UiScale.spacing(12)),
             decoration: BoxDecoration(
               color: Theme.of(context)
                   .colorScheme
@@ -191,7 +193,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(UiScale.spacing(12)),
             child: Column(
               children: [
                 // Hull
@@ -202,7 +204,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                   color: hullColor,
                   icon: Icons.verified_user_rounded,
                 ),
-                const SizedBox(height: 10),
+                SizedBox(height: UiScale.spacing(10)),
 
                 // Shields
                 _StatusBar(
@@ -212,7 +214,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                   color: Colors.blue.shade300,
                   icon: Icons.shield_rounded,
                 ),
-                const SizedBox(height: 10),
+                SizedBox(height: UiScale.spacing(10)),
 
                 // Drones
                 _StatusBar(
@@ -224,7 +226,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                   color: Colors.purpleAccent,
                   icon: Icons.hexagon_rounded,
                 ),
-                const SizedBox(height: 10),
+                SizedBox(height: UiScale.spacing(10)),
 
                 // Cargo
                 _StatusBar(
@@ -234,7 +236,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                   color: Colors.amber.shade300,
                   icon: Icons.inventory_2_rounded,
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: UiScale.spacing(6)),
 
                 // Cargo contents (collapsible)
                 _buildCargoContents(context),
@@ -246,21 +248,20 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                       .outline
                       .withValues(alpha: 0.2),
                 ),
-                const SizedBox(height: 8),
-                Row(
+                SizedBox(height: UiScale.spacing(8)),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     _WeaponChip(
                         label: 'MFW',
                         level: widget.player.weaponSlots['main_forward'] ?? 0),
-                    const SizedBox(width: 6),
                     _WeaponChip(
                         label: 'STB',
                         level: widget.player.weaponSlots['starboard'] ?? 0),
-                    const SizedBox(width: 6),
                     _WeaponChip(
                         label: 'PRT',
                         level: widget.player.weaponSlots['port'] ?? 0),
-                    const SizedBox(width: 6),
                     _WeaponChip(
                         label: 'AFT',
                         level: widget.player.weaponSlots['aft'] ?? 0),

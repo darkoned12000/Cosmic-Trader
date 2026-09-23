@@ -99,7 +99,9 @@ class _ComputerScreenState extends State<ComputerScreen> {
           onBack: () => setState(() => _selectedTool = null),
         );
       case 'ports_guide':
-        return const PortsKnowledgeBaseScreen();
+        return PortsKnowledgeBaseScreen(
+          onBack: () => setState(() => _selectedTool = null),
+        );
       case 'faction_rankings':
         return Scaffold(
           appBar: AppBar(

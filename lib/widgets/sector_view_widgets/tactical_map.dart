@@ -89,82 +89,114 @@ class _TacticalMapState extends State<TacticalMap>
               children: [
                 Icon(Icons.gps_fixed_rounded, size: 16, color: cs.primary),
                 const SizedBox(width: 8),
-                Text(
-                  'TACTICAL DISPLAY',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: cs.primary,
-                        letterSpacing: 1.5,
-                      ),
-                ),
-                const Spacer(),
-                // IMPROVEMENT: Clean, compact Effects Switch
-                Text('FX',
-                    style: TextStyle(
-                        color: _effectsEnabled
-                            ? cs.primary
-                            : cs.onSurface.withAlpha(150),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold)),
-                // Wrapping in Transform.scale shrinks the visual size
-                Transform.scale(
-                  scale:
-                      0.5, // Adjust this number to make it smaller/larger (1.0 is default)
-                  child: Switch(
-                    value: _effectsEnabled,
-                    onChanged: (v) => setState(() => _effectsEnabled = v),
-                    activeColor: cs.primary,
-                    activeTrackColor: cs.primary.withValues(alpha: 0.5),
-                    inactiveThumbColor: cs.onSurface.withValues(alpha: 0.5),
-                    inactiveTrackColor: cs.onSurface.withValues(alpha: 0.2),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.center_focus_strong_rounded, size: 16),
-                  onPressed: () =>
-                      _transformController.value = Matrix4.identity(),
-                  tooltip: 'Refocus',
-                  visualDensity: VisualDensity.compact,
-                  style: IconButton.styleFrom(
-                    foregroundColor: cs.primary,
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(28, 28),
-                  ),
-                ),
-                IconButton(
-                  icon: Icon(
-                      _showStarfield
-                          ? Icons.stars_rounded
-                          : Icons.stars_outlined,
-                      size: 16),
-                  onPressed: () =>
-                      setState(() => _showStarfield = !_showStarfield),
-                  tooltip: 'Starfield',
-                  visualDensity: VisualDensity.compact,
-                  style: IconButton.styleFrom(
-                    foregroundColor: cs.primary,
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(28, 28),
+                Expanded(
+                  child: Text(
+                    'TACTICAL DISPLAY',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: cs.primary,
+                          letterSpacing: 1.5,
+                        ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: cs.tertiaryContainer.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: cs.tertiary.withAlpha(50)),
-                  ),
-                  child: Text(
-                    'SEC ${widget.currentSector.id} // ${widget.currentSector.quadrant}',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: cs.tertiary,
-                          fontFamily: 'monospace',
+                // Trailing controls: FittedBox scales the whole cluster down
+                // when the panel is narrow (e.g. high UI scale), instead of
+                // overflowing the header row.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // IMPROVEMENT: Clean, compact Effects Switch
+                        Text('FX',
+                            style: TextStyle(
+                                color: _effectsEnabled
+                                    ? cs.primary
+                                    : cs.onSurface.withAlpha(150),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold)),
+                        // Wrapping in Transform.scale shrinks the visual size
+                        Transform.scale(
+                          scale:
+                              0.5, // Adjust this number to make it smaller/larger (1.0 is default)
+                          child: Switch(
+                            value: _effectsEnabled,
+                            onChanged: (v) =>
+                                setState(() => _effectsEnabled = v),
+                            activeThumbColor: cs.primary,
+                            activeTrackColor: cs.primary.withValues(alpha: 0.5),
+                            inactiveThumbColor:
+                                cs.onSurface.withValues(alpha: 0.5),
+                            inactiveTrackColor:
+                                cs.onSurface.withValues(alpha: 0.2),
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            padding: EdgeInsets.zero,
+                          ),
                         ),
+                        IconButton(
+                          icon: const Icon(Icons.center_focus_strong_rounded,
+                              size: 16),
+                          onPressed: () =>
+                              _transformController.value = Matrix4.identity(),
+                          tooltip: 'Refocus',
+                          visualDensity: VisualDensity.compact,
+                          style: IconButton.styleFrom(
+                            foregroundColor: cs.primary,
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(28, 28),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                              _showStarfield
+                                  ? Icons.stars_rounded
+                                  : Icons.stars_outlined,
+                              size: 16),
+                          onPressed: () =>
+                              setState(() => _showStarfield = !_showStarfield),
+                          tooltip: 'Starfield',
+                          visualDensity: VisualDensity.compact,
+                          style: IconButton.styleFrom(
+                            foregroundColor: cs.primary,
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(28, 28),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color:
+                                  cs.tertiaryContainer.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: cs.tertiary.withAlpha(50)),
+                            ),
+                            child: Text(
+                              'SEC ${widget.currentSector.id} // ${widget.currentSector.quadrant}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: cs.tertiary,
+                                    fontFamily: 'monospace',
+                                  ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

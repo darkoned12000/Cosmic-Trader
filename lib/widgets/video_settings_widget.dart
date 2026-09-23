@@ -200,7 +200,7 @@ class VideoSettingsWidget extends StatelessWidget {
               } catch (_) {}
               onSaveSettings?.call(buildSettings());
             },
-            activeColor: accent,
+            activeThumbColor: accent,
           ),
         ],
       ),

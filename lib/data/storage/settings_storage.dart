@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'file_safe.dart';
 
 /// Persists [GameSettings] to a JSON file so the seed and other params
 /// survive app restarts.
@@ -24,7 +25,7 @@ class SettingsStorage {
   Future<void> save(GameSettings settings) async {
     try {
       final path = await _filePath;
-      await File(path).writeAsString(jsonEncode(settings.toJson()));
+      await FileSafe.writeString(File(path), jsonEncode(settings.toJson()));
     } catch (e) {
       debugPrint('Error saving settings: $e');
     }

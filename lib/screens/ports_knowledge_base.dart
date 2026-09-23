@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 
 class PortsKnowledgeBaseScreen extends StatelessWidget {
-  const PortsKnowledgeBaseScreen({super.key});
+  /// Invoked when the user taps back. This screen is swapped inline inside
+  /// ComputerScreen (not pushed as a route), so popping the Navigator would
+  /// pop the whole GameShell route and kill the game.
+  final VoidCallback onBack;
+
+  const PortsKnowledgeBaseScreen({super.key, required this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -13,7 +18,7 @@ class PortsKnowledgeBaseScreen extends StatelessWidget {
         title: const Text('Ports Guide'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: onBack,
         ),
       ),
       body: ListView(

@@ -44,8 +44,6 @@ dependencies:
   # Password hashing
   crypto: ^3.0.3
 
-  # State management for sector view widgets
-  provider: ^6.1.2
   flutter_svg: ^2.2.0
 
   # Audio playback for music and sound effects
@@ -56,6 +54,9 @@ dependencies:
 
   # Desktop window management (fullscreen, size)
   window_manager: ^0.4.3
+
+  # Desktop display probing (monitor size/work area — used for UI scaling)
+  screen_retriever: ^0.2.0
 
 dev_dependencies:
   flutter_test:

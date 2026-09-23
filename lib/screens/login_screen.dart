@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cosmic_trader/core/app_exit.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/screens/register_screen.dart';
 import 'package:cosmic_trader/screens/game_shell.dart';
@@ -95,42 +96,69 @@ class _LoginScreenState extends State<LoginScreen> {
         children: [
           const StarFieldBackground(),
 
-          // Music toggle — top right
+          // Music toggle + Exit Game — top right
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             right: 12,
-            child: ListenableBuilder(
-              listenable: Listenable.merge([
-                AudioService.isMusicEnabled,
-                AudioService.isPlaying,
-              ]),
-              builder: (context, _) {
-                return GestureDetector(
-                  onTap: () => AudioService.instance.toggleMusicEnabled(),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      AudioService.isMusicEnabled.value
-                          ? Icons.music_note_rounded
-                          : Icons.music_off_rounded,
-                      size: 20,
-                      color: AudioService.isMusicEnabled.value
-                          ? null
-                          : Theme.of(context)
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListenableBuilder(
+                  listenable: Listenable.merge([
+                    AudioService.isMusicEnabled,
+                    AudioService.isPlaying,
+                  ]),
+                  builder: (context, _) {
+                    return GestureDetector(
+                      onTap: () => AudioService.instance.toggleMusicEnabled(),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
                               .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.4),
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          AudioService.isMusicEnabled.value
+                              ? Icons.music_note_rounded
+                              : Icons.music_off_rounded,
+                          size: 20,
+                          color: AudioService.isMusicEnabled.value
+                              ? null
+                              : Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.4),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Exit Game',
+                  child: GestureDetector(
+                    onTap: quitApplication,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.power_settings_new_rounded,
+                        size: 20,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
                     ),
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
 

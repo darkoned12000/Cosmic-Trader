@@ -692,7 +692,7 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
         return KeyEventResult.ignored;
     }
     final current = _transformationController.value.clone();
-    current.translate(pan.dx, pan.dy);
+    current.translateByDouble(pan.dx, pan.dy, 0.0, 1.0);
     _transformationController.value = current;
     return KeyEventResult.handled;
   }

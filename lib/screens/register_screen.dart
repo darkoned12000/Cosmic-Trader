@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/app_exit.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
@@ -324,81 +325,84 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _buildFactionStep() {
     final factions =
         FactionClass.values.where((f) => f != FactionClass.pirate).toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Choose Your Faction',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 24),
-        for (final faction in factions)
-          Card(
-            child: ListTile(
-              leading: Icon(
-                faction == FactionClass.duran
-                    ? Icons.local_fire_department_rounded
-                    : faction == FactionClass.vinari
-                        ? Icons.auto_awesome_rounded
-                        : Icons.storefront_rounded,
-                color: faction == FactionClass.duran
-                    ? Colors.red.shade400
-                    : faction == FactionClass.vinari
-                        ? Colors.teal.shade400
-                        : Colors.amber.shade400,
-              ),
-              title: Text(
-                faction.displayName,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text(
-                faction == FactionClass.duran
-                    ? 'Warriors of strength and honor'
-                    : faction == FactionClass.vinari
-                        ? 'Scholars of knowledge and peace'
-                        : 'Free traders of the open galaxy',
-              ),
-              trailing: Radio<FactionClass>(
-                value: faction,
-                groupValue: _selectedFaction,
-                onChanged: (value) {
-                  setState(() {
-                    _selectedFaction = value!;
-                    _selectedShip =
-                        ShipDefinition.getDefaultInterceptor(value).name;
-                  });
-                },
-              ),
-              selected: _selectedFaction == faction,
-              selectedTileColor:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+    return RadioGroup<FactionClass>(
+      groupValue: _selectedFaction,
+      onChanged: (value) {
+        setState(() {
+          _selectedFaction = value!;
+          _selectedShip = ShipDefinition.getDefaultInterceptor(value).name;
+        });
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Choose Your Faction',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
             ),
           ),
-        const SizedBox(height: 24),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => setState(() => _step = 0),
-                child: const Text('BACK'),
+          const SizedBox(height: 24),
+          for (final faction in factions)
+            Card(
+              child: ListTile(
+                leading: Icon(
+                  faction == FactionClass.duran
+                      ? Icons.local_fire_department_rounded
+                      : faction == FactionClass.vinari
+                          ? Icons.auto_awesome_rounded
+                          : Icons.storefront_rounded,
+                  color: faction == FactionClass.duran
+                      ? Colors.red.shade400
+                      : faction == FactionClass.vinari
+                          ? Colors.teal.shade400
+                          : Colors.amber.shade400,
+                ),
+                title: Text(
+                  faction.displayName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  faction == FactionClass.duran
+                      ? 'Warriors of strength and honor'
+                      : faction == FactionClass.vinari
+                          ? 'Scholars of knowledge and peace'
+                          : 'Free traders of the open galaxy',
+                ),
+                trailing: Radio<FactionClass>(
+                  value: faction,
+                ),
+                selected: _selectedFaction == faction,
+                selectedTileColor: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: 0.1),
               ),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: () => setState(() => _step = 2),
-                child: const Text('CONTINUE',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, letterSpacing: 2)),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => setState(() => _step = 0),
+                  child: const Text('BACK'),
+                ),
               ),
-            ),
-          ],
-        ),
-      ],
+              const SizedBox(width: 16),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => setState(() => _step = 2),
+                  child: const Text('CONTINUE',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, letterSpacing: 2)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -406,172 +410,173 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final ships = ShipDefinition.getShipsForFaction(_selectedFaction);
     final defaultShip = ShipDefinition.getDefaultInterceptor(_selectedFaction);
     final isLocked = !_unlockAllShips;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Select Your Ship',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
+    return RadioGroup<String>(
+      groupValue: _selectedShip,
+      onChanged: (value) {
+        setState(() {
+          _selectedShip = value!;
+        });
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Select Your Ship',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '${_selectedFaction.name[0].toUpperCase()}${_selectedFaction.name.substring(1)} Fleet',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.primary,
-            fontSize: 14,
-          ),
-        ),
-        if (isLocked) ...[
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.orange.shade900.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                  color: Colors.orange.shade700.withValues(alpha: 0.5)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.lock_outline_rounded,
-                    size: 16, color: Colors.orange.shade300),
-                const SizedBox(width: 6),
-                Text(
-                  'Other ships locked behind milestones',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.orange.shade300,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+          Text(
+            '${_selectedFaction.name[0].toUpperCase()}${_selectedFaction.name.substring(1)} Fleet',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              fontSize: 14,
             ),
           ),
-        ],
-        const SizedBox(height: 20),
-        ...ships.map(
-          (ship) {
-            final isDefault = ship.name == defaultShip.name;
-            final locked = isLocked && !isDefault;
-            return Card(
-              child: ListTile(
-                leading: Icon(
-                  ship.shipClass == ShipClassType.interceptor
-                      ? Icons.speed_rounded
-                      : ship.shipClass == ShipClassType.battleship
-                          ? Icons.rocket_launch_rounded
-                          : ship.shipClass == ShipClassType.freighter
-                              ? Icons.local_shipping_rounded
-                              : Icons.star_rounded,
-                  color: locked
-                      ? Colors.grey.shade600
-                      : Theme.of(context).colorScheme.secondary,
-                ),
-                title: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        ship.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: locked ? Colors.grey.shade600 : null,
-                        ),
-                      ),
+          if (isLocked) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade900.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: Colors.orange.shade700.withValues(alpha: 0.5)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.lock_outline_rounded,
+                      size: 16, color: Colors.orange.shade300),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Other ships locked behind milestones',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.orange.shade300,
+                      fontWeight: FontWeight.w500,
                     ),
-                    if (locked)
-                      Icon(Icons.lock_rounded,
-                          size: 16, color: Colors.grey.shade500),
-                  ],
-                ),
-                subtitle: Text(
-                  locked
-                      ? 'Complete milestones to unlock'
-                      : '${ship.shipClass.name} | Hull ${ship.maxHullCapacity} | Shields ${ship.shields} | Cargo ${ship.maxCargo}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: locked ? Colors.grey.shade500 : null,
                   ),
-                ),
-                trailing: Radio<String>(
-                  value: ship.name,
-                  groupValue: _selectedShip,
-                  onChanged: locked
-                      ? null
-                      : (value) {
-                          setState(() {
-                            _selectedShip = value!;
-                          });
-                        },
-                ),
-                selected: _selectedShip == ship.name,
-                selectedTileColor: Theme.of(context)
-                    .colorScheme
-                    .primary
-                    .withValues(alpha: 0.1),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 24),
-        if (_errorMessage != null)
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.red.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: Colors.red.withValues(alpha: 0.3),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.red.shade300),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _errorMessage!,
-                    style: TextStyle(color: Colors.red.shade300),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (_errorMessage != null) const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => setState(() => _step = 1),
-                child: const Text('BACK'),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: _isLoading ? null : _register,
-                child: _isLoading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('LAUNCH',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, letterSpacing: 2)),
+                ],
               ),
             ),
           ],
-        ),
-      ],
+          const SizedBox(height: 20),
+          ...ships.map(
+            (ship) {
+              final isDefault = ship.name == defaultShip.name;
+              final locked = isLocked && !isDefault;
+              return Card(
+                child: ListTile(
+                  leading: Icon(
+                    ship.shipClass == ShipClassType.interceptor
+                        ? Icons.speed_rounded
+                        : ship.shipClass == ShipClassType.battleship
+                            ? Icons.rocket_launch_rounded
+                            : ship.shipClass == ShipClassType.freighter
+                                ? Icons.local_shipping_rounded
+                                : Icons.star_rounded,
+                    color: locked
+                        ? Colors.grey.shade600
+                        : Theme.of(context).colorScheme.secondary,
+                  ),
+                  title: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          ship.name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: locked ? Colors.grey.shade600 : null,
+                          ),
+                        ),
+                      ),
+                      if (locked)
+                        Icon(Icons.lock_rounded,
+                            size: 16, color: Colors.grey.shade500),
+                    ],
+                  ),
+                  subtitle: Text(
+                    locked
+                        ? 'Complete milestones to unlock'
+                        : '${ship.shipClass.name} | Hull ${ship.maxHullCapacity} | Shields ${ship.shields} | Cargo ${ship.maxCargo}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: locked ? Colors.grey.shade500 : null,
+                    ),
+                  ),
+                  trailing: Radio<String>(
+                    value: ship.name,
+                    enabled: !locked,
+                  ),
+                  selected: _selectedShip == ship.name,
+                  selectedTileColor: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.1),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 24),
+          if (_errorMessage != null)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.red.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red.shade300),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: TextStyle(color: Colors.red.shade300),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (_errorMessage != null) const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => setState(() => _step = 1),
+                  child: const Text('BACK'),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _register,
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('LAUNCH',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, letterSpacing: 2)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -584,6 +589,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.power_settings_new_rounded),
+            tooltip: 'Exit Game',
+            onPressed: quitApplication,
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(

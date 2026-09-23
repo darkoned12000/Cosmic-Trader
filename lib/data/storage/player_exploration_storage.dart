@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'file_safe.dart';
 
 /// Persists which sectors the player has visited across sessions, along
 /// with a last-visited timestamp for each one.
@@ -91,10 +92,12 @@ class PlayerExplorationStorage {
     try {
       final dir = await getApplicationSupportDirectory();
       final file = File('${dir.path}/player_exploration.json');
-      await file.writeAsString(json.encode({
-        'lastVisited':
-            _lastVisited.map((key, value) => MapEntry(key.toString(), value)),
-      }));
+      await FileSafe.writeString(
+          file,
+          json.encode({
+            'lastVisited': _lastVisited
+                .map((key, value) => MapEntry(key.toString(), value)),
+          }));
     } catch (e) {
       debugPrint('Exploration save failed: $e');
     }

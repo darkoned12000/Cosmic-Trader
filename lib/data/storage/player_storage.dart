@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'file_safe.dart';
 
 /// Handles reading/writing players.json to the device's application directory.
 class PlayerStorage {
@@ -52,7 +53,7 @@ class PlayerStorage {
       final path = await _filePath;
       final file = File(path);
       final content = jsonEncode(players.map((p) => p.toJson()).toList());
-      await file.writeAsString(content);
+      await FileSafe.writeString(file, content);
     } catch (e) {
       debugPrint('Error saving players: $e');
     }

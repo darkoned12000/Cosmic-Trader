@@ -9,8 +9,9 @@ import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 
 String _formatCredits(int credits) {
-  if (credits >= 1000000000)
+  if (credits >= 1000000000) {
     return '${(credits / 1000000000).toStringAsFixed(1)}B';
+  }
   if (credits >= 1000000) return '${(credits / 1000000).toStringAsFixed(1)}M';
   if (credits >= 1000) return '${(credits / 1000).toStringAsFixed(1)}K';
   return credits.toString();

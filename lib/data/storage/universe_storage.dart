@@ -6,13 +6,20 @@ import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/universe_generator.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'file_safe.dart';
 
 /// Handles reading/writing universe.json to persistent storage.
 class UniverseStorage {
-  UniverseStorage._();
+  UniverseStorage();
 
   static UniverseStorage? _instance;
-  static UniverseStorage get instance => _instance ??= UniverseStorage._();
+  static UniverseStorage get instance => _instance ??= UniverseStorage();
+
+  /// Test-only override for the singleton (e.g. to inject a fake that
+  /// returns a synthetic universe without touching the filesystem).
+  /// Pass `null` to restore the default on-demand instance.
+  @visibleForTesting
+  static set instanceForTest(UniverseStorage? storage) => _instance = storage;
 
   String? _cachedPath;
 
@@ -51,7 +58,7 @@ class UniverseStorage {
       final path = await _filePath;
       final file = File(path);
       final content = jsonEncode(sectors.map((s) => s.toJson()).toList());
-      await file.writeAsString(content);
+      await FileSafe.writeString(file, content);
     } catch (e) {
       debugPrint('Error saving universe: $e');
     }

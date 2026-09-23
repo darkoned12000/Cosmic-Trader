@@ -258,31 +258,45 @@ class _WarpConsoleState extends State<WarpConsole> {
               children: [
                 Icon(Icons.input_rounded, size: 18, color: cs.primary),
                 const SizedBox(width: 8),
-                Text(
-                  'WARP CONSOLE',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: cs.primary,
-                    letterSpacing: 1,
+                Expanded(
+                  child: Text(
+                    'WARP CONSOLE',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: cs.primary,
+                      letterSpacing: 1,
+                    ),
                   ),
                 ),
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: _canLongRangeWarp
-                        ? cs.tertiary.withValues(alpha: 0.2)
-                        : cs.errorContainer.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _canLongRangeWarp ? 'LONG-RANGE ENABLED' : 'ADJACENT ONLY',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: _canLongRangeWarp ? cs.tertiary : cs.error,
-                      fontFamily: 'monospace',
-                      fontSize: 9,
+                const SizedBox(width: 8),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _canLongRangeWarp
+                            ? cs.tertiary.withValues(alpha: 0.2)
+                            : cs.errorContainer.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _canLongRangeWarp
+                            ? 'LONG-RANGE ENABLED'
+                            : 'ADJACENT ONLY',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: _canLongRangeWarp ? cs.tertiary : cs.error,
+                          fontFamily: 'monospace',
+                          fontSize: 9,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -564,11 +578,15 @@ class _WarpConsoleState extends State<WarpConsole> {
                     children: [
                       Icon(Icons.timer_rounded, size: 18, color: cs.primary),
                       const SizedBox(width: 8),
-                      Text(
-                        'TURNS REMAINING: ',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: cs.onSurface.withValues(alpha: 0.6),
-                          fontFamily: 'monospace',
+                      Flexible(
+                        child: Text(
+                          'TURNS REMAINING: ',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurface.withValues(alpha: 0.6),
+                            fontFamily: 'monospace',
+                          ),
                         ),
                       ),
                       Text(

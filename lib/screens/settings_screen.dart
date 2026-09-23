@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cosmic_trader/core/theme_service.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
@@ -10,6 +11,7 @@ import 'package:cosmic_trader/widgets/audio_settings_widget.dart';
 import 'package:cosmic_trader/widgets/system_resources_widget.dart';
 import 'package:cosmic_trader/widgets/font_settings_widget.dart';
 import 'package:cosmic_trader/widgets/video_settings_widget.dart';
+import 'package:cosmic_trader/widgets/ui_scale_settings_widget.dart';
 
 class SettingsScreen extends StatefulWidget {
   final GameSettings currentSettings;
@@ -82,6 +84,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _animationSpeed = 0.5;
   String _fontFamily = '';
   double _fontSize = 14;
+  double _uiScale = 1.0;
+  bool _uiScaleAuto = true;
+  UiDensity _uiDensity = UiDensity.normal;
 
   @override
   void initState() {
@@ -149,6 +154,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _animationSpeed = s.tacticalDisplaySpeed;
     _fontFamily = s.fontFamily;
     _fontSize = s.fontSize;
+    _uiScale = s.uiScale;
+    _uiScaleAuto = s.uiScaleAuto;
+    _uiDensity = s.uiDensity;
 
     for (final c in [
       _warp1PctController,
@@ -243,10 +251,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
       resolutionHeight: _resolutionHeight,
       fontFamily: _fontFamily,
       fontSize: _fontSize,
+      uiScale: _uiScale,
+      uiScaleAuto: _uiScaleAuto,
+      uiDensity: _uiDensity,
       musicVolume: _musicVolume,
       sfxVolume: _sfxVolume,
       musicFolderPath: AudioService.musicFolderPath.value,
     );
+  }
+
+  /// Re-runs display auto-detection and applies the suggested scale,
+  /// switching the mode back to "auto".
+  Future<void> _reDetectUiScale() async {
+    final suggested = await UiScale.detectSuggestedScale();
+    if (!mounted) return;
+    if (suggested == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not query the display. Use the manual slider.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _uiScale = suggested;
+      _uiScaleAuto = true;
+    });
+    UiScale.scaleNotifier.value = suggested;
+    UiScale.autoNotifier.value = true;
+    widget.onSettingsChanged?.call(_buildSettings());
   }
 
   Map<String, CommodityConfig> _buildCommodityConfigs() {
@@ -536,6 +570,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onResolutionHeightChanged: (v) =>
                 setState(() => _resolutionHeight = v),
             onAnimationSpeedChanged: (v) => setState(() => _animationSpeed = v),
+            buildSettings: _buildSettings,
+            onSaveSettings: widget.onSettingsChanged,
+          ),
+
+          const SizedBox(height: 12),
+
+          // ==================== UI SCALE ====================
+          UiScaleSettingsWidget(
+            auto: _uiScaleAuto,
+            scale: _uiScale,
+            density: _uiDensity,
+            onAutoChanged: (v) {
+              setState(() => _uiScaleAuto = v);
+              UiScale.autoNotifier.value = v;
+            },
+            onScaleChanged: (v) {
+              // A manual value (slider or preset chip) is an explicit
+              // override — switch auto-detect off so the chosen scale
+              // persists and is honored on the next launch.
+              setState(() {
+                _uiScale = v;
+                _uiScaleAuto = false;
+              });
+              UiScale.scaleNotifier.value = v;
+              UiScale.autoNotifier.value = false;
+            },
+            onScaleChangeEnd: (_) {
+              widget.onSettingsChanged?.call(_buildSettings());
+            },
+            onDensityChanged: (d) {
+              setState(() => _uiDensity = d);
+              UiScale.densityNotifier.value = d;
+            },
+            onReDetect: _reDetectUiScale,
             buildSettings: _buildSettings,
             onSaveSettings: widget.onSettingsChanged,
           ),

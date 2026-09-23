@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -180,22 +181,22 @@ class PortTradeView extends StatelessWidget {
     final cs = theme.colorScheme;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(UiScale.spacing(16)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _headerBar(theme, cs),
-          const SizedBox(height: 10),
+          SizedBox(height: UiScale.spacing(10)),
           _statsStrip(cs, mono),
-          const SizedBox(height: 20),
+          SizedBox(height: UiScale.spacing(20)),
           _sectionLabel(cs, 'TRADE'),
-          const SizedBox(height: 6),
+          SizedBox(height: UiScale.spacing(6)),
           _tradeTable(cs, mono),
-          const SizedBox(height: 24),
+          SizedBox(height: UiScale.spacing(24)),
           _sectionLabel(cs, 'EXTRAS'),
-          const SizedBox(height: 6),
+          SizedBox(height: UiScale.spacing(6)),
           LotteryWidget(player: player, onPlayerUpdate: onPlayerUpdate),
-          const SizedBox(height: 8),
+          SizedBox(height: UiScale.spacing(8)),
           _extrasSection(context, cs),
         ],
       ),
@@ -220,7 +221,8 @@ class PortTradeView extends StatelessWidget {
 
   Widget _headerBar(ThemeData theme, ColorScheme cs) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding:
+          EdgeInsets.symmetric(horizontal: 14, vertical: UiScale.spacing(12)),
       decoration: BoxDecoration(
         border: Border.all(color: cs.onSurface.withValues(alpha: 0.12)),
         borderRadius: BorderRadius.circular(12),
@@ -385,7 +387,7 @@ class PortTradeView extends StatelessWidget {
         border: Border.all(color: cs.onSurface.withValues(alpha: 0.12)),
         borderRadius: BorderRadius.circular(12),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: EdgeInsets.symmetric(vertical: UiScale.spacing(10)),
       child: Row(
         children: [
           for (var i = 0; i < chips.length; i++) ...[
@@ -477,8 +479,8 @@ class PortTradeView extends StatelessWidget {
             children: [
               Container(
                 color: cs.onSurface.withValues(alpha: 0.04),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: EdgeInsets.symmetric(
+                    horizontal: 10, vertical: UiScale.spacing(8)),
                 child: Row(
                   children: [
                     Expanded(flex: 3, child: _colHeader(cs, 'commodity')),
@@ -562,7 +564,8 @@ class PortTradeView extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding:
+          EdgeInsets.symmetric(horizontal: 10, vertical: UiScale.spacing(6)),
       child: Row(
         children: [
           Expanded(
@@ -743,7 +746,8 @@ class PortTradeView extends StatelessWidget {
         InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            padding: EdgeInsets.symmetric(
+                horizontal: 12, vertical: UiScale.spacing(11)),
             child: Row(
               children: [
                 Icon(icon, size: 18, color: disabled ? Colors.grey : iconColor),

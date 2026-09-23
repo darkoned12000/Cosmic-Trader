@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/app_exit.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
@@ -24,6 +25,10 @@ class GameShell extends StatefulWidget {
   final Player initialPlayer;
 
   const GameShell({super.key, required this.initialPlayer});
+
+  /// While a game session is mounted, the app-level close guard (main.dart)
+  /// calls this to flush the session before the process exits.
+  static Future<void> Function()? exitSaveHook;
 
   @override
   State<GameShell> createState() => _GameShellState();
@@ -54,6 +59,12 @@ class _GameShellState extends State<GameShell> {
     };
     _tickService.onNpcAttacksPlayer = _handleNpcAttack;
     _tickService.start();
+    // Hand the app-level close guard a way to flush this session if the OS
+    // sends a close request (WM keybind / session end).
+    GameShell.exitSaveHook = () async {
+      _tickService.stop();
+      await _persistSessionState();
+    };
     // Mark the tick service with the FedSpace boundary after settings load
     _loadSettings().then((_) {
       _tickService.fedSpaceEnd = _settings.fedSpaceEnd;
@@ -62,6 +73,7 @@ class _GameShellState extends State<GameShell> {
 
   @override
   void dispose() {
+    GameShell.exitSaveHook = null;
     _tickService.stop();
     super.dispose();
   }
@@ -227,6 +239,29 @@ class _GameShellState extends State<GameShell> {
     }
   }
 
+  /// Saves everything and exits to the desktop cleanly.
+  Future<void> _handleExitGame() async {
+    // Stop background processing first so nothing mutates state mid-save.
+    _tickService.stop();
+    await _persistSessionState();
+    quitApplication();
+  }
+
+  /// Flushes all in-memory game state to disk. Stores use crash-safe atomic
+  /// writes (FileSafe), so an interrupted write can never leave a truncated
+  /// file behind.
+  Future<void> _persistSessionState() async {
+    try {
+      await Future.wait([
+        PlayerStorage.instance.savePlayer(_player),
+        NpcStorage().saveAll(_npcs),
+        SettingsStorage.instance.save(_settings),
+      ]).timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('[GameShell] Final save on exit failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -293,6 +328,11 @@ class _GameShellState extends State<GameShell> {
             icon: const Icon(Icons.logout_rounded),
             onPressed: _handleLogout,
             tooltip: 'Logout',
+          ),
+          IconButton(
+            icon: const Icon(Icons.power_settings_new_rounded),
+            onPressed: _handleExitGame,
+            tooltip: 'Exit Game',
           ),
         ],
       ),
@@ -505,6 +545,16 @@ class _GameShellState extends State<GameShell> {
                       onPressed: _handleLogout,
                       icon: const Icon(Icons.logout_rounded, size: 18),
                       label: const Text('Logout'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: TextButton.icon(
+                      onPressed: _handleExitGame,
+                      icon: const Icon(Icons.power_settings_new_rounded,
+                          size: 18),
+                      label: const Text('Exit Game'),
                     ),
                   ),
                 ],
