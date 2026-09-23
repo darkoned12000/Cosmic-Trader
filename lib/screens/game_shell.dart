@@ -1,24 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/core/tw_layout.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/storage/npc_storage.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
-import 'package:tradewars_2050/data/storage/settings_storage.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/screens/computer_screen.dart';
-import 'package:tradewars_2050/screens/galaxy_map.dart';
-import 'package:tradewars_2050/screens/planet_screen.dart';
-import 'package:tradewars_2050/screens/login_screen.dart';
-import 'package:tradewars_2050/screens/port_screen.dart';
-import 'package:tradewars_2050/screens/sector_view.dart';
-import 'package:tradewars_2050/screens/settings_screen.dart';
-import 'package:tradewars_2050/screens/ship_status.dart';
-import 'package:tradewars_2050/services/audio_service.dart';
-import 'package:tradewars_2050/services/game_tick_service.dart';
-import 'package:tradewars_2050/widgets/combat_screen.dart';
-import 'package:tradewars_2050/widgets/equalizer_widget.dart';
+import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
+import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/screens/computer_screen.dart';
+import 'package:cosmic_trader/screens/galaxy_map.dart';
+import 'package:cosmic_trader/screens/planet_screen.dart';
+import 'package:cosmic_trader/screens/login_screen.dart';
+import 'package:cosmic_trader/screens/port_screen.dart';
+import 'package:cosmic_trader/screens/sector_view.dart';
+import 'package:cosmic_trader/screens/settings_screen.dart';
+import 'package:cosmic_trader/screens/ship_status.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/widgets/combat_screen.dart';
+import 'package:cosmic_trader/widgets/equalizer_widget.dart';
 
 class GameShell extends StatefulWidget {
   final Player initialPlayer;
@@ -242,7 +242,7 @@ class _GameShellState extends State<GameShell> {
   Widget _buildSmallScreenLayout() {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tradewars 2050'),
+        title: const Text('Cosmic Trader'),
         actions: [
           ListenableBuilder(
             listenable: Listenable.merge([
@@ -306,11 +306,11 @@ class _GameShellState extends State<GameShell> {
             onPlayerUpdate: _updatePlayer,
             onRefreshNpcs: _reloadNpcs,
             onOpenPort: () => setState(() => _currentIndex = 4),
-                  onOpenPlanet: () => setState(() {
-                    _currentIndex = 5;
-                    _planetKey = UniqueKey();
-                  }),
-                  fedSpaceEnd: _settings.fedSpaceEnd,
+            onOpenPlanet: () => setState(() {
+              _currentIndex = 5;
+              _planetKey = UniqueKey();
+            }),
+            fedSpaceEnd: _settings.fedSpaceEnd,
           ),
           GalaxyMap(
             key: _universeKey,
@@ -329,12 +329,12 @@ class _GameShellState extends State<GameShell> {
             player: _player,
             onPlayerUpdate: _updatePlayer,
           ),
-                PlanetScreen(
-                  key: _planetKey,
-                  player: _player,
-                  onPlayerUpdate: _updatePlayer,
-                ),
-                SettingsScreen(
+          PlanetScreen(
+            key: _planetKey,
+            player: _player,
+            onPlayerUpdate: _updatePlayer,
+          ),
+          SettingsScreen(
             key: ValueKey('settings_${_settings.seed}'),
             currentSettings: _settings,
             onRegenerate: _handleRegenerateUniverse,
@@ -389,7 +389,7 @@ class _GameShellState extends State<GameShell> {
   Widget _buildLargeScreenLayout(double maxWidth) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tradewars 2050'),
+        title: const Text('Cosmic Trader'),
         actions: [
           ListenableBuilder(
             listenable: Listenable.merge([
@@ -526,31 +526,31 @@ class _GameShellState extends State<GameShell> {
                   onPlayerUpdate: _updatePlayer,
                   onRefreshNpcs: _reloadNpcs,
                   onOpenPort: () => setState(() => _currentIndex = 4),
-            onOpenPlanet: () => setState(() {
-              _currentIndex = 5;
-              _planetKey = UniqueKey();
-            }),
-            fedSpaceEnd: _settings.fedSpaceEnd,
-          ),
-          GalaxyMap(
-            key: _universeKey,
-            npcs: _npcs,
-            currentSectorId: _player.currentSectorId,
-            onSectorSelected: _onSectorSelected,
-          ),
-          ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
-          ComputerScreen(
-            key: _computerKey,
-            player: _player,
-            onPlayerUpdate: _updatePlayer,
-          ),
-          PortScreen(
-            key: _universeKey,
-            player: _player,
-            onPlayerUpdate: _updatePlayer,
-          ),
-          PlanetScreen(
-            key: _planetKey,
+                  onOpenPlanet: () => setState(() {
+                    _currentIndex = 5;
+                    _planetKey = UniqueKey();
+                  }),
+                  fedSpaceEnd: _settings.fedSpaceEnd,
+                ),
+                GalaxyMap(
+                  key: _universeKey,
+                  npcs: _npcs,
+                  currentSectorId: _player.currentSectorId,
+                  onSectorSelected: _onSectorSelected,
+                ),
+                ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
+                ComputerScreen(
+                  key: _computerKey,
+                  player: _player,
+                  onPlayerUpdate: _updatePlayer,
+                ),
+                PortScreen(
+                  key: _universeKey,
+                  player: _player,
+                  onPlayerUpdate: _updatePlayer,
+                ),
+                PlanetScreen(
+                  key: _planetKey,
                   player: _player,
                   onPlayerUpdate: _updatePlayer,
                 ),

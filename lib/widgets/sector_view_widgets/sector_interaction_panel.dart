@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/npc_storage.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
-import 'package:tradewars_2050/services/game_tick_service.dart';
-import 'package:tradewars_2050/widgets/combat_screen.dart';
-import 'package:tradewars_2050/widgets/npc_trade_dialog.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/widgets/combat_screen.dart';
+import 'package:cosmic_trader/widgets/npc_trade_dialog.dart';
 
 const _factionIcons = {
   FactionClass.trader: Icons.shopping_cart_rounded,
@@ -138,11 +138,9 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _detailRow('Ship', npc.shipDef.name),
-                  _detailRow(
-                      'Class', npc.shipDef.shipClass.name.toUpperCase()),
+                  _detailRow('Class', npc.shipDef.shipClass.name.toUpperCase()),
                   _detailRow('Faction', npc.faction.name.toUpperCase()),
-                  _detailRow(
-                      'Personality', npc.personality.name.toUpperCase()),
+                  _detailRow('Personality', npc.personality.name.toUpperCase()),
                   _detailRow('Hull', '${npc.hull}/${npc.maxHull}'),
                   _detailRow('Shields', '${npc.shields}/${npc.maxShields}'),
                   _detailRow('Credits', '${npc.credits} cr'),
@@ -279,8 +277,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
                       '${planet.shield.toInt()} / ${planet.maxShield.toInt()}'),
                   _detailRow('Armor',
                       '${planet.hull.toInt()} / ${planet.maxHull.toInt()}'),
-                  _detailRow(
-                      'Defense Level', '${planet.defenseLevel} / 4'),
+                  _detailRow('Defense Level', '${planet.defenseLevel} / 4'),
                 ],
               ),
             ),

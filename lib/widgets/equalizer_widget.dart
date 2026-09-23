@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/services/audio_service.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 
 class EqualizerWidget extends StatefulWidget {
   final int bandCount;
@@ -90,7 +90,8 @@ class _EqualizerWidgetState extends State<EqualizerWidget>
     }
 
     return SizedBox(
-      width: _bandCount * (widget.barWidth + widget.barSpacing) + widget.barSpacing,
+      width: _bandCount * (widget.barWidth + widget.barSpacing) +
+          widget.barSpacing,
       height: widget.height,
       child: CustomPaint(
         painter: _EqualizerPainter(

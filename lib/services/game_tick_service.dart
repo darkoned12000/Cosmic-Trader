@@ -1,15 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/npc_storage.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_ai_service.dart';
-import 'package:tradewars_2050/widgets/dev_profiler.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
 /// Describes an NPC-initated attack on a player during a tick.
 class NpcAttackEvent {

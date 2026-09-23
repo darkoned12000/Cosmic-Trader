@@ -1,7 +1,7 @@
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_goal.dart';
-import 'package:tradewars_2050/services/npc_ai/trade_evaluator.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
+import 'package:cosmic_trader/services/npc_ai/trade_evaluator.dart';
 
 class BankingAi {
   /// Check if NPC should deposit on-ship credits at a port.

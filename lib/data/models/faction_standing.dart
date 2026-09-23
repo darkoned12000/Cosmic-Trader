@@ -1,4 +1,4 @@
-import 'package:tradewars_2050/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 
 class FactionStanding {
   final Map<FactionClass, int> standings;

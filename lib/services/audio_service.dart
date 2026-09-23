@@ -74,7 +74,8 @@ class AudioService {
     if (path.startsWith('assets/')) {
       try {
         final manifest = await rootBundle.loadString('AssetManifest.json');
-        final assets = manifest.split('\n')
+        final assets = manifest
+            .split('\n')
             .where((l) => l.trim().isNotEmpty)
             .map((l) => l.trim().split(':')[0].replaceAll('"', '').trim())
             .where((p) => p.startsWith(path))
@@ -86,7 +87,8 @@ class AudioService {
       final dir = Directory(path);
       if (await dir.exists()) {
         await for (final entry in dir.list()) {
-          if (entry is File && _audioExtensions.any((ext) => entry.path.endsWith(ext))) {
+          if (entry is File &&
+              _audioExtensions.any((ext) => entry.path.endsWith(ext))) {
             files.add(entry.path);
           }
         }

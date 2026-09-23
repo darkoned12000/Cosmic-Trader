@@ -1,10 +1,10 @@
 import 'dart:math' as math;
 
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
-import 'package:tradewars_2050/data/models/port_defense_config.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/port_defense_config.dart';
 
 /// Result of a port combat encounter.
 class PortCombatResult {
@@ -16,7 +16,8 @@ class PortCombatResult {
   final Port updatedPort;
   final Player? updatedPlayer;
   final NpcShip? updatedNpc;
-  final String outcome; // "continue", "surrender", "destroyed", "attackerDefeated"
+  final String
+      outcome; // "continue", "surrender", "destroyed", "attackerDefeated"
 
   const PortCombatResult({
     required this.portSurrendered,
@@ -65,7 +66,9 @@ class PortCombatService {
         .round()
         .clamp(1, 99999);
     final baseDamageToAttacker =
-        (portFirepower * (0.8 + _rng.nextDouble() * 0.4)).round().clamp(1, 99999);
+        (portFirepower * (0.8 + _rng.nextDouble() * 0.4))
+            .round()
+            .clamp(1, 99999);
 
     // Apply damage to port shields
     int remainingPortShields = port.currentShields - damageToPort;
@@ -81,9 +84,8 @@ class PortCombatService {
       empDrainDamage = (attacker.shields * portStats.empDrainPct).round();
     }
 
-    int totalDamageToAttacker = baseDamageToAttacker +
-        bonusDamageToAttacker +
-        empDrainDamage;
+    int totalDamageToAttacker =
+        baseDamageToAttacker + bonusDamageToAttacker + empDrainDamage;
 
     // Check if port can still defend (shields > 5%)
     final canDefend = remainingPortShields > port.captureThreshold;
@@ -161,11 +163,11 @@ class PortCombatService {
     final npcPower = calculateNpcFirepower(npc);
     final portFirepower = calculatePortFirepower(port);
 
-    final damageToPort = (npcPower * (0.8 + _rng.nextDouble() * 0.4))
+    final damageToPort =
+        (npcPower * (0.8 + _rng.nextDouble() * 0.4)).round().clamp(1, 99999);
+    final baseDamageToNpc = (portFirepower * (0.8 + _rng.nextDouble() * 0.4))
         .round()
         .clamp(1, 99999);
-    final baseDamageToNpc =
-        (portFirepower * (0.8 + _rng.nextDouble() * 0.4)).round().clamp(1, 99999);
 
     int remainingPortShields = port.currentShields - damageToPort;
     if (remainingPortShields < 0) remainingPortShields = 0;
@@ -247,9 +249,8 @@ class PortCombatService {
   ) {
     return port.copyWith(
       owner: newOwnerId,
-      ownerFaction: newOwnerFaction != null
-          ? _parseFactionClass(newOwnerFaction)
-          : null,
+      ownerFaction:
+          newOwnerFaction != null ? _parseFactionClass(newOwnerFaction) : null,
       isUnderAttack: false,
       currentShields: port.maxShields,
       attackerId: null,

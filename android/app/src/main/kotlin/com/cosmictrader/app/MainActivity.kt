@@ -1,4 +1,4 @@
-package com.tradewars.tradewars_2050
+package com.cosmictrader.app
 
 import io.flutter.embedding.android.FlutterActivity
 

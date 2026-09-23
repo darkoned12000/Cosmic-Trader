@@ -1,8 +1,8 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
 
 /// Paints the main galaxy map: warp-route connections, sector nodes (with
 /// fog-of-war for unvisited sectors), the current-sector pulse animation,

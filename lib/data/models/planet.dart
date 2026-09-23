@@ -1,4 +1,4 @@
-import 'package:tradewars_2050/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 
 FactionClass? _parseFactionClass(String? name) {
   if (name == null) return null;
@@ -97,10 +97,12 @@ class Planet {
   String get dominantCommodity {
     final mults = typeMultipliers[planetType];
     if (mults == null) return 'minerals';
-    if (mults.minerals >= mults.organics && mults.minerals >= mults.industrial) {
+    if (mults.minerals >= mults.organics &&
+        mults.minerals >= mults.industrial) {
       return 'minerals';
     }
-    if (mults.organics >= mults.minerals && mults.organics >= mults.industrial) {
+    if (mults.organics >= mults.minerals &&
+        mults.organics >= mults.industrial) {
       return 'organics';
     }
     return 'industrial';
@@ -202,21 +204,24 @@ class Planet {
   /// Resource & colonist gate for each level-up (index 0 = 1→2, …, 4 = 5→6).
   /// Colonists are a minimum requirement (not consumed); resources are consumed.
   static const List<LevelUpCost> levelUpCosts = [
-    LevelUpCost(1000, 500, 300, 200),           // 1→2
-    LevelUpCost(10000, 2500, 1500, 1000),       // 2→3
-    LevelUpCost(100000, 10000, 6000, 4000),     // 3→4
-    LevelUpCost(500000, 50000, 30000, 20000),   // 4→5
+    LevelUpCost(1000, 500, 300, 200), // 1→2
+    LevelUpCost(10000, 2500, 1500, 1000), // 2→3
+    LevelUpCost(100000, 10000, 6000, 4000), // 3→4
+    LevelUpCost(500000, 50000, 30000, 20000), // 4→5
     LevelUpCost(1000000, 250000, 150000, 100000), // 5→6
   ];
 
   static const List<String> levelTitles = [
-    'Outpost', 'Settlement', 'Colony',
-    'Fortified Colony', 'Planetary Base', 'Citadel',
+    'Outpost',
+    'Settlement',
+    'Colony',
+    'Fortified Colony',
+    'Planetary Base',
+    'Citadel',
   ];
 
   int get colonistMax => colonistMaxByType[planetType] ?? 100000;
-  LevelUpCost? get levelUpCost =>
-      level < 6 ? levelUpCosts[level - 1] : null;
+  LevelUpCost? get levelUpCost => level < 6 ? levelUpCosts[level - 1] : null;
 
   /// Whether this planet can be levelled up.
   bool get canLevelUp {
@@ -282,14 +287,34 @@ class Planet {
   };
 
   static const List<String> allTypes = [
-    'Terran', 'Jungle', 'Desert', 'Ocean', 'Ice', 'Lava',
-    'Gas Giant', 'Moon', 'Barren', 'Toxic',
+    'Terran',
+    'Jungle',
+    'Desert',
+    'Ocean',
+    'Ice',
+    'Lava',
+    'Gas Giant',
+    'Moon',
+    'Barren',
+    'Toxic',
   ];
 
   static const Map<String, List<String>> imagePool = {
-    'Terran': ['Terran_World_1.gif', 'Terran_World_2.gif', 'Terran_World_3.gif'],
-    'Jungle': ['Jungle_World_1.gif', 'Jungle_World_2.gif', 'Jungle_World_3.gif'],
-    'Desert': ['Desert_World_1.gif', 'Desert_World_2.gif', 'Desert_World_3.gif'],
+    'Terran': [
+      'Terran_World_1.gif',
+      'Terran_World_2.gif',
+      'Terran_World_3.gif'
+    ],
+    'Jungle': [
+      'Jungle_World_1.gif',
+      'Jungle_World_2.gif',
+      'Jungle_World_3.gif'
+    ],
+    'Desert': [
+      'Desert_World_1.gif',
+      'Desert_World_2.gif',
+      'Desert_World_3.gif'
+    ],
     'Ocean': ['Ocean_World_1.gif', 'Ocean_World_2.gif', 'Ocean_World_3.gif'],
     'Ice': ['Ice_World_1.gif', 'Ice_World_2.gif', 'Ice_world_3.gif'],
     'Lava': ['Lava_World_1.gif', 'Lava_World_2.gif', 'Lava_World_3.gif'],
@@ -300,41 +325,129 @@ class Planet {
   };
 
   static const List<String> planetNames = [
-    'Xandor', 'Elara', 'Sygnara', 'Voryn', 'Celestara',
-    'Rynara', 'Thalys', 'Orwyn', 'Glavara', 'Zephyron',
-    'Tyria', 'Axion', 'Nebulon', 'Valthor', 'Saronis',
-    'Elyx', 'Corvus', 'Zantara', 'Oberyn', 'Krythos',
-    'Selara', 'Phaeton', 'Ecliptor', 'Astralis', 'Vionis',
-    'Nexilon', 'Caelum', 'Sypher', 'Galeth', 'Xeridia',
-    'Lumora', 'Tychon', 'Velara', 'Myriad', 'Arctura',
-    'Novex', 'Zephyris', 'Calyx', 'Orithyia', 'Sylvara',
-    'Aetherion', 'Draconis', 'Quasys', 'Solara', 'Erebos',
-    'Thalara', 'Kryon', 'Vylis', 'Nexara', 'Zorath',
-    'Ilythar', 'Vexalon', 'Synthera', 'Auralis', 'Zypheron',
-    'Tarsys', 'Elion', 'Gravara', 'Nyxara', 'Corynth',
-    'Xylara', 'Praxon', 'Vionara', 'Zelthar', 'Astron',
-    'Kytheris', 'Sylion', 'Eryndor', 'Valthys', 'Orythia',
-    'Nebula', 'Xerath', 'Tylara', 'Cygnara', 'Aethys',
-    'Zorwyn', 'Vexara', 'Sylthara', 'Klyon', 'Ecthara',
-    'Rynther', 'Galara', 'Zyron', 'Velithor', 'Naxara',
-    'Thalith', 'Orionis', 'Clythera', 'Voryth', 'Aelara',
-    'Xynara', 'Krylara', 'Zentara', 'Elythar', 'Sovara',
-    'Nyxion', 'Tethys', 'Vionth', 'Astrara',
+    'Xandor',
+    'Elara',
+    'Sygnara',
+    'Voryn',
+    'Celestara',
+    'Rynara',
+    'Thalys',
+    'Orwyn',
+    'Glavara',
+    'Zephyron',
+    'Tyria',
+    'Axion',
+    'Nebulon',
+    'Valthor',
+    'Saronis',
+    'Elyx',
+    'Corvus',
+    'Zantara',
+    'Oberyn',
+    'Krythos',
+    'Selara',
+    'Phaeton',
+    'Ecliptor',
+    'Astralis',
+    'Vionis',
+    'Nexilon',
+    'Caelum',
+    'Sypher',
+    'Galeth',
+    'Xeridia',
+    'Lumora',
+    'Tychon',
+    'Velara',
+    'Myriad',
+    'Arctura',
+    'Novex',
+    'Zephyris',
+    'Calyx',
+    'Orithyia',
+    'Sylvara',
+    'Aetherion',
+    'Draconis',
+    'Quasys',
+    'Solara',
+    'Erebos',
+    'Thalara',
+    'Kryon',
+    'Vylis',
+    'Nexara',
+    'Zorath',
+    'Ilythar',
+    'Vexalon',
+    'Synthera',
+    'Auralis',
+    'Zypheron',
+    'Tarsys',
+    'Elion',
+    'Gravara',
+    'Nyxara',
+    'Corynth',
+    'Xylara',
+    'Praxon',
+    'Vionara',
+    'Zelthar',
+    'Astron',
+    'Kytheris',
+    'Sylion',
+    'Eryndor',
+    'Valthys',
+    'Orythia',
+    'Nebula',
+    'Xerath',
+    'Tylara',
+    'Cygnara',
+    'Aethys',
+    'Zorwyn',
+    'Vexara',
+    'Sylthara',
+    'Klyon',
+    'Ecthara',
+    'Rynther',
+    'Galara',
+    'Zyron',
+    'Velithor',
+    'Naxara',
+    'Thalith',
+    'Orionis',
+    'Clythera',
+    'Voryth',
+    'Aelara',
+    'Xynara',
+    'Krylara',
+    'Zentara',
+    'Elythar',
+    'Sovara',
+    'Nyxion',
+    'Tethys',
+    'Vionth',
+    'Astrara',
   ];
 
   static const List<String> romanNumerals = [
-    'I', 'II', 'III', 'IV', 'V', 'VI',
+    'I',
+    'II',
+    'III',
+    'IV',
+    'V',
+    'VI',
   ];
 
   static const List<String> greekPrefixes = [
-    'Alpha', 'Beta', 'Delta', 'Gamma',
+    'Alpha',
+    'Beta',
+    'Delta',
+    'Gamma',
   ];
 
   /// Generates a varied planet name from a base name, optionally appending
   /// Roman numeral and/or Greek prefix for variety.
   /// Formats: "Lumora", "Lumora III", "Lumora Alpha", "Lumora Alpha V"
   static String generateVariantName(String baseName, int seed) {
-    final rng = int.parse((seed.abs() % 100000).toString().padLeft(5, '0').substring(0, 3));
+    final rng = int.parse(
+        (seed.abs() % 100000).toString().padLeft(5, '0').substring(0, 3));
     final variant = rng % 4;
     switch (variant) {
       case 1: // name + numeral
@@ -360,7 +473,8 @@ class TypeMultipliers {
   final double organics;
   final double industrial;
   final double fighters;
-  const TypeMultipliers(this.minerals, this.organics, this.industrial, this.fighters);
+  const TypeMultipliers(
+      this.minerals, this.organics, this.industrial, this.fighters);
 }
 
 class LevelUpCost {
@@ -368,5 +482,6 @@ class LevelUpCost {
   final int requiredMinerals;
   final int requiredOrganics;
   final int requiredIndustrial;
-  const LevelUpCost(this.requiredColonists, this.requiredMinerals, this.requiredOrganics, this.requiredIndustrial);
+  const LevelUpCost(this.requiredColonists, this.requiredMinerals,
+      this.requiredOrganics, this.requiredIndustrial);
 }

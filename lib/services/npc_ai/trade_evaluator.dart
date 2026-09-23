@@ -1,7 +1,7 @@
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_memory.dart';
-import 'package:tradewars_2050/services/npc_ai/pathfinding_service.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_memory.dart';
+import 'package:cosmic_trader/services/npc_ai/pathfinding_service.dart';
 
 class TradeRoute {
   final int buySectorId;

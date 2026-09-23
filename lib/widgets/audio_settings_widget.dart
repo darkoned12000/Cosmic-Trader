@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/services/audio_service.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 
 class AudioSettingsWidget extends StatelessWidget {
   final double musicVolume;
@@ -66,8 +66,7 @@ class AudioSettingsWidget extends StatelessWidget {
                     icon: Icons.music_note_rounded,
                     value: musicVolume,
                     onChanged: onMusicVolumeChanged,
-                    onChangeEnd: (_) =>
-                        onSaveSettings?.call(buildSettings()),
+                    onChangeEnd: (_) => onSaveSettings?.call(buildSettings()),
                   ),
                   const SizedBox(height: 4),
                   _volumeSlider(
@@ -76,25 +75,20 @@ class AudioSettingsWidget extends StatelessWidget {
                     icon: Icons.volume_up_rounded,
                     value: sfxVolume,
                     onChanged: onSfxVolumeChanged,
-                    onChangeEnd: (_) =>
-                        onSaveSettings?.call(buildSettings()),
+                    onChangeEnd: (_) => onSaveSettings?.call(buildSettings()),
                   ),
-
                   const SizedBox(height: 16),
                   _divider(accent),
                   const SizedBox(height: 16),
-
                   _sectionLabel(context, 'MUSIC ARCHIVE'),
                   const SizedBox(height: 8),
                   ListenableBuilder(
                     listenable: AudioService.musicFolderPath,
                     builder: (context, _) => _folderPanel(context),
                   ),
-
                   const SizedBox(height: 16),
                   _divider(accent),
                   const SizedBox(height: 16),
-
                   _sectionLabel(context, 'TRANSMISSION QUEUE'),
                   const SizedBox(height: 8),
                   _trackListHeader(context),
@@ -182,8 +176,7 @@ class AudioSettingsWidget extends StatelessWidget {
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(4),
@@ -209,8 +202,7 @@ class AudioSettingsWidget extends StatelessWidget {
               thumbColor: accent,
               overlayColor: accent.withValues(alpha: 0.12),
               trackHeight: 4,
-              thumbShape:
-                  const RoundSliderThumbShape(enabledThumbRadius: 8),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
             ),
             child: Slider(
               value: value,
@@ -233,8 +225,7 @@ class AudioSettingsWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-            color: accent.withValues(alpha: 0.15), width: 0.5),
+        border: Border.all(color: accent.withValues(alpha: 0.15), width: 0.5),
       ),
       padding: const EdgeInsets.all(10),
       child: Column(
@@ -286,8 +277,7 @@ class AudioSettingsWidget extends StatelessWidget {
                 side: BorderSide(color: accent.withValues(alpha: 0.3)),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(6)),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.symmetric(vertical: 8),
               ),
             ),
           ),
@@ -321,15 +311,12 @@ class AudioSettingsWidget extends StatelessWidget {
             final mode = AudioService.loopMode.value;
             final (icon, tooltip) = switch (mode) {
               LoopMode.none => (Icons.repeat_rounded, 'No repeat'),
-              LoopMode.single =>
-                (Icons.repeat_one_rounded, 'Repeat one'),
+              LoopMode.single => (Icons.repeat_one_rounded, 'Repeat one'),
               LoopMode.all => (Icons.repeat_rounded, 'Repeat all'),
             };
             return IconButton(
-              icon: Icon(icon, size: 18,
-                  color: mode != LoopMode.none
-                      ? accent
-                      : dimText),
+              icon: Icon(icon,
+                  size: 18, color: mode != LoopMode.none ? accent : dimText),
               tooltip: tooltip,
               onPressed: () => AudioService.instance.cycleLoopMode(),
               visualDensity: VisualDensity.compact,
@@ -383,8 +370,8 @@ class AudioSettingsWidget extends StatelessWidget {
           decoration: BoxDecoration(
             color: cs.surfaceContainerHighest.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-                color: accent.withValues(alpha: 0.1), width: 0.5),
+            border:
+                Border.all(color: accent.withValues(alpha: 0.1), width: 0.5),
           ),
           child: Column(
             children: List.generate(files.length, (i) {
@@ -402,8 +389,8 @@ class AudioSettingsWidget extends StatelessWidget {
                   }
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                   decoration: BoxDecoration(
                     border: Border(
                       bottom: BorderSide(
@@ -427,8 +414,7 @@ class AudioSettingsWidget extends StatelessWidget {
                             : Icon(
                                 Icons.radio_button_unchecked_rounded,
                                 size: 12,
-                                color:
-                                    cs.onSurface.withValues(alpha: 0.3),
+                                color: cs.onSurface.withValues(alpha: 0.3),
                               ),
                       ),
                       const SizedBox(width: 8),
@@ -437,13 +423,11 @@ class AudioSettingsWidget extends StatelessWidget {
                           name,
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: isCurrent
-                                ? FontWeight.bold
-                                : FontWeight.normal,
+                            fontWeight:
+                                isCurrent ? FontWeight.bold : FontWeight.normal,
                             color: isCurrent
                                 ? accent
-                                : cs.onSurface
-                                    .withValues(alpha: 0.8),
+                                : cs.onSurface.withValues(alpha: 0.8),
                             fontFamily: 'monospace',
                           ),
                           overflow: TextOverflow.ellipsis,

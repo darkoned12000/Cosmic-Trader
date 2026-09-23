@@ -1,20 +1,21 @@
 # Planets — Design & Implementation Plan
 
-## Current State
+## Current State (updated)
 
-Planet model (`lib/data/models/planet.dart`) is minimal:
-- `name`, `planetClass` (enum: `mammat`/`kron`/`slyland`/`human`), `productionEfficiency`
-- No ownership, no homeworld flag, no defense stats, no production/spawning capability
-- 4 planet classes map to dominant commodity: mammat→minerals, kron→industrial, slyland→organics, human→industrial
-- `Sector` has `hasPlanet`, `planetType` (string), and `planet?` fields
-- Universe generator phase 8 creates planets at `planetDensity` (default 0.25) in non-FedSpace sectors
-- No player interaction with planets exists
+The planet model (`lib/data/models/planet.dart`) and `PlanetScreen` (tab 5 in the game shell) now implement **much of the design below**:
+
+- **Model**: 10 planet types (Terran, Jungle, Desert, Ocean, Ice, Lava, Gas Giant, Moon, Barren, Toxic), each with atmosphere, production multipliers, colonist max, and an image pool (3 GIFs each). ~34 fields total incl. ownership, homeworld flag, colonists, storage, Citadel level 1-6 + progress, defense (level/shield/hull), and NPC spawn fields (`productionTimer`/`spawnInterval`)
+- **UI (`PlanetScreen`)**: scan (costs 1 turn and persists), planet header + image, resources/defense cards, colony production readout (computed `X/tick`), transfer resources/colonists/drones both ways (credits-based), claim unowned planets, level-up (Outpost → Citadel, gated by colonists + stored resources). Attack is currently a stub (log-only)
+- **Generator**: planets placed at `planetDensity` (default 0.25) outside FedSpace with images; one homeworld per major faction (duran/vinari/trader) with preferred types and unique names
+- **Maps**: galaxy map & tactical map show planet markers (brown) with type/homeworld/owner status; sector view has a "land on planet" action
+- **Not yet implemented**: per-tick automated production processing, homeworld NPC repopulation, invasion combat, scanner-module auto-scan, backup homeworld claiming, planet-to-port supply chains, NPC faction colonization, planet defense combat
+- `Sector` now stores a structured `Planet?` object (`hasPlanet` + `planet`); the old `planetType` string field was removed (migrated via `fromJson`)
 
 ## Design Goals (from user conversation)
 
 1. **NPC repopulation via homeworlds** — Each faction gets a homeworld planet that periodically spawns new NPC ships. Destroying/claiming the homeworld stops that faction from spawning.
 2. **Colonist-driven production** — Planets produce resources only when populated with colonists (brought from Terra). More colonists = more output. Planet type determines production efficiency per commodity.
-3. **Planet levels (Citadel 1–6)** — Planets level up by investing resources + colonists. Each level unlocks more production capacity, defense options, and storage. Based on TW2002 Citadel system.
+3. **Planet levels (Citadel 1–6)** — Planets level up by investing resources + colonists. Each level unlocks more production capacity, defense options, and storage. Based on the classic Citadel system from BBS-era space trading games.
 4. **Scan before landing** — Must scan the planet first (requires scanner module or manual scan). Scanner module auto-scans when entering sector.
 5. **Claiming & ownership** — Unowned planets can be claimed. Becomes property of the claiming player or faction. Claimed planets appear on Ship Status.
 6. **Resource abundance** — Planets have effectively unlimited resources. The bottleneck is extraction rate, which scales with colonists and planet level.
@@ -22,11 +23,11 @@ Planet model (`lib/data/models/planet.dart`) is minimal:
 8. **Backup homeworld** — If a homeworld is destroyed, surviving faction NPCs can claim an unclaimed planet as a new homeworld (starts weak, builds up).
 9. **Invasion** — Turn-based combat similar to port combat, targeting planet defenses.
 
-## TW2002 Inspiration (Research Summary)
+## Inspiration (Research Summary)
 
-TradeWars 2002 planet system core mechanics:
+Classic BBS-era planet system core mechanics:
 
-| Mechanic | TW2002 | Our adaptation |
+| Mechanic | Classic BBS | Our adaptation |
 |----------|--------|----------------|
 | Planet creation | Genesis Torpedo in empty sector | Random gen at universe creation + future Genesis Torpedo item |
 | Planet types | 7 types (M/K/O/L/C/H/U) with different production multipliers | 10 types, each with production rate multipliers for all 3 commodities |
@@ -111,11 +112,11 @@ Colonist output per tick = `baseOutput * multiplier * productionEfficiency`.
 | **Barren**  | Rocky, lifeless       | None    | 1.2      | 0.2      | 0.8        | 1.0      |
 | **Toxic**   | Corrosive atmosphere  | Acid    | 1.6      | 0.3      | 1.0        | 1.2      |
 
-**TW2002 equivalents:** Terran→Class M, Jungle→Class M variant, Desert→Class K, Ocean→Class O, Ice→Class C, Lava→Class H, Gas Giant→Class U, Moon→new, Barren→new, Toxic→new.
+**Classic equivalents:** Terran→Class M, Jungle→Class M variant, Desert→Class K, Ocean→Class O, Ice→Class C, Lava→Class H, Gas Giant→Class U, Moon→new, Barren→new, Toxic→new.
 
 ## Planet Levels (Citadel)
 
-Inspired by TW2002's 6-level Citadel system. Each level requires accumulating resources on the planet:
+Inspired by the classic 6-level Citadel system. Each level requires accumulating resources on the planet:
 
 | Level | Title            | Minerals | Organics | Industrial | Colonists | Max Storage | Defense |
 |-------|------------------|----------|----------|------------|-----------|-------------|---------|
@@ -134,7 +135,7 @@ Inspired by TW2002's 6-level Citadel system. Each level requires accumulating re
 ## Colonists & Production
 
 ### Sourcing Colonists
-- **Terra** (sector 1) is the sole source of colonists — matches TW2002.
+- **Terra** (sector 1) is the sole source of colonists — matches the classic Citadel system.
 - Colonists take up **1 cargo hold per colonist**.
 - Load colonists at Terra (new UI action at Terra port or sector 1 planet interaction).
 - Transport them to your planet and unload.

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/storage/npc_storage.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
 
 const double _interestRate = 0.01;
 const Duration _interestPeriod = Duration(hours: 24);
@@ -41,8 +41,7 @@ class _BankingWidgetState extends State<BankingWidget> {
       if (mounted) {
         final npcDepositors = npcs.where((n) => n.bankBalance > 0);
         setState(() {
-          _accountHolders =
-              players.where((p) => p.bankBalance > 0).length +
+          _accountHolders = players.where((p) => p.bankBalance > 0).length +
               npcDepositors.length;
           _totalDeposits = players.fold(0, (sum, p) => sum + p.bankBalance) +
               npcs.fold(0, (sum, n) => sum + n.bankBalance);

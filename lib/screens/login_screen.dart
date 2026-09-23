@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
-import 'package:tradewars_2050/screens/register_screen.dart';
-import 'package:tradewars_2050/screens/game_shell.dart';
-import 'package:tradewars_2050/services/audio_service.dart';
-import 'package:tradewars_2050/widgets/star_field.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
+import 'package:cosmic_trader/screens/register_screen.dart';
+import 'package:cosmic_trader/screens/game_shell.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/widgets/star_field.dart';
 
 /// The login screen where players enter their credentials.
 class LoginScreen extends StatefulWidget {
@@ -154,7 +154,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 16),
                         const Text(
-                          'TRADEWARS 2050',
+                          'COSMIC TRADER',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 32,

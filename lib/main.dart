@@ -1,11 +1,12 @@
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/core/theme_service.dart';
-import 'package:tradewars_2050/screens/login_screen.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/data/storage/settings_storage.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/services/audio_service.dart';
+import 'package:cosmic_trader/core/theme_service.dart';
+import 'package:cosmic_trader/screens/login_screen.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:window_manager/window_manager.dart' as window_manager;
 
 bool get _isDesktopPlatform =>
@@ -51,17 +52,17 @@ void main() async {
   // Initialize audio service
   await AudioService.instance.init();
 
-  runApp(const TradeWarsApp());
+  runApp(const CosmicTraderApp());
 }
 
-class TradeWarsApp extends StatefulWidget {
-  const TradeWarsApp({super.key});
+class CosmicTraderApp extends StatefulWidget {
+  const CosmicTraderApp({super.key});
 
   @override
-  State<TradeWarsApp> createState() => _TradeWarsAppState();
+  State<CosmicTraderApp> createState() => _CosmicTraderAppState();
 }
 
-class _TradeWarsAppState extends State<TradeWarsApp> {
+class _CosmicTraderAppState extends State<CosmicTraderApp> {
   @override
   void initState() {
     super.initState();
@@ -87,7 +88,7 @@ class _TradeWarsAppState extends State<TradeWarsApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'TradeWars 2050',
+      title: 'Cosmic Trader',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
       home: const LoginScreen(),

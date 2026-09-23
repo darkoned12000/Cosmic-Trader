@@ -1,19 +1,19 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/services/npc_ai/banking_ai.dart';
-import 'package:tradewars_2050/services/npc_ai/combat_service.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_death_cries.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_goal.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_memory.dart';
-import 'package:tradewars_2050/services/npc_ai/pathfinding_service.dart';
-import 'package:tradewars_2050/services/npc_ai/port_combat_service.dart';
-import 'package:tradewars_2050/services/npc_ai/trade_evaluator.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
+import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_memory.dart';
+import 'package:cosmic_trader/services/npc_ai/pathfinding_service.dart';
+import 'package:cosmic_trader/services/npc_ai/port_combat_service.dart';
+import 'package:cosmic_trader/services/npc_ai/trade_evaluator.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 
 class DistressSignal {
   final int sectorId;
@@ -83,8 +83,7 @@ class NpcAiService {
     }
 
     // 3b — Respond to nearby distress signals (override current goal)
-    if (updated.turns > 0 &&
-        updated.currentGoal?.type != NpcGoalType.flee) {
+    if (updated.turns > 0 && updated.currentGoal?.type != NpcGoalType.flee) {
       final distressGoal = _respondToDistress(updated, sectors, allNpcs);
       if (distressGoal != null) {
         updated = updated.copyWith(currentGoal: distressGoal);
@@ -285,9 +284,8 @@ class NpcAiService {
       // Mutate port: decrement supply, add credits (port earns from selling)
       final newSupply = Map<String, int>.from(port.supply);
       newSupply[commodity] = availableSupply - maxBuyable;
-      final ownerSurcharge = port.isOwned
-          ? (cost * port.ownerTaxRate).round()
-          : 0;
+      final ownerSurcharge =
+          port.isOwned ? (cost * port.ownerTaxRate).round() : 0;
       sector.port = port.copyWith(
         supply: newSupply,
         portCredits: port.portCredits + cost,
@@ -295,8 +293,7 @@ class NpcAiService {
         lastRegenTime: nowMs,
       );
 
-      debugPrint(
-          '[${npc.pilotName}] Trade: Bought $maxBuyable $commodity at '
+      debugPrint('[${npc.pilotName}] Trade: Bought $maxBuyable $commodity at '
           '${port.name} (${sellPrice.toStringAsFixed(0)} cr)'
           '${ownerSurcharge > 0 ? ' [+${ownerSurcharge}cr owner fee]' : ''}');
 
@@ -350,9 +347,8 @@ class NpcAiService {
       final actualQuantity =
           (actualRevenue / buyPrice).floor().clamp(1, quantity);
 
-      final cost = goal.buyPrice != null
-          ? (actualQuantity * goal.buyPrice!).round()
-          : 0;
+      final cost =
+          goal.buyPrice != null ? (actualQuantity * goal.buyPrice!).round() : 0;
       final profit = actualRevenue - cost;
       final newCargo = Map<String, int>.from(npc.cargo);
       newCargo[commodity] = newCargo[commodity]! - actualQuantity;
@@ -361,9 +357,8 @@ class NpcAiService {
       // Mutate port: decrement demand, deduct credits, owner collects transaction fee
       final newDemand = Map<String, int>.from(port.demand);
       newDemand[commodity] = availableDemand - actualQuantity;
-      final ownerTax = port.isOwned
-          ? (actualRevenue * port.ownerTaxRate).round()
-          : 0;
+      final ownerTax =
+          port.isOwned ? (actualRevenue * port.ownerTaxRate).round() : 0;
       final npcReceives = actualRevenue - ownerTax;
       sector.port = port.copyWith(
         demand: newDemand,
@@ -372,8 +367,7 @@ class NpcAiService {
         lastRegenTime: nowMs,
       );
 
-      debugPrint(
-          '[${npc.pilotName}] Trade: Sold $actualQuantity $commodity at '
+      debugPrint('[${npc.pilotName}] Trade: Sold $actualQuantity $commodity at '
           '${port.name} (${buyPrice.toStringAsFixed(0)} cr) '
           '— ${profit >= 0 ? "profit" : "loss"} ${profit.abs()} cr'
           '${ownerTax > 0 ? ' [-${ownerTax}cr owner fee]' : ''}');
@@ -411,8 +405,7 @@ class NpcAiService {
     final caution = npc.personalityConfig.caution;
 
     // Pirates are naturally aggressive; other factions need higher aggression
-    final minAggression =
-        npc.faction == FactionClass.pirate ? 0.3 : 0.7;
+    final minAggression = npc.faction == FactionClass.pirate ? 0.3 : 0.7;
     if (aggression < minAggression) return false;
 
     final npcPower = CombatService.calculateFirepower(npc);
@@ -596,16 +589,15 @@ class NpcAiService {
     if (result.result.defenderDestroyed) {
       // Clear distress signal if defender had one
       _activeDistressSignals.remove(target.id);
-      log.combat(
-          '[${result.attacker.pilotName}] Destroyed ${target.pilotName} '
+      log.combat('[${result.attacker.pilotName}] Destroyed ${target.pilotName} '
           '(${target.shipName}) in Sector ${npc.currentSectorId}');
-      log.combat(NpcDeathCries.formatDeathCry(target.pilotName, target.faction));
+      log.combat(
+          NpcDeathCries.formatDeathCry(target.pilotName, target.faction));
       debugPrint(
           '[${result.attacker.pilotName}] Combat: Destroyed ${target.pilotName} '
           'in Sector ${npc.currentSectorId}');
     } else {
-      log.combat(
-          '[${result.attacker.pilotName}] Engaged ${target.pilotName} '
+      log.combat('[${result.attacker.pilotName}] Engaged ${target.pilotName} '
           '(dealt ${result.result.damageToDefender}, '
           'took ${result.result.damageToAttacker})');
       debugPrint(
@@ -655,16 +647,19 @@ class NpcAiService {
         if (effectiveOwner.personalityConfig.aggression > 0.5) {
           ownerDefenseDamage =
               (CombatService.calculateFirepower(effectiveOwner) * 0.5).round();
-          debugPrint('[${npc.pilotName}] Raid: Port owner ${effectiveOwner.pilotName} '
+          debugPrint(
+              '[${npc.pilotName}] Raid: Port owner ${effectiveOwner.pilotName} '
               'joins defense!');
         } else {
           final adjSectorId = _findAdjacentSector(sectors, npc.currentSectorId);
           if (adjSectorId != null) {
             final idx = allNpcs.indexWhere((n) => n.id == effectiveOwner.id);
             if (idx != -1) {
-              allNpcs[idx] = effectiveOwner.copyWith(currentSectorId: adjSectorId);
+              allNpcs[idx] =
+                  effectiveOwner.copyWith(currentSectorId: adjSectorId);
             }
-            debugPrint('[${npc.pilotName}] Raid: Port owner ${effectiveOwner.pilotName} '
+            debugPrint(
+                '[${npc.pilotName}] Raid: Port owner ${effectiveOwner.pilotName} '
                 'flees to Sector $adjSectorId');
           }
         }
@@ -1108,7 +1103,9 @@ class NpcAiService {
         if (defender.faction != npc.faction) continue;
       }
       final path = PathfindingService.findPath(
-        sectors, npc.currentSectorId, signal.sectorId,
+        sectors,
+        npc.currentSectorId,
+        signal.sectorId,
       );
       if (path == null) continue;
       final dist = path.length - 1;
@@ -1155,7 +1152,8 @@ class NpcAiService {
       if (!_isHostileFaction(npc.faction, other.faction)) continue;
       final otherPower = CombatService.calculateFirepower(other);
       if (otherPower >= myPower) continue; // only attack weaker targets
-      if (bestTarget == null || otherPower < CombatService.calculateFirepower(bestTarget)) {
+      if (bestTarget == null ||
+          otherPower < CombatService.calculateFirepower(bestTarget)) {
         bestTarget = other;
         bestTargetSectorId = npc.currentSectorId;
       }
@@ -1181,7 +1179,8 @@ class NpcAiService {
             if (!_isHostileFaction(npc.faction, other.faction)) continue;
             final otherPower = CombatService.calculateFirepower(other);
             if (otherPower >= myPower) continue;
-            if (bestTarget == null || otherPower < CombatService.calculateFirepower(bestTarget)) {
+            if (bestTarget == null ||
+                otherPower < CombatService.calculateFirepower(bestTarget)) {
               bestTarget = other;
               bestTargetSectorId = warp;
             }
@@ -1204,7 +1203,9 @@ class NpcAiService {
         }
         // BFS from current to player sector
         final path = PathfindingService.findPath(
-          sectors, npc.currentSectorId, player.currentSectorId,
+          sectors,
+          npc.currentSectorId,
+          player.currentSectorId,
         );
         if (path != null && path.length <= maxDist + 1) {
           bestTargetSectorId = player.currentSectorId;
@@ -1231,10 +1232,7 @@ class NpcAiService {
     final portSectorId = PathfindingService.findNearestWhere(
       sectors,
       npc.currentSectorId,
-      (s) =>
-          s.hasPort &&
-          (s.port?.defenseLevel ?? 4) < 2 &&
-          !_isSafeZone(s.id),
+      (s) => s.hasPort && (s.port?.defenseLevel ?? 4) < 2 && !_isSafeZone(s.id),
     );
     if (portSectorId == null) return null;
 

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/hardware_data.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/hardware_data.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 
-import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
+import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
 
 class HardwareEmporiumWidget extends StatefulWidget {
   final Player player;
@@ -107,7 +107,8 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
         children: [
           Row(
             children: [
-              Icon(Icons.build_rounded, size: 20, color: Colors.deepPurpleAccent),
+              Icon(Icons.build_rounded,
+                  size: 20, color: Colors.deepPurpleAccent),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -195,9 +196,7 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
               fontWeight: FontWeight.bold,
               letterSpacing: 1,
             ),
-            tabs: _tabLabels
-                .map((l) => Tab(text: l))
-                .toList(),
+            tabs: _tabLabels.map((l) => Tab(text: l)).toList(),
           ),
         ],
       ),
@@ -225,8 +224,7 @@ class _ServicesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final shieldCost =
         (player.maxShields - player.shields) * shieldRechargeCostPerPoint;
-    final hullCost =
-        (player.maxHull - player.hull) * hullRepairCostPerPoint;
+    final hullCost = (player.maxHull - player.hull) * hullRepairCostPerPoint;
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -257,8 +255,7 @@ class _ServicesTab extends StatelessWidget {
           icon: Icons.shield_rounded,
           iconColor: Colors.red,
           title: 'Hull Repair',
-          description:
-              'Repair hull damage (${player.hull}/${player.maxHull})',
+          description: 'Repair hull damage (${player.hull}/${player.maxHull})',
           cost: hullCost > 0 ? '$hullCost cr' : 'No damage',
           canAfford: player.credits >= hullCost,
           disabled: hullCost <= 0,
@@ -430,8 +427,7 @@ class _WeaponsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = itemsForFaction(HardwareCategory.weapon, player.faction);
-    final shipDef =
-        ShipDefinition.getShipByName(player.shipDefinitionName);
+    final shipDef = ShipDefinition.getShipByName(player.shipDefinitionName);
     final slots = shipDef?.weaponSlots ?? player.weaponSlots.keys.toList();
     final emptySlots =
         slots.where((s) => !player.weaponSlots.containsKey(s)).toList();
@@ -443,10 +439,14 @@ class _WeaponsTab extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.inventory_2_outlined, size: 32, color: cs.onSurface.withValues(alpha: 0.2)),
+            Icon(Icons.inventory_2_outlined,
+                size: 32, color: cs.onSurface.withValues(alpha: 0.2)),
             const SizedBox(height: 8),
             Text('No weapons available',
-                style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: cs.onSurface.withValues(alpha: 0.4))),
+                style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: cs.onSurface.withValues(alpha: 0.4))),
           ],
         ),
       );
@@ -475,8 +475,10 @@ class _WeaponsTab extends StatelessWidget {
       final wt = WeaponType.values.firstWhere((w) => w.name == equipKey);
       if (wt.classTier > maxTier) {
         switch (wt.classTier) {
-          case 2: return 'Requires Battleship+';
-          case 3: return 'Requires Capital Ship';
+          case 2:
+            return 'Requires Battleship+';
+          case 3:
+            return 'Requires Capital Ship';
         }
       }
     } catch (_) {}
@@ -505,8 +507,7 @@ class _WeaponsTab extends StatelessWidget {
     }
   }
 
-  void _installWeapon(
-      BuildContext context, HardwareItem item, String slot) {
+  void _installWeapon(BuildContext context, HardwareItem item, String slot) {
     final newTypes = Map<String, String>.from(player.weaponTypes);
     final newLevels = Map<String, int>.from(player.weaponSlots);
 
@@ -515,8 +516,7 @@ class _WeaponsTab extends StatelessWidget {
     final oldKey = newTypes[slot];
     final oldLv = newLevels[slot];
     if (oldKey != null && oldLv != null) {
-      final oldItem =
-          itemFor(oldKey, HardwareCategory.weapon, oldLv);
+      final oldItem = itemFor(oldKey, HardwareCategory.weapon, oldLv);
       if (oldItem != null) {
         scrapMetalReturn = oldItem.scrapMetalReturn;
         scrapTechReturn = oldItem.scrapTechReturn;
@@ -643,8 +643,7 @@ class _EquipmentTab extends StatelessWidget {
             child: Row(
               children: [
                 Icon(Icons.check_circle_rounded,
-                    size: 16,
-                    color: Theme.of(context).colorScheme.primary),
+                    size: 16, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -661,15 +660,13 @@ class _EquipmentTab extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 8),
-        ...items
-            .map((item) => _ItemCard(
-                  item: item,
-                  player: player,
-                  isCurrentEquipment:
-                      item.equipKey == currentEquipKey &&
-                          item.level == currentLevel,
-                  onBuy: () => _buyEquipment(context, item),
-                )),
+        ...items.map((item) => _ItemCard(
+              item: item,
+              player: player,
+              isCurrentEquipment: item.equipKey == currentEquipKey &&
+                  item.level == currentLevel,
+              onBuy: () => _buyEquipment(context, item),
+            )),
       ],
     );
   }
@@ -733,7 +730,8 @@ class _EquipmentTab extends StatelessWidget {
           hullEquipment: item.equipKey,
           hullEquipmentLevel: item.level,
           credits: player.credits - item.priceCredits,
-          scrapMetal: player.scrapMetal - item.priceScrapMetal + scrapMetalReturn,
+          scrapMetal:
+              player.scrapMetal - item.priceScrapMetal + scrapMetalReturn,
           scrapTech: player.scrapTech - item.priceScrapTech + scrapTechReturn,
         );
         break;
@@ -742,7 +740,8 @@ class _EquipmentTab extends StatelessWidget {
           shieldEquipment: item.equipKey,
           shieldEquipmentLevel: item.level,
           credits: player.credits - item.priceCredits,
-          scrapMetal: player.scrapMetal - item.priceScrapMetal + scrapMetalReturn,
+          scrapMetal:
+              player.scrapMetal - item.priceScrapMetal + scrapMetalReturn,
           scrapTech: player.scrapTech - item.priceScrapTech + scrapTechReturn,
         );
         break;
@@ -751,7 +750,8 @@ class _EquipmentTab extends StatelessWidget {
           engineEquipment: item.equipKey,
           engineEquipmentLevel: item.level,
           credits: player.credits - item.priceCredits,
-          scrapMetal: player.scrapMetal - item.priceScrapMetal + scrapMetalReturn,
+          scrapMetal:
+              player.scrapMetal - item.priceScrapMetal + scrapMetalReturn,
           scrapTech: player.scrapTech - item.priceScrapTech + scrapTechReturn,
         );
         break;
@@ -842,7 +842,8 @@ class _ModulesTab extends StatelessWidget {
                         color: Theme.of(context).colorScheme.tertiary)),
                 const SizedBox(height: 4),
                 ...player.installedModules.entries.map((e) {
-                  final def = moduleDefs.where((m) => m.id == e.key).firstOrNull;
+                  final def =
+                      moduleDefs.where((m) => m.id == e.key).firstOrNull;
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Row(
@@ -868,14 +869,13 @@ class _ModulesTab extends StatelessWidget {
               ],
             ),
           ),
-        ...items
-            .map((item) => _ItemCard(
-                  item: item,
-                  player: player,
-                  onBuy: () => _buyModule(context, item),
-                  isCurrentEquipment:
-                      player.installedModules[item.equipKey] == item.level,
-                )),
+        ...items.map((item) => _ItemCard(
+              item: item,
+              player: player,
+              onBuy: () => _buyModule(context, item),
+              isCurrentEquipment:
+                  player.installedModules[item.equipKey] == item.level,
+            )),
       ],
     );
   }
@@ -1041,7 +1041,8 @@ class _ScrapTab extends StatelessWidget {
               onSell: () {
                 final updated = player.copyWith(
                   scrapMetal: 0,
-                  credits: player.credits + player.scrapMetal * scrapMetalSellPrice,
+                  credits:
+                      player.credits + player.scrapMetal * scrapMetalSellPrice,
                 );
                 onPlayerUpdate(updated);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1063,7 +1064,8 @@ class _ScrapTab extends StatelessWidget {
               onSell: () {
                 final updated = player.copyWith(
                   scrapTech: 0,
-                  credits: player.credits + player.scrapTech * scrapTechSellPrice,
+                  credits:
+                      player.credits + player.scrapTech * scrapTechSellPrice,
                 );
                 onPlayerUpdate(updated);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1205,10 +1207,11 @@ class _ItemCard extends StatelessWidget {
     final canAffordCredits = player.credits >= item.priceCredits;
     final canAffordScrapMetal = player.scrapMetal >= item.priceScrapMetal;
     final canAffordScrapTech = player.scrapTech >= item.priceScrapTech;
-    final canAfford =
-        canAffordCredits && canAffordScrapMetal && canAffordScrapTech && restrictionReason == null;
-    final showScrapCost =
-        item.priceScrapMetal > 0 || item.priceScrapTech > 0;
+    final canAfford = canAffordCredits &&
+        canAffordScrapMetal &&
+        canAffordScrapTech &&
+        restrictionReason == null;
+    final showScrapCost = item.priceScrapMetal > 0 || item.priceScrapTech > 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1241,13 +1244,11 @@ class _ItemCard extends StatelessWidget {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: cs.primary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(4),
-                  border:
-                      Border.all(color: cs.primary.withValues(alpha: 0.2)),
+                  border: Border.all(color: cs.primary.withValues(alpha: 0.2)),
                 ),
                 child: Text(
                   'Lv ${item.level}',
@@ -1287,7 +1288,8 @@ class _ItemCard extends StatelessWidget {
             const SizedBox(height: 4),
             Row(
               children: [
-                Icon(Icons.priority_high_rounded, size: 12, color: Colors.orange.shade300),
+                Icon(Icons.priority_high_rounded,
+                    size: 12, color: Colors.orange.shade300),
                 const SizedBox(width: 4),
                 Text(
                   restrictionReason!,
@@ -1419,5 +1421,3 @@ class _ItemCard extends StatelessWidget {
     return '$value cr';
   }
 }
-
-

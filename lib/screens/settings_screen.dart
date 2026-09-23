@@ -2,14 +2,14 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tradewars_2050/core/theme_service.dart';
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/services/audio_service.dart';
-import 'package:tradewars_2050/widgets/audio_settings_widget.dart';
-import 'package:tradewars_2050/widgets/system_resources_widget.dart';
-import 'package:tradewars_2050/widgets/font_settings_widget.dart';
-import 'package:tradewars_2050/widgets/video_settings_widget.dart';
+import 'package:cosmic_trader/core/theme_service.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/widgets/audio_settings_widget.dart';
+import 'package:cosmic_trader/widgets/system_resources_widget.dart';
+import 'package:cosmic_trader/widgets/font_settings_widget.dart';
+import 'package:cosmic_trader/widgets/video_settings_widget.dart';
 
 class SettingsScreen extends StatefulWidget {
   final GameSettings currentSettings;
@@ -417,21 +417,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             style: theme.textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
-                        ..._commodityControllers.entries.map((e) =>
-                            _rangeField(
-                                '${e.key} (price)', e.value.priceMin,
-                                e.value.priceMax)),
+                        ..._commodityControllers.entries.map((e) => _rangeField(
+                            '${e.key} (price)',
+                            e.value.priceMin,
+                            e.value.priceMax)),
 
                         const SizedBox(height: 16),
                         Text('Economy (quantity ranges)',
                             style: theme.textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
-                        ..._commodityControllers.entries.map((e) =>
-                            _rangeField(
-                                '${e.key} (qty)', e.value.qtyMin,
-                                e.value.qtyMax,
-                                isInt: true)),
+                        ..._commodityControllers.entries.map((e) => _rangeField(
+                            '${e.key} (qty)', e.value.qtyMin, e.value.qtyMax,
+                            isInt: true)),
 
                         const SizedBox(height: 24),
 
@@ -537,8 +535,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 setState(() => _resolutionWidth = v),
             onResolutionHeightChanged: (v) =>
                 setState(() => _resolutionHeight = v),
-            onAnimationSpeedChanged: (v) =>
-                setState(() => _animationSpeed = v),
+            onAnimationSpeedChanged: (v) => setState(() => _animationSpeed = v),
             buildSettings: _buildSettings,
             onSaveSettings: widget.onSettingsChanged,
           ),
@@ -587,7 +584,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'TradeWars 2050',
+                          'Cosmic Trader',
                           style: theme.textTheme.titleSmall?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: cs.primary,
@@ -598,7 +595,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           'A sci-fi space trading and combat simulator. '
                           'Navigate the galaxy, trade commodities, battle NPCs, '
                           'capture ports, upgrade your ship, and build your empire. '
-                          'Inspired by the classic TradeWars 2002.',
+                          'Inspired by classic BBS-era space trading games.',
                           style: TextStyle(
                             fontSize: 13,
                             height: 1.5,

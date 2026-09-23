@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/port_defense_config.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/port_defense_config.dart';
 
 /// Represents a space port within a sector.
 class Port {
@@ -290,9 +290,8 @@ class Port {
       portCredits: portCredits ?? this.portCredits,
       desiredCredits: desiredCredits ?? this.desiredCredits,
       owner: clearOwner ? null : (owner ?? this.owner),
-      ownerFaction: clearOwnerFaction
-          ? null
-          : (ownerFaction ?? this.ownerFaction),
+      ownerFaction:
+          clearOwnerFaction ? null : (ownerFaction ?? this.ownerFaction),
       lastRegenTime: lastRegenTime ?? this.lastRegenTime,
       storageLevel: storageLevel ?? this.storageLevel,
       accumulatedRevenue: accumulatedRevenue ?? this.accumulatedRevenue,
@@ -348,16 +347,19 @@ class Port {
           (json['supply'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
       demand:
           (json['demand'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
-      maxSupply: (json['maxSupply'] as Map<String, dynamic>?)
-              ?.cast<String, int>() ??
-          (json['supply'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
-      maxDemand: (json['maxDemand'] as Map<String, dynamic>?)
-              ?.cast<String, int>() ??
-          (json['demand'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
+      maxSupply:
+          (json['maxSupply'] as Map<String, dynamic>?)?.cast<String, int>() ??
+              (json['supply'] as Map<String, dynamic>?)?.cast<String, int>() ??
+              {},
+      maxDemand:
+          (json['maxDemand'] as Map<String, dynamic>?)?.cast<String, int>() ??
+              (json['demand'] as Map<String, dynamic>?)?.cast<String, int>() ??
+              {},
       defenseLevel: (json['defenseLevel'] as int?) ?? 0,
       portCredits: (json['portCredits'] as num?)?.toDouble() ?? 0.0,
       desiredCredits: (json['desiredCredits'] as num?)?.toDouble() ??
-          (json['portCredits'] as num?)?.toDouble() ?? 0.0,
+          (json['portCredits'] as num?)?.toDouble() ??
+          0.0,
       lastRegenTime: (json['lastRegenTime'] as int?) ?? 0,
       owner: json['owner'] as String?,
       ownerFaction: _parseFactionClass(json['ownerFaction'] as String?),
@@ -365,8 +367,8 @@ class Port {
       accumulatedRevenue:
           (json['accumulatedRevenue'] as num?)?.toDouble() ?? 0.0,
       ownerTaxRate: (json['ownerTaxRate'] as num?)?.toDouble() ?? 0.05,
-      pricingOverride:
-          (json['pricingOverride'] as Map<String, dynamic>?)?.cast<String, double>(),
+      pricingOverride: (json['pricingOverride'] as Map<String, dynamic>?)
+          ?.cast<String, double>(),
       currentShields: (json['currentShields'] as int?) ?? 0,
       isUnderAttack: (json['isUnderAttack'] as bool?) ?? false,
       isDestroyed: (json['isDestroyed'] as bool?) ?? false,

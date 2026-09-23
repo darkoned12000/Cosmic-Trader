@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/models/universe_generator.dart';
-import 'package:tradewars_2050/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/universe_generator.dart';
+import 'package:cosmic_trader/data/storage/settings_storage.dart';
 
 /// Handles reading/writing universe.json to persistent storage.
 class UniverseStorage {

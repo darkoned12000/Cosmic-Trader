@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
-import 'package:tradewars_2050/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/data/storage/settings_storage.dart';
 
 /// Handles reading/writing players.json to the device's application directory.
 class PlayerStorage {

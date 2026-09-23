@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/player.dart';
+import 'package:cosmic_trader/data/models/player.dart';
 
 enum _LotteryStage { menu, picking, drawing, results }
 

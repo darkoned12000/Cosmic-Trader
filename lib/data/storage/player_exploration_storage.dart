@@ -84,9 +84,9 @@ class PlayerExplorationStorage {
   }
 
   // The 'player_exploration.json' file should be located in the following directories:
-  // Windows: C:\Users\<You>\AppData\Roaming\com.example.tradewars_2050\
-  // Mac: ~/Library/Application Support/com.example.tradewars_2050/
-  // Linux: ~/.local/share/com.tradewars.tradewars_2050/
+  // Windows: C:\Users\<You>\AppData\Roaming\com.cosmictrader.app\
+  // Mac: ~/Library/Application Support/com.cosmictrader.app/
+  // Linux: ~/.local/share/com.cosmictrader.app/
   Future<void> _persist() async {
     try {
       final dir = await getApplicationSupportDirectory();

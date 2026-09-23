@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/screens/faction_rankings_screen.dart';
-import 'package:tradewars_2050/screens/knowledge_base_screen.dart';
-import 'package:tradewars_2050/screens/ports_knowledge_base.dart';
-import 'package:tradewars_2050/widgets/banking_widget.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/screens/faction_rankings_screen.dart';
+import 'package:cosmic_trader/screens/knowledge_base_screen.dart';
+import 'package:cosmic_trader/screens/ports_knowledge_base.dart';
+import 'package:cosmic_trader/widgets/banking_widget.dart';
 
 class ComputerScreen extends StatefulWidget {
   final Player player;
@@ -258,7 +258,8 @@ class _ComputerScreenState extends State<ComputerScreen> {
                         fontSize: 12),
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => setState(() => _selectedTool = 'faction_rankings'),
+                  onTap: () =>
+                      setState(() => _selectedTool = 'faction_rankings'),
                 ),
               ],
             ),
@@ -286,7 +287,8 @@ class _ComputerScreenState extends State<ComputerScreen> {
     }
 
     if (_filterPortClass != null) {
-      ports = ports.where((s) => s.port!.portClass == _filterPortClass).toList();
+      ports =
+          ports.where((s) => s.port!.portClass == _filterPortClass).toList();
     }
 
     if (_sortBy == 'buy' && _filterCommodity != null) {
@@ -395,9 +397,11 @@ class _ComputerScreenState extends State<ComputerScreen> {
                     children: [
                       _classFilterChip(cs, 'All', null),
                       _classFilterChip(cs, 'Federal', PortClass.federal),
-                      _classFilterChip(cs, 'Hardware', PortClass.hardwareEmporium),
+                      _classFilterChip(
+                          cs, 'Hardware', PortClass.hardwareEmporium),
                       _classFilterChip(cs, 'Free', PortClass.free),
-                      _classFilterChip(cs, 'Independent', PortClass.independent),
+                      _classFilterChip(
+                          cs, 'Independent', PortClass.independent),
                     ],
                   ),
                 ),

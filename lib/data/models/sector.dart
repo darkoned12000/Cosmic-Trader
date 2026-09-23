@@ -1,5 +1,5 @@
-import 'package:tradewars_2050/data/models/planet.dart';
-import 'package:tradewars_2050/data/models/port.dart';
+import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 
 /// Represents a sector in the game universe.
 class Sector {

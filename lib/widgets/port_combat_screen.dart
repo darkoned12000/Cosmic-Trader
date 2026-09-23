@@ -2,10 +2,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
-import 'package:tradewars_2050/data/models/port_defense_config.dart';
-import 'package:tradewars_2050/services/npc_ai/port_combat_service.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/port_defense_config.dart';
+import 'package:cosmic_trader/services/npc_ai/port_combat_service.dart';
 
 class PortCombatScreen extends StatefulWidget {
   final Player player;
@@ -55,7 +55,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
     if (_droneSeeded && _dronePhases.length >= count) return;
     _dronePhases.clear();
     _droneOffsets.clear();
-    final rng = math.Random(_port.name.hashCode ^ DateTime.now().microsecondsSinceEpoch);
+    final rng = math.Random(
+        _port.name.hashCode ^ DateTime.now().microsecondsSinceEpoch);
     for (int i = 0; i < count; i++) {
       _dronePhases.add(rng.nextDouble() * math.pi * 2);
       _droneOffsets.add((rng.nextDouble() - 0.5) * 2);
@@ -117,7 +118,9 @@ class _PortCombatScreenState extends State<PortCombatScreen>
       PortDefenseConfig.defenseStats(_port.defenseLevel).firepower;
 
   int _calcDamage(int power) =>
-      (power * (0.8 + math.Random().nextDouble() * 0.4)).round().clamp(1, 99999);
+      (power * (0.8 + math.Random().nextDouble() * 0.4))
+          .round()
+          .clamp(1, 99999);
 
   Future<void> _fire() async {
     if (_animating || _combatOver) return;
@@ -154,8 +157,7 @@ class _PortCombatScreenState extends State<PortCombatScreen>
       }
     }
 
-    final portSurrenderedThisRound =
-        portShields <= _port.captureThreshold;
+    final portSurrenderedThisRound = portShields <= _port.captureThreshold;
 
     // Only process port return fire if port still defends
     int dronesDestroyed = 0;
@@ -259,7 +261,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
         _combatLog.add('  Drones intercepted: $dronesDestroyed destroyed, '
             '$dronesReturning returned');
       }
-      _combatLog.add('  Your shields: ${playerShields.clamp(0, _player.maxShields)}/${_player.maxShields}  '
+      _combatLog.add(
+          '  Your shields: ${playerShields.clamp(0, _player.maxShields)}/${_player.maxShields}  '
           'hull: ${playerHull.clamp(0, _player.maxHull)}/${_player.maxHull}');
     }
 
@@ -318,8 +321,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
               Navigator.of(ctx).pop();
               _endCombat(outcome: 'spared');
             },
-            child: const Text('Spare',
-                style: TextStyle(fontFamily: 'monospace')),
+            child:
+                const Text('Spare', style: TextStyle(fontFamily: 'monospace')),
           ),
         ],
       ),
@@ -374,7 +377,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
         break;
       case 'attackerDefeated':
         finalPort = PortCombatService.endCombatRetreat(_port);
-        finalPlayer = _player.copyWith(hull: _player.hull.clamp(0, _player.maxHull));
+        finalPlayer =
+            _player.copyWith(hull: _player.hull.clamp(0, _player.maxHull));
         break;
       default:
         finalPort = PortCombatService.endCombatRetreat(_port);
@@ -576,7 +580,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
                   fontFamily: 'monospace',
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          _bar('SHD', _port.currentShields, _port.maxShields, _getShieldColor()),
+          _bar(
+              'SHD', _port.currentShields, _port.maxShields, _getShieldColor()),
           const SizedBox(height: 2),
           Row(
             children: [
@@ -692,9 +697,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
                 fontSize: 12,
                 fontFamily: 'monospace',
                 fontWeight: FontWeight.bold,
-                color: _dronesToSend > 0
-                    ? Colors.orange.shade300
-                    : Colors.white54,
+                color:
+                    _dronesToSend > 0 ? Colors.orange.shade300 : Colors.white54,
               ),
             ),
           ),
@@ -783,8 +787,7 @@ class _PortCombatScreenState extends State<PortCombatScreen>
         child: OutlinedButton.icon(
           onPressed: _closeCombat,
           icon: const Icon(Icons.close_rounded, size: 18),
-          label: const Text('CLOSE',
-              style: TextStyle(fontFamily: 'monospace')),
+          label: const Text('CLOSE', style: TextStyle(fontFamily: 'monospace')),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.white70,
             side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
@@ -830,8 +833,8 @@ class _PortCombatScreenState extends State<PortCombatScreen>
           OutlinedButton.icon(
             onPressed: _animating ? null : _flee,
             icon: const Icon(Icons.exit_to_app_rounded, size: 18),
-            label: const Text('SPARE',
-                style: TextStyle(fontFamily: 'monospace')),
+            label:
+                const Text('SPARE', style: TextStyle(fontFamily: 'monospace')),
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.amber.shade300,
               side: BorderSide(
@@ -850,8 +853,7 @@ class _PortCombatScreenState extends State<PortCombatScreen>
           child: FilledButton.icon(
             onPressed: _animating ? null : _fire,
             icon: Icon(Icons.rocket_launch_rounded,
-                size: 18,
-                color: _animating ? Colors.white38 : Colors.white),
+                size: 18, color: _animating ? Colors.white38 : Colors.white),
             label: Text(
               _animating ? 'FIRING...' : 'FIRE',
               style: const TextStyle(fontFamily: 'monospace'),
@@ -867,12 +869,11 @@ class _PortCombatScreenState extends State<PortCombatScreen>
         OutlinedButton.icon(
           onPressed: _animating ? null : _flee,
           icon: const Icon(Icons.exit_to_app_rounded, size: 18),
-          label: const Text('FLEE',
-              style: TextStyle(fontFamily: 'monospace')),
+          label: const Text('FLEE', style: TextStyle(fontFamily: 'monospace')),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.amber.shade300,
-            side: BorderSide(
-                color: Colors.amber.shade300.withValues(alpha: 0.5)),
+            side:
+                BorderSide(color: Colors.amber.shade300.withValues(alpha: 0.5)),
             padding: const EdgeInsets.symmetric(vertical: 14),
           ),
         ),
@@ -950,7 +951,8 @@ class _PortCombatPainter extends CustomPainter {
     this.droneCount = 0,
     this.dronePhases = const [],
     this.droneOffsets = const [],
-  }) : super(repaint: Listenable.merge([
+  }) : super(
+            repaint: Listenable.merge([
           atkProgress,
           defProgress,
           droneProgress,
@@ -977,9 +979,7 @@ class _PortCombatPainter extends CustomPainter {
       final endX = portCenter.dx - shipSize * 0.6;
 
       for (int i = 0; i < count; i++) {
-        final phase = i < dronePhases.length
-            ? dronePhases[i]
-            : i * 2.399;
+        final phase = i < dronePhases.length ? dronePhases[i] : i * 2.399;
         final offset = i < droneOffsets.length
             ? droneOffsets[i]
             : (i % 2 == 0 ? 1.0 : -1.0);
@@ -1117,7 +1117,9 @@ class _PortCombatPainter extends CustomPainter {
   }
 
   void _drawProjectile(Canvas canvas, Offset pos, Color color) {
-    final paint = Paint()..color = color..style = PaintingStyle.fill;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
     canvas.drawCircle(pos, 4, paint);
     final glowPaint = Paint()
       ..color = color.withValues(alpha: 0.3)
@@ -1136,12 +1138,14 @@ class _StarfieldPainter extends CustomPainter {
 
   static List<_Star> _generateStars() {
     final rng = math.Random(42);
-    return List.generate(60, (_) => _Star(
-      x: rng.nextDouble(),
-      y: rng.nextDouble(),
-      r: 0.3 + rng.nextDouble() * 1.2,
-      a: 0.2 + rng.nextDouble() * 0.5,
-    ));
+    return List.generate(
+        60,
+        (_) => _Star(
+              x: rng.nextDouble(),
+              y: rng.nextDouble(),
+              r: 0.3 + rng.nextDouble() * 1.2,
+              a: 0.2 + rng.nextDouble() * 0.5,
+            ));
   }
 
   @override

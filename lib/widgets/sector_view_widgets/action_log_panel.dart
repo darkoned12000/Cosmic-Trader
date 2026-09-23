@@ -103,7 +103,6 @@ class _ActionLogPanelState extends State<ActionLogPanel> {
               ],
             ),
           ),
-
           Expanded(
             child: entries.isEmpty
                 ? Center(

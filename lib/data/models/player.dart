@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:crypto/crypto.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
 
 /// Player model with ship stats for gameplay.
 class Player {
@@ -302,8 +302,9 @@ class Player {
       ownedPorts: (json['ownedPorts'] as List?)?.cast<String>() ?? [],
       scrapMetal: json['scrapMetal'] as int? ?? 0,
       scrapTech: json['scrapTech'] as int? ?? 0,
-      installedModules:
-          (json['installedModules'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
+      installedModules: (json['installedModules'] as Map<String, dynamic>?)
+              ?.cast<String, int>() ??
+          {},
       faction: FactionClass.values.firstWhere(
         (e) => e.name == json['faction'],
         orElse: () => FactionClass.trader,

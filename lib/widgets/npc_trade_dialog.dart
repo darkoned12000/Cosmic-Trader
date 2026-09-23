@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
 
 class NpcTradeDialog extends StatefulWidget {
   final Player player;

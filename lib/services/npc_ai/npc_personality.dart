@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_goal.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 
 enum NpcPersonality {
   traderMerchant,

@@ -1,4 +1,4 @@
-import 'package:tradewars_2050/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
 
 class _PathNode {
   final int sectorId;

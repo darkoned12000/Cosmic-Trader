@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:window_manager/window_manager.dart' as window_manager;
 
 class VideoSettingsWidget extends StatelessWidget {
@@ -303,8 +303,7 @@ class VideoSettingsWidget extends StatelessWidget {
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(4),

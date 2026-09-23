@@ -467,7 +467,7 @@ class _SystemResourcesWidgetState extends State<SystemResourcesWidget> {
         .join('\n');
 
     final stats = '''
-=== TradeWars 2050 Dev Stats ===
+=== Cosmic Trader Dev Stats ===
 Time: ${DateTime.now()}
 Current FPS: ${_fps.toStringAsFixed(1)}
 Worst Frame Time (last 1s): ${_lastReportedWorstFrameTimeMs.toStringAsFixed(1)} ms

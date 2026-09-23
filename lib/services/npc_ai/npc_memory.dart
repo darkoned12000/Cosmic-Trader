@@ -1,4 +1,4 @@
-import 'package:tradewars_2050/data/models/port.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 
 class PortInfo {
   final String name;

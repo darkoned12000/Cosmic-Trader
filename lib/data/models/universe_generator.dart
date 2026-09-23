@@ -1,17 +1,17 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/planet.dart';
-import 'package:tradewars_2050/data/models/port.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
-import 'package:tradewars_2050/data/storage/npc_storage.dart';
-import 'package:tradewars_2050/services/npc_ai/pathfinding_service.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
+import 'package:cosmic_trader/services/npc_ai/pathfinding_service.dart';
 
 /// Generates a connected universe of sectors using the classic
-/// TradeWars-inspired algorithm.
+/// Classic BBS-era space-trading-inspired algorithm.
 ///
 /// All warps are bidirectional and the graph is fully static after
 /// generation (same seed = same universe, same paths).
@@ -633,7 +633,8 @@ class UniverseGenerator {
         defenseLevel: _pickDefenseLevel(rng),
         portCredits: 100000 + rng.nextDouble() * 900000,
         owner: heOwner,
-        ownerFaction: _pickOwnerFaction(heOwner, PortClass.hardwareEmporium, rng),
+        ownerFaction:
+            _pickOwnerFaction(heOwner, PortClass.hardwareEmporium, rng),
       );
     }
   }
@@ -674,7 +675,9 @@ class UniverseGenerator {
     for (int i = 0; i < count; i++) {
       chars[i] = (i == sIdx)
           ? 'S'
-          : (i == bIdx) ? 'B' : (rng.nextBool() ? 'S' : 'B');
+          : (i == bIdx)
+              ? 'B'
+              : (rng.nextBool() ? 'S' : 'B');
     }
     return chars.join();
   }
@@ -721,8 +724,8 @@ class UniverseGenerator {
 
   /// Picks a faction for an NPC port owner, weighted by port class.
   /// Free ports lean Trader, independents lean Pirate/Duran.
-  FactionClass? _pickOwnerFaction(String? ownerName, PortClass portClass,
-      math.Random rng) {
+  FactionClass? _pickOwnerFaction(
+      String? ownerName, PortClass portClass, math.Random rng) {
     if (ownerName == null) return null;
     final r = rng.nextDouble();
     switch (portClass) {
@@ -829,8 +832,7 @@ class UniverseGenerator {
       } else {
         // Port buys from player: pick from upper half [splitPoint, priceMax]
         buyPrices[c.name] =
-            (split + rng.nextDouble() * (c.priceMax - split))
-                .roundToDouble();
+            (split + rng.nextDouble() * (c.priceMax - split)).roundToDouble();
       }
     }
 
@@ -902,23 +904,32 @@ class UniverseGenerator {
         }
       }
       // Pick a random preferred sector, or any planet sector
-      final pool = candidates.isNotEmpty ? candidates : sectors.where((s) => s.hasPlanet && s.id > settings.fedSpaceEnd).toList();
+      final pool = candidates.isNotEmpty
+          ? candidates
+          : sectors
+              .where((s) => s.hasPlanet && s.id > settings.fedSpaceEnd)
+              .toList();
       if (pool.isEmpty) {
         // Create a planet in a random non-FedSpace sector
-        final nonFed = sectors.where((s) => s.id > settings.fedSpaceEnd).toList();
+        final nonFed =
+            sectors.where((s) => s.id > settings.fedSpaceEnd).toList();
         if (nonFed.isEmpty) continue;
         final sector = nonFed[rng.nextInt(nonFed.length)];
         if (!sector.hasPlanet) {
           sector.hasPlanet = true;
           sector.planet = _createPlanet(sector, rng);
-          final type = faction == FactionClass.duran ? 'Lava'
-              : faction == FactionClass.vinari ? 'Terran' : 'Desert';
+          final type = faction == FactionClass.duran
+              ? 'Lava'
+              : faction == FactionClass.vinari
+                  ? 'Terran'
+                  : 'Desert';
           sector.planet = _setupHomeworld(sector.planet!, faction, type, rng);
         }
         continue;
       }
       final chosen = pool[rng.nextInt(pool.length)];
-      chosen.planet = _setupHomeworld(chosen.planet!, faction, chosen.planet!.planetType, rng);
+      chosen.planet = _setupHomeworld(
+          chosen.planet!, faction, chosen.planet!.planetType, rng);
     }
   }
 
@@ -935,7 +946,8 @@ class UniverseGenerator {
     }
   }
 
-  Planet _setupHomeworld(Planet planet, FactionClass faction, String type, math.Random rng) {
+  Planet _setupHomeworld(
+      Planet planet, FactionClass faction, String type, math.Random rng) {
     final homeworldName = _homeworldName(faction);
     return Planet(
       name: homeworldName ?? planet.name,
@@ -996,7 +1008,8 @@ class UniverseGenerator {
     final level = 1;
     final cost = Planet.levelUpCosts[level - 1];
     return Planet(
-      name: Planet.generateVariantName(baseName, sector.id * 7 + rng.nextInt(9999)),
+      name: Planet.generateVariantName(
+          baseName, sector.id * 7 + rng.nextInt(9999)),
       planetType: type,
       atmosphere: Planet.planetAtmospheres[type]?.atmosphere ?? 'Unknown',
       productionEfficiency: (efficiency * 10).roundToDouble() / 10,
@@ -1029,16 +1042,24 @@ class UniverseGenerator {
       return 'Terran';
     }
     const weightedTypes = [
-      'Terran', 'Terran', 'Terran',
-      'Jungle', 'Jungle',
-      'Desert', 'Desert',
-      'Ocean', 'Ocean',
+      'Terran',
+      'Terran',
+      'Terran',
+      'Jungle',
+      'Jungle',
+      'Desert',
+      'Desert',
+      'Ocean',
+      'Ocean',
       'Ice',
-      'Lava', 'Lava',
+      'Lava',
+      'Lava',
       'Gas Giant',
-      'Moon', 'Moon',
+      'Moon',
+      'Moon',
       'Barren',
-      'Toxic', 'Toxic',
+      'Toxic',
+      'Toxic',
     ];
     return weightedTypes[rng.nextInt(weightedTypes.length)];
   }
@@ -1219,7 +1240,6 @@ class UniverseGenerator {
     ];
     return '${names[sectorId % names.length]} Station';
   }
-
 }
 
 // =============================================================================

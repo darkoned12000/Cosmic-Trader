@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/player.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/player.dart';
 
 class HackingWidget extends StatefulWidget {
   final Player player;
@@ -827,7 +827,8 @@ class _HackingWidgetState extends State<HackingWidget>
           subtitle: '+5 random cargo',
           color: accent,
           onTap: () {
-            final chosen = CommodityRegistry.names[Random().nextInt(CommodityRegistry.names.length)];
+            final chosen = CommodityRegistry
+                .names[Random().nextInt(CommodityRegistry.names.length)];
             final newCargo = Map<String, int>.from(widget.player.cargo);
             newCargo[chosen] = (newCargo[chosen] ?? 0) + 5;
             final updated = widget.player.copyWith(

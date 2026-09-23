@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.tradewars" "\0"
-            VALUE "FileDescription", "tradewars_2050" "\0"
+            VALUE "CompanyName", "com.cosmictrader.app" "\0"
+            VALUE "FileDescription", "Cosmic Trader" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "tradewars_2050" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.tradewars. All rights reserved." "\0"
-            VALUE "OriginalFilename", "tradewars_2050.exe" "\0"
-            VALUE "ProductName", "tradewars_2050" "\0"
+            VALUE "InternalName", "cosmic_trader" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.cosmictrader.app. All rights reserved." "\0"
+            VALUE "OriginalFilename", "cosmic_trader.exe" "\0"
+            VALUE "ProductName", "Cosmic Trader" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

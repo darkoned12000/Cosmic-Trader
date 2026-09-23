@@ -1,10 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 
 class PortManagementScreen extends StatefulWidget {
   final Port port;
@@ -301,20 +301,21 @@ class _PortManagementScreenState extends State<PortManagementScreen>
             ),
             const SizedBox(height: 16),
             _statRow(cs, 'Port Credits', _fmt(_port.portCredits)),
-            _statRow(cs, 'Cash Health', '$healthLabel (${(ratio * 100).round()}%)',
+            _statRow(
+                cs, 'Cash Health', '$healthLabel (${(ratio * 100).round()}%)',
                 valueColor: healthColor.shade300),
             _statRow(cs, 'Defense Level', '${_port.defenseLevel}/4'),
             _statRow(cs, 'Storage Level', '${_port.storageLevel}/10'),
             _statRow(cs, 'Trade Tax', '${(_port.ownerTaxRate * 100).round()}%'),
-            _statRow(
-                cs, 'Desired Credits', _fmt(_port.desiredCredits)),
+            _statRow(cs, 'Desired Credits', _fmt(_port.desiredCredits)),
           ],
         ),
       ),
     );
   }
 
-  Widget _statRow(ColorScheme cs, String label, String value, {Color? valueColor}) {
+  Widget _statRow(ColorScheme cs, String label, String value,
+      {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -322,8 +323,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
         children: [
           Text(label,
               style: TextStyle(
-                  fontSize: 14,
-                  color: cs.onSurface.withValues(alpha: 0.6))),
+                  fontSize: 14, color: cs.onSurface.withValues(alpha: 0.6))),
           Text(value,
               style: TextStyle(
                 fontSize: 14,
@@ -382,7 +382,8 @@ class _PortManagementScreenState extends State<PortManagementScreen>
   Widget _defenseLevelCard(ThemeData theme, ColorScheme cs, int level) {
     final isCurrent = level == _port.defenseLevel;
     final isOwned = level <= _port.defenseLevel;
-    final isUpgrade = level == _port.defenseLevel + 1 && _port.canUpgradeDefense;
+    final isUpgrade =
+        level == _port.defenseLevel + 1 && _port.canUpgradeDefense;
     final cost = level > 0 ? level * 250000.0 : 0.0;
 
     Color borderColor;
@@ -404,7 +405,8 @@ class _PortManagementScreenState extends State<PortManagementScreen>
         width: double.infinity,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor, width: isCurrent || isUpgrade ? 1.5 : 1),
+          border: Border.all(
+              color: borderColor, width: isCurrent || isUpgrade ? 1.5 : 1),
           color: bgColor,
         ),
         padding: const EdgeInsets.all(16),
@@ -426,15 +428,14 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
-                    color: isOwned
-                        ? Colors.green.shade400
-                        : cs.onSurface,
+                    color: isOwned ? Colors.green.shade400 : cs.onSurface,
                   ),
                 ),
                 if (isCurrent) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: Colors.green.shade700,
                       borderRadius: BorderRadius.circular(10),
@@ -540,8 +541,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
     final multiplier = math.pow(1.5, level);
     final nextMultiplier = math.pow(1.5, level + 1);
     final cost = _port.storageUpgradeCost;
-    final canUpgrade = _port.canUpgradeStorage &&
-        widget.player.credits >= cost;
+    final canUpgrade = _port.canUpgradeStorage && widget.player.credits >= cost;
 
     return Card(
       elevation: 0,
@@ -552,8 +552,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
           children: [
             Row(
               children: [
-                Icon(Icons.inventory_2_rounded,
-                    size: 28, color: cs.primary),
+                Icon(Icons.inventory_2_rounded, size: 28, color: cs.primary),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -596,14 +595,10 @@ class _PortManagementScreenState extends State<PortManagementScreen>
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: canUpgrade
-                      ? () => _upgradeStorage(cost)
-                      : null,
+                  onPressed: canUpgrade ? () => _upgradeStorage(cost) : null,
                   icon: const Icon(Icons.add_circle_rounded, size: 20),
                   label: Text(
-                    cost.isFinite
-                        ? 'Upgrade — ${_fmt(cost)} cr'
-                        : 'MAX LEVEL',
+                    cost.isFinite ? 'Upgrade — ${_fmt(cost)} cr' : 'MAX LEVEL',
                   ),
                   style: FilledButton.styleFrom(
                     backgroundColor: canUpgrade ? cs.primary : null,
@@ -684,7 +679,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
     _showConfirm(
       'Upgrade Storage',
       'Upgrade to Level ${_port.storageLevel + 1} for ${_fmt(cost)} cr?\n\n'
-      'Supply/Demand capacity will increase by 50%.',
+          'Supply/Demand capacity will increase by 50%.',
       () {
         _updatePort(_port.copyWith(
           storageLevel: _port.storageLevel + 1,
@@ -884,8 +879,10 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                                 ? '${(current * 100).round()}%'
                                 : 'Auto',
                             onChanged: (v) {
-                              final newOverride = Map<String, double>.from(override);
-                              newOverride[c] = double.parse(v.toStringAsFixed(2));
+                              final newOverride =
+                                  Map<String, double>.from(override);
+                              newOverride[c] =
+                                  double.parse(v.toStringAsFixed(2));
                               _updatePort(_port.copyWith(
                                 pricingOverride: newOverride,
                               ));
@@ -898,12 +895,12 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                                 size: 18,
                                 color: cs.onSurface.withValues(alpha: 0.4)),
                             onPressed: () {
-                              final newOverride = Map<String, double>.from(override);
+                              final newOverride =
+                                  Map<String, double>.from(override);
                               newOverride.remove(c);
                               _updatePort(_port.copyWith(
-                                pricingOverride: newOverride.isEmpty
-                                    ? null
-                                    : newOverride,
+                                pricingOverride:
+                                    newOverride.isEmpty ? null : newOverride,
                               ));
                             },
                           ),

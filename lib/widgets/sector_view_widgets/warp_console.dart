@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/player.dart';
 
 typedef OnWarpCallback = Future<void> Function(int sectorId);
 

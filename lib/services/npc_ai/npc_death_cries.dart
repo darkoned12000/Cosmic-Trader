@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:tradewars_2050/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 
 class NpcDeathCries {
   static final _rng = math.Random();

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
-import 'package:tradewars_2050/data/storage/settings_storage.dart';
-import 'package:tradewars_2050/screens/game_shell.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
+import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/screens/game_shell.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});

@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 
 /// Persists [GameSettings] to a JSON file so the seed and other params
 /// survive app restarts.

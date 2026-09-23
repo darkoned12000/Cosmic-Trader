@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/core/tw_layout.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
+import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
 
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
 
 class ShipStatusView extends StatefulWidget {
   final Player player;

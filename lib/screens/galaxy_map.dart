@@ -1,19 +1,19 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tradewars_2050/core/tw_layout.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/widgets/star_field.dart';
-import 'package:tradewars_2050/data/storage/player_exploration_storage.dart';
+import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/star_field.dart';
+import 'package:cosmic_trader/data/storage/player_exploration_storage.dart';
 // TODO: adjust this path to wherever you place galaxy_hit_test.dart in your
 // project. Following galaxymap_upgrade.md's proposed layout here:
-import 'package:tradewars_2050/widgets/galaxy_map/galaxy_hit_test.dart';
+import 'package:cosmic_trader/widgets/galaxy_map/galaxy_hit_test.dart';
 // TODO: adjust these two paths to match wherever you place the extracted
 // painter files in your project.
-import 'package:tradewars_2050/widgets/galaxy_map/minimap_painter.dart';
-import 'package:tradewars_2050/widgets/galaxy_map/galaxy_map_painter.dart';
+import 'package:cosmic_trader/widgets/galaxy_map/minimap_painter.dart';
+import 'package:cosmic_trader/widgets/galaxy_map/galaxy_map_painter.dart';
 
 class GalaxyMap extends StatefulWidget {
   final int currentSectorId;
@@ -874,7 +874,8 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
                           .toString()),
                   _detailRow(cs, 'Port', sector.hasPort ? 'Yes' : 'No'),
                   if (sector.hasPlanet)
-                    _detailRow(cs, 'Planet', sector.planet?.planetType ?? 'Unknown'),
+                    _detailRow(
+                        cs, 'Planet', sector.planet?.planetType ?? 'Unknown'),
                   if (sector.anomaly != null)
                     _detailRow(cs, 'Anomaly', sector.anomaly!),
                 ],

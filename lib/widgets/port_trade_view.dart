@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/commodity.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
-import 'package:tradewars_2050/screens/port_management_screen.dart';
-import 'package:tradewars_2050/widgets/lottery_widget.dart';
-import 'package:tradewars_2050/widgets/hold_button.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/screens/port_management_screen.dart';
+import 'package:cosmic_trader/widgets/lottery_widget.dart';
+import 'package:cosmic_trader/widgets/hold_button.dart';
 
 /// Compact, HUD-styled trade view. Same trading logic as before -- only the
 /// layout changed: single-row header, one stat strip, and the three

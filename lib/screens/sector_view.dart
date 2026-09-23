@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/core/tw_layout.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_panel.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/sector_interaction_panel.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/ship_status_summary.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/communications_panel.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/tactical_map.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/warp_console.dart';
+import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_panel.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/sector_interaction_panel.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/ship_status_summary.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/communications_panel.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/tactical_map.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/warp_console.dart';
 
 class SectorView extends StatefulWidget {
   final Player player;

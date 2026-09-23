@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:tradewars_2050/data/models/commodity.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
 
 /// Configuration for universe generation and game economy.
 class GameSettings {
@@ -242,8 +242,7 @@ class GameSettings {
       deleteAllPlayersOnRegen:
           deleteAllPlayersOnRegen ?? this.deleteAllPlayersOnRegen,
       unlockAllShips: unlockAllShips ?? this.unlockAllShips,
-      tacticalDisplaySpeed:
-          tacticalDisplaySpeed ?? this.tacticalDisplaySpeed,
+      tacticalDisplaySpeed: tacticalDisplaySpeed ?? this.tacticalDisplaySpeed,
       fullscreen: fullscreen ?? this.fullscreen,
       windowScale: windowScale ?? this.windowScale,
       resolutionWidth: resolutionWidth ?? this.resolutionWidth,
@@ -331,8 +330,14 @@ class GameSettings {
           json['deleteAllPlayersOnRegen'] as bool? ?? false,
       unlockAllShips: json['unlockAllShips'] as bool? ?? true,
       anomalyTypes: (json['anomalyTypes'] as List?)?.cast<String>() ??
-          ['Asteroid Field', 'Nebula', 'Debris Field', 'Gravity Well',
-           'Radiation Storm', 'Dark Matter Cloud'],
+          [
+            'Asteroid Field',
+            'Nebula',
+            'Debris Field',
+            'Gravity Well',
+            'Radiation Storm',
+            'Dark Matter Cloud'
+          ],
       commodityConfigs: _readCommodityConfigs(json),
       initTurns: json['initTurns'] as int? ?? 1000,
       initCredits: json['initCredits'] as int? ?? 1000000,
@@ -359,8 +364,7 @@ class GameSettings {
     final raw = json['commodityConfigs'];
     if (raw is Map) {
       return raw.map((k, v) => MapEntry(
-          k as String,
-          CommodityConfig.fromJson(v as Map<String, dynamic>)));
+          k as String, CommodityConfig.fromJson(v as Map<String, dynamic>)));
     }
     // Legacy: individual fields (pre-commodity-registry).
     return _legacyConfigs(json);

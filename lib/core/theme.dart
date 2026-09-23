@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Dark space-themed Material 3 design for Tradewars 2050.
+/// Dark space-themed Material 3 design for Cosmic Trader.
 class TWTheme {
   TWTheme._();
 

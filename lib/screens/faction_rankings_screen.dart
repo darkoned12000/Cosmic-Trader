@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/models/ship_templates.dart';
-import 'package:tradewars_2050/data/storage/npc_storage.dart';
-import 'package:tradewars_2050/data/storage/player_storage.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
+import 'package:cosmic_trader/data/storage/player_storage.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
 
 String _formatCredits(int credits) {
-  if (credits >= 1000000000) return '${(credits / 1000000000).toStringAsFixed(1)}B';
+  if (credits >= 1000000000)
+    return '${(credits / 1000000000).toStringAsFixed(1)}B';
   if (credits >= 1000000) return '${(credits / 1000000).toStringAsFixed(1)}M';
   if (credits >= 1000) return '${(credits / 1000).toStringAsFixed(1)}K';
   return credits.toString();
@@ -93,14 +94,14 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
     for (final sector in _sectors) {
       if (sector.port != null && sector.port!.isOwned) {
         final ownerName = sector.port!.owner!;
-        final humanMatches =
-            _players.where((p) => p.username.toLowerCase() == ownerName.toLowerCase());
+        final humanMatches = _players
+            .where((p) => p.username.toLowerCase() == ownerName.toLowerCase());
         if (humanMatches.isNotEmpty) {
           final s = stats[humanMatches.first.faction];
           if (s != null) s.portsControlled++;
         } else {
-          final npcMatches =
-              _npcs.where((n) => n.pilotName.toLowerCase() == ownerName.toLowerCase());
+          final npcMatches = _npcs.where(
+              (n) => n.pilotName.toLowerCase() == ownerName.toLowerCase());
           if (npcMatches.isNotEmpty) {
             final s = stats[npcMatches.first.faction];
             if (s != null) s.portsControlled++;
@@ -150,10 +151,8 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
         (sum, level) => sum + level * 20,
       );
       final totalCredits = npc.credits + npc.bankBalance;
-      final powerScore = shipPower +
-          weaponPower +
-          (totalCredits * 0.001) +
-          (npc.kills * 50);
+      final powerScore =
+          shipPower + weaponPower + (totalCredits * 0.001) + (npc.kills * 50);
 
       entities.add(_TopEntity(
         name: npc.pilotName,
@@ -261,8 +260,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 vertical: 6,
               ),
               decoration: BoxDecoration(
-                color: _getFactionColor(leader.faction)
-                    .withValues(alpha: 0.15),
+                color: _getFactionColor(leader.faction).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
@@ -674,11 +672,14 @@ class _RankingCard extends StatelessWidget {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    _statPill(cs, Icons.local_fire_department_rounded, '${stats.kills} kills'),
+                    _statPill(cs, Icons.local_fire_department_rounded,
+                        '${stats.kills} kills'),
                     const SizedBox(width: 8),
-                    _statPill(cs, Icons.do_not_disturb_off_rounded, '${stats.deaths} deaths'),
+                    _statPill(cs, Icons.do_not_disturb_off_rounded,
+                        '${stats.deaths} deaths'),
                     const SizedBox(width: 8),
-                    _statPill(cs, Icons.bolt_rounded, '${_formatCredits(stats.totalDamageDealt)} dmg'),
+                    _statPill(cs, Icons.bolt_rounded,
+                        '${_formatCredits(stats.totalDamageDealt)} dmg'),
                   ],
                 ),
               ],

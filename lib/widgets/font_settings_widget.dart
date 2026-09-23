@@ -1,7 +1,7 @@
 import 'dart:io' show Directory, File;
 
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 
 class FontSettingsWidget extends StatefulWidget {
   final String fontFamily;
@@ -43,8 +43,8 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
         final files = dir
             .listSync()
             .whereType<File>()
-            .where((f) =>
-                _fontExtensions.any((ext) => f.path.toLowerCase().endsWith(ext)))
+            .where((f) => _fontExtensions
+                .any((ext) => f.path.toLowerCase().endsWith(ext)))
             .map((f) => f.path.split('/').last)
             .toList();
         if (mounted) {
@@ -294,8 +294,7 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(4),
@@ -364,8 +363,7 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
     final cs = Theme.of(context).colorScheme;
     final accent = cs.primary;
 
-    final family =
-        widget.fontFamily.isEmpty ? null : widget.fontFamily;
+    final family = widget.fontFamily.isEmpty ? null : widget.fontFamily;
     final size = widget.fontSize;
 
     return Container(
@@ -409,7 +407,7 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
           ),
           const SizedBox(height: 12),
           Text(
-            'TradeWars 2050 — Sector Navigation • Cargo Management • '
+            'Cosmic Trader — Sector Navigation • Cargo Management • '
             'Combat Systems • Galaxy Map',
             style: TextStyle(
               fontFamily: family,

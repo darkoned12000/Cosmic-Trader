@@ -2,16 +2,16 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/port.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/widgets/hardware_emporium_widget.dart';
-import 'package:tradewars_2050/widgets/frequency_jamming_widget.dart';
-import 'package:tradewars_2050/widgets/hacking_widget.dart';
-import 'package:tradewars_2050/widgets/port_combat_screen.dart';
-import 'package:tradewars_2050/widgets/buy_port_dialog.dart';
-import 'package:tradewars_2050/widgets/port_trade_view.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/hardware_emporium_widget.dart';
+import 'package:cosmic_trader/widgets/frequency_jamming_widget.dart';
+import 'package:cosmic_trader/widgets/hacking_widget.dart';
+import 'package:cosmic_trader/widgets/port_combat_screen.dart';
+import 'package:cosmic_trader/widgets/buy_port_dialog.dart';
+import 'package:cosmic_trader/widgets/port_trade_view.dart';
 
 class PortScreen extends StatefulWidget {
   final Player player;

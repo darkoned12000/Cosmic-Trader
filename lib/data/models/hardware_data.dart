@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 
 // ── Categories ─────────────────────────────────────────
 enum HardwareCategory {
@@ -237,7 +237,8 @@ List<HardwareItem> _generateHulls() {
         priceScrapMetal: scrapMetalReq,
         priceScrapTech: scrapTechReq,
         equipKey: h.name,
-        statLine: 'HULL +${h.hullBonusAtLevel(lv)} | DEF ${h.defenseAtLevel(lv)}',
+        statLine:
+            'HULL +${h.hullBonusAtLevel(lv)} | DEF ${h.defenseAtLevel(lv)}',
       ));
     }
   }
@@ -463,9 +464,7 @@ HardwareItem? itemFor(String equipKey, HardwareCategory category, int level) {
   try {
     return allHardwareItems.firstWhere(
       (i) =>
-          i.equipKey == equipKey &&
-          i.category == category &&
-          i.level == level,
+          i.equipKey == equipKey && i.category == category && i.level == level,
     );
   } catch (_) {
     return null;

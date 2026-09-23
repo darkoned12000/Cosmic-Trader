@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart' hide Hero;
-import 'package:tradewars_2050/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class KnowledgeBaseScreen extends StatefulWidget {
@@ -76,7 +76,8 @@ class _KnowledgeBaseScreenState extends State<KnowledgeBaseScreen> {
             margin: const EdgeInsets.only(bottom: 10),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Colors.grey.withValues(alpha: 0.2), width: 1),
+              side: BorderSide(
+                  color: Colors.grey.withValues(alpha: 0.2), width: 1),
             ),
             child: InkWell(
               borderRadius: BorderRadius.circular(16),

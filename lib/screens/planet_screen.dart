@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:tradewars_2050/data/models/planet.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/sector.dart';
-import 'package:tradewars_2050/data/storage/universe_storage.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 
 class PlanetScreen extends StatefulWidget {
   final Player player;
@@ -32,9 +32,16 @@ class _PlanetScreenState extends State<PlanetScreen> {
   Future<void> _loadUniverse() async {
     try {
       final sectors = await UniverseStorage.instance.loadUniverse();
-      if (mounted) { setState(() { _allSectors = sectors; _loading = false; }); }
+      if (mounted) {
+        setState(() {
+          _allSectors = sectors;
+          _loading = false;
+        });
+      }
     } catch (_) {
-      if (mounted) { setState(() => _loading = false); }
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -64,7 +71,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
     ActionLogProvider.global.info(
       'Scan complete: ${planet.name} — ${planet.planetType}',
     );
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -196,100 +205,108 @@ class _PlanetScreenState extends State<PlanetScreen> {
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                'Planet Type: ${planet.planetType}',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            if (planet.isHomeworld) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
-                                    color: Colors.amber.withValues(alpha: 0.4),
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      'Planet Type: ${planet.planetType}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.bold),
+                                    ),
                                   ),
-                                ),
-                                child: Text(
-                                  'HOMEWORLD',
-                                  style: TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.amber,
-                                    fontFamily: 'monospace',
-                                  ),
+                                  if (planet.isHomeworld) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            Colors.amber.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.amber
+                                              .withValues(alpha: 0.4),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'HOMEWORLD',
+                                        style: TextStyle(
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.amber,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Atmosphere: ${planet.atmosphere}',
+                                style: TextStyle(
+                                  color: cs.onSurface.withValues(alpha: 0.6),
+                                  fontSize: 12,
                                 ),
                               ),
+                              const SizedBox(height: 12),
+                              _infoRow('Status',
+                                  planet.isHomeworld ? 'Homeworld' : 'Colony'),
+                              _infoRow('Colonists',
+                                  _formatNumber(planet.population)),
+                              _infoRow('Level',
+                                  '${planet.level} ${_levelTitle(planet.level)}'),
+                              if (planet.owner != null)
+                                _infoRow('Owner',
+                                    '${planet.owner!.displayName} (${planet.owner!.name.toUpperCase()})'),
+                              if (planet.owner == null)
+                                _infoRow('Claim', 'Unclaimed'),
                             ],
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Atmosphere: ${planet.atmosphere}',
-                          style: TextStyle(
-                            color: cs.onSurface.withValues(alpha: 0.6),
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _infoRow('Status', planet.isHomeworld ? 'Homeworld' : 'Colony'),
-                        _infoRow('Colonists', _formatNumber(planet.population)),
-                        _infoRow('Level',
-                            '${planet.level} ${_levelTitle(planet.level)}'),
-                        if (planet.owner != null)
-                          _infoRow('Owner', '${planet.owner!.displayName} (${planet.owner!.name.toUpperCase()})'),
-                        if (planet.owner == null)
-                          _infoRow('Claim', 'Unclaimed'),
-                      ],
-                    ),
-                  ),
-                ),
-                if (planet.imagePath != null)
-                  Expanded(
-                    flex: 2,
-                    child: Center(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.asset(
-                          planet.imagePath!,
-                          height: 100,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => Container(
-                            height: 100,
-                            color: cs.surfaceContainerHighest,
-                            child: Center(
-                              child: Icon(Icons.image_not_supported_rounded,
-                                  color: cs.onSurface.withValues(alpha: 0.3)),
-                            ),
                           ),
                         ),
                       ),
-                    ),
+                      if (planet.imagePath != null)
+                        Expanded(
+                          flex: 2,
+                          child: Center(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.asset(
+                                planet.imagePath!,
+                                height: 100,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) => Container(
+                                  height: 100,
+                                  color: cs.surfaceContainerHighest,
+                                  child: Center(
+                                    child: Icon(
+                                        Icons.image_not_supported_rounded,
+                                        color: cs.onSurface
+                                            .withValues(alpha: 0.3)),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
-          ),
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -332,8 +349,8 @@ class _PlanetScreenState extends State<PlanetScreen> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.flag_rounded, size: 18,
-                      color: Colors.green.shade400),
+                  Icon(Icons.flag_rounded,
+                      size: 18, color: Colors.green.shade400),
                   const SizedBox(width: 8),
                   Text(
                     'Owned by ${widget.player.faction.displayName}',
@@ -378,11 +395,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () {
-              ActionLogProvider.global.info(
-                  'Attacking ${planet.name}...');
+              ActionLogProvider.global.info('Attacking ${planet.name}...');
             },
-            icon: const Icon(Icons.local_fire_department_rounded,
-                size: 18),
+            icon: const Icon(Icons.local_fire_department_rounded, size: 18),
             label: const Text('Attack'),
             style: OutlinedButton.styleFrom(
               foregroundColor: cs.error,
@@ -412,12 +427,18 @@ class _PlanetScreenState extends State<PlanetScreen> {
 
   int _storedFor(String type, Planet planet) {
     switch (type) {
-      case 'minerals': return planet.storedMinerals;
-      case 'organics': return planet.storedOrganics;
-      case 'industrial': return planet.storedIndustrial;
-      case 'drones': return planet.storedFighters;
-      case 'colonists': return planet.population;
-      default: return 0;
+      case 'minerals':
+        return planet.storedMinerals;
+      case 'organics':
+        return planet.storedOrganics;
+      case 'industrial':
+        return planet.storedIndustrial;
+      case 'drones':
+        return planet.storedFighters;
+      case 'colonists':
+        return planet.population;
+      default:
+        return 0;
     }
   }
 
@@ -427,7 +448,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
   }
 
   Widget _buildTransfersSection(Planet planet, ColorScheme cs) {
-    const resourceTypes = ['minerals', 'organics', 'industrial', 'drones', 'colonists'];
+    const resourceTypes = [
+      'minerals',
+      'organics',
+      'industrial',
+      'drones',
+      'colonists'
+    ];
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -462,8 +489,10 @@ class _PlanetScreenState extends State<PlanetScreen> {
     final amount = _transferAmounts[type] ?? 10;
     final pricePerUnit = _transferPrices[type] ?? 0;
     final depositCost = amount * pricePerUnit;
-    final canDeposit = widget.player.credits >= depositCost && stored + amount <= max;
-    final canWithdraw = stored >= amount && type != 'colonists'; // can't withdraw colonists
+    final canDeposit =
+        widget.player.credits >= depositCost && stored + amount <= max;
+    final canWithdraw =
+        stored >= amount && type != 'colonists'; // can't withdraw colonists
     final label = type[0].toUpperCase() + type.substring(1);
 
     return Column(
@@ -522,7 +551,8 @@ class _PlanetScreenState extends State<PlanetScreen> {
             ),
             _miniStepper(Icons.add_rounded, () {
               final maxBuy = max - stored;
-              final maxCredits = widget.player.credits ~/ (pricePerUnit > 0 ? pricePerUnit : 1);
+              final maxCredits = widget.player.credits ~/
+                  (pricePerUnit > 0 ? pricePerUnit : 1);
               final maxAmount = type == 'colonists'
                   ? (max - stored)
                   : (maxBuy < maxCredits ? maxBuy : maxCredits).clamp(0, max);
@@ -533,11 +563,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
             }),
             const Spacer(),
             if (type == 'colonists')
-              _miniActionButton('Recruit', Colors.green, canDeposit && depositCost > 0, () {
+              _miniActionButton(
+                  'Recruit', Colors.green, canDeposit && depositCost > 0, () {
                 _transferToPlanet(type, amount, depositCost, planet);
               })
             else ...[
-              _miniActionButton('Dep', Colors.blue, canDeposit && depositCost > 0, () {
+              _miniActionButton(
+                  'Dep', Colors.blue, canDeposit && depositCost > 0, () {
                 _transferToPlanet(type, amount, depositCost, planet);
               }),
               const SizedBox(width: 4),
@@ -566,7 +598,8 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
-  Widget _miniActionButton(String label, Color color, bool enabled, VoidCallback onPressed) {
+  Widget _miniActionButton(
+      String label, Color color, bool enabled, VoidCallback onPressed) {
     return Material(
       color: enabled ? color.withValues(alpha: 0.15) : Colors.transparent,
       borderRadius: BorderRadius.circular(4),
@@ -589,7 +622,8 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
-  Future<void> _transferToPlanet(String type, int amount, int cost, Planet planet) async {
+  Future<void> _transferToPlanet(
+      String type, int amount, int cost, Planet planet) async {
     final sector = _currentSector;
     if (sector == null || widget.player.credits < cost) return;
 
@@ -598,21 +632,29 @@ class _PlanetScreenState extends State<PlanetScreen> {
     ));
 
     switch (type) {
-      case 'minerals': planet.storedMinerals += amount;
-      case 'organics': planet.storedOrganics += amount;
-      case 'industrial': planet.storedIndustrial += amount;
-      case 'drones': planet.storedFighters += amount;
-      case 'colonists': planet.population += amount;
+      case 'minerals':
+        planet.storedMinerals += amount;
+      case 'organics':
+        planet.storedOrganics += amount;
+      case 'industrial':
+        planet.storedIndustrial += amount;
+      case 'drones':
+        planet.storedFighters += amount;
+      case 'colonists':
+        planet.population += amount;
     }
 
     await UniverseStorage.instance.saveSectors([sector]);
     ActionLogProvider.global.info(
       'Transferred $amount $type to ${planet.name} ($cost cr)',
     );
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
-  Future<void> _transferFromPlanet(String type, int amount, int pricePerUnit, Planet planet) async {
+  Future<void> _transferFromPlanet(
+      String type, int amount, int pricePerUnit, Planet planet) async {
     final sector = _currentSector;
     if (sector == null) return;
 
@@ -627,17 +669,23 @@ class _PlanetScreenState extends State<PlanetScreen> {
     ));
 
     switch (type) {
-      case 'minerals': planet.storedMinerals -= actualAmount;
-      case 'organics': planet.storedOrganics -= actualAmount;
-      case 'industrial': planet.storedIndustrial -= actualAmount;
-      case 'drones': planet.storedFighters -= actualAmount;
+      case 'minerals':
+        planet.storedMinerals -= actualAmount;
+      case 'organics':
+        planet.storedOrganics -= actualAmount;
+      case 'industrial':
+        planet.storedIndustrial -= actualAmount;
+      case 'drones':
+        planet.storedFighters -= actualAmount;
     }
 
     await UniverseStorage.instance.saveSectors([sector]);
     ActionLogProvider.global.info(
       'Withdrew $actualAmount $type from ${planet.name} (+$creditsGained cr)',
     );
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _claimPlanet(Planet planet) async {
@@ -649,7 +697,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
     ActionLogProvider.global.info(
       '${widget.player.faction.displayName} has claimed ${planet.name}',
     );
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   String _levelTitle(int level) {
@@ -684,8 +734,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
-  Widget _resourceBar(
-      String label, int value, int max, Color color) {
+  Widget _resourceBar(String label, int value, int max, Color color) {
     final cs = Theme.of(context).colorScheme;
     final fraction = max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0;
     return Padding(
@@ -702,9 +751,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
                       fontSize: 11)),
               Text(_formatNumber(value),
                   style: TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: color)),
+                      fontSize: 11, fontFamily: 'monospace', color: color)),
             ],
           ),
           const SizedBox(height: 2),
@@ -739,9 +786,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
                       fontSize: 11)),
               Text('${value.toInt()} / ${max.toInt()}',
                   style: TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: color)),
+                      fontSize: 11, fontFamily: 'monospace', color: color)),
             ],
           ),
           const SizedBox(height: 2),
@@ -871,7 +916,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
     ActionLogProvider.global.info(
       '${planet.name} reached level ${planet.level}',
     );
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Widget _buildResourcesCard(Planet planet, ColorScheme cs) {
@@ -893,15 +940,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
                   ?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            _resourceBar(
-                'Minerals', planet.storedMinerals, planet.maxStorage,
+            _resourceBar('Minerals', planet.storedMinerals, planet.maxStorage,
                 Colors.orange),
-            _resourceBar(
-                'Organics', planet.storedOrganics, planet.maxStorage,
+            _resourceBar('Organics', planet.storedOrganics, planet.maxStorage,
                 Colors.green),
-            _resourceBar(
-                'Industrial', planet.storedIndustrial, planet.maxStorage,
-                Colors.blue),
+            _resourceBar('Industrial', planet.storedIndustrial,
+                planet.maxStorage, Colors.blue),
             const SizedBox(height: 8),
             _infoRow('Storage',
                 '${_formatNumber(planet.storedMinerals + planet.storedOrganics + planet.storedIndustrial)} / ${_formatNumber(planet.maxStorage)}'),
@@ -930,16 +974,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
                   ?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            _infoRow('Defense Level',
-                '${planet.defenseLevel} / 4'),
+            _infoRow('Defense Level', '${planet.defenseLevel} / 4'),
             _resourceBar(
-                'Drones', planet.storedFighters, planet.maxStorage,
-                Colors.red),
+                'Drones', planet.storedFighters, planet.maxStorage, Colors.red),
             const SizedBox(height: 4),
-            _defenseBar('Shield', planet.shield, planet.maxShield,
-                Colors.cyan),
-            _defenseBar(
-                'Armor', planet.hull, planet.maxHull, Colors.green),
+            _defenseBar('Shield', planet.shield, planet.maxShield, Colors.cyan),
+            _defenseBar('Armor', planet.hull, planet.maxHull, Colors.green),
           ],
         ),
       ),

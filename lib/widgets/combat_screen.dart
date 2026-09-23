@@ -2,13 +2,13 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tradewars_2050/data/models/faction.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
-import 'package:tradewars_2050/widgets/sector_view_widgets/action_log_provider.dart';
-import 'package:tradewars_2050/services/npc_ai/npc_death_cries.dart';
-import 'package:tradewars_2050/services/game_tick_service.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
+import 'package:cosmic_trader/services/game_tick_service.dart';
 
 class CombatScreen extends StatefulWidget {
   final Player player;
@@ -64,7 +64,8 @@ class _CombatScreenState extends State<CombatScreen>
     if (_droneSeeded && _dronePhases.length >= count) return;
     _dronePhases.clear();
     _droneOffsets.clear();
-    final rng = math.Random(_npc.id.hashCode ^ DateTime.now().microsecondsSinceEpoch);
+    final rng =
+        math.Random(_npc.id.hashCode ^ DateTime.now().microsecondsSinceEpoch);
     for (int i = 0; i < count; i++) {
       _dronePhases.add(rng.nextDouble() * math.pi * 2);
       _droneOffsets.add((rng.nextDouble() - 0.5) * 2);
@@ -125,9 +126,8 @@ class _CombatScreenState extends State<CombatScreen>
   int _slotDamage(String slot, {bool npc = false}) {
     final wt = npc ? _npcWeaponType(slot) : _playerWeaponType(slot);
     if (wt == null) return 0;
-    final level = npc
-        ? (_npc.weaponSlots[slot] ?? 1)
-        : (_player.weaponSlots[slot] ?? 1);
+    final level =
+        npc ? (_npc.weaponSlots[slot] ?? 1) : (_player.weaponSlots[slot] ?? 1);
     return wt.damage * level;
   }
 
@@ -148,7 +148,9 @@ class _CombatScreenState extends State<CombatScreen>
   }
 
   int _calcDamage(int power) =>
-      (power * (0.8 + math.Random().nextDouble() * 0.4)).round().clamp(1, 99999);
+      (power * (0.8 + math.Random().nextDouble() * 0.4))
+          .round()
+          .clamp(1, 99999);
 
   Future<void> _fire() async {
     if (_animating || _combatOver) return;
@@ -247,7 +249,8 @@ class _CombatScreenState extends State<CombatScreen>
     if (npcDestroyed) {
       _combatLog.add('  *** ${_npc.shipName} DESTROYED ***');
     } else if (remainingAtk > 0) {
-      _combatLog.add('  Enemy hull: ${npcHull.clamp(0, _npc.maxHull)}/${_npc.maxHull}');
+      _combatLog.add(
+          '  Enemy hull: ${npcHull.clamp(0, _npc.maxHull)}/${_npc.maxHull}');
     }
 
     // Animate return fire only if NPC survived
@@ -261,7 +264,8 @@ class _CombatScreenState extends State<CombatScreen>
             '$dronesReturning returned');
       }
       if (remainingDef > 0) {
-        _combatLog.add('  Your hull: ${playerHull.clamp(0, _player.maxHull)}/${_player.maxHull}');
+        _combatLog.add(
+            '  Your hull: ${playerHull.clamp(0, _player.maxHull)}/${_player.maxHull}');
       }
     }
 
@@ -284,8 +288,8 @@ class _CombatScreenState extends State<CombatScreen>
     if (npcDestroyed) {
       ActionLogProvider.global.combat(
           'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
-      ActionLogProvider.global.combat(
-          NpcDeathCries.formatDeathCry(_npc.pilotName, _npc.faction));
+      ActionLogProvider.global
+          .combat(NpcDeathCries.formatDeathCry(_npc.pilotName, _npc.faction));
       _endCombat(victory: true);
       return;
     }
@@ -318,7 +322,8 @@ class _CombatScreenState extends State<CombatScreen>
     if (victory) {
       loot = (_npc.credits * 0.5).round();
       _player = _player.copyWith(credits: _player.credits + loot);
-      _npc = _npc.copyWith(credits: 0, cargo: {}, cargoUsed: 0, isDestroyed: true);
+      _npc =
+          _npc.copyWith(credits: 0, cargo: {}, cargoUsed: 0, isDestroyed: true);
       _combatLog.add('Loot recovered: $loot cr');
     }
 
@@ -387,8 +392,9 @@ class _CombatScreenState extends State<CombatScreen>
               children: [
                 _statColumn('YOU', Colors.cyan, _player),
                 const SizedBox(width: 16),
-                _statColumn(_npc.shipName.toUpperCase(), npcColor,
-                    _npc as dynamic, isNpc: true),
+                _statColumn(
+                    _npc.shipName.toUpperCase(), npcColor, _npc as dynamic,
+                    isNpc: true),
               ],
             ),
           ),
@@ -638,9 +644,8 @@ class _CombatScreenState extends State<CombatScreen>
                 fontSize: 12,
                 fontFamily: 'monospace',
                 fontWeight: FontWeight.bold,
-                color: _dronesToSend > 0
-                    ? Colors.orange.shade300
-                    : Colors.white54,
+                color:
+                    _dronesToSend > 0 ? Colors.orange.shade300 : Colors.white54,
               ),
             ),
           ),
@@ -729,8 +734,7 @@ class _CombatScreenState extends State<CombatScreen>
         child: OutlinedButton.icon(
           onPressed: _closeCombat,
           icon: const Icon(Icons.close_rounded, size: 18),
-          label: const Text('CLOSE',
-              style: TextStyle(fontFamily: 'monospace')),
+          label: const Text('CLOSE', style: TextStyle(fontFamily: 'monospace')),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.white70,
             side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
@@ -746,8 +750,7 @@ class _CombatScreenState extends State<CombatScreen>
           child: FilledButton.icon(
             onPressed: _animating ? null : _fire,
             icon: Icon(Icons.rocket_launch_rounded,
-                size: 18,
-                color: _animating ? Colors.white38 : Colors.white),
+                size: 18, color: _animating ? Colors.white38 : Colors.white),
             label: Text(
               _animating ? 'FIRING...' : 'FIRE',
               style: const TextStyle(fontFamily: 'monospace'),
@@ -763,12 +766,11 @@ class _CombatScreenState extends State<CombatScreen>
         OutlinedButton.icon(
           onPressed: _animating ? null : _flee,
           icon: const Icon(Icons.exit_to_app_rounded, size: 18),
-          label: const Text('FLEE',
-              style: TextStyle(fontFamily: 'monospace')),
+          label: const Text('FLEE', style: TextStyle(fontFamily: 'monospace')),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.amber.shade300,
-            side: BorderSide(
-                color: Colors.amber.shade300.withValues(alpha: 0.5)),
+            side:
+                BorderSide(color: Colors.amber.shade300.withValues(alpha: 0.5)),
             padding: const EdgeInsets.symmetric(vertical: 14),
           ),
         ),
@@ -848,7 +850,8 @@ class _CombatShipPainter extends CustomPainter {
     this.droneCount = 0,
     this.dronePhases = const [],
     this.droneOffsets = const [],
-  }) : super(repaint: Listenable.merge([
+  }) : super(
+            repaint: Listenable.merge([
           atkProgress,
           defProgress,
           droneProgress,
@@ -861,12 +864,12 @@ class _CombatShipPainter extends CustomPainter {
     final shipSize = math.min(size.width, size.height) * 0.15;
 
     final playerCenter = Offset(cx - size.width * 0.25, cy);
-    _drawShip(canvas, playerCenter, shipSize, Colors.cyan, 1.0,
-        playerShields, playerHull, false);
+    _drawShip(canvas, playerCenter, shipSize, Colors.cyan, 1.0, playerShields,
+        playerHull, false);
 
     final npcCenter = Offset(cx + size.width * 0.25, cy);
-    _drawShip(canvas, npcCenter, shipSize, npcColor, -1.0,
-        npcShields, npcHull, true);
+    _drawShip(
+        canvas, npcCenter, shipSize, npcColor, -1.0, npcShields, npcHull, true);
 
     // Drone swarm — bee-like cloud
     if (droneProgress.isAnimating) {
@@ -877,9 +880,7 @@ class _CombatShipPainter extends CustomPainter {
       final endX = npcCenter.dx - shipSize * 0.6;
 
       for (int i = 0; i < count; i++) {
-        final phase = i < dronePhases.length
-            ? dronePhases[i]
-            : i * 2.399;
+        final phase = i < dronePhases.length ? dronePhases[i] : i * 2.399;
         final offset = i < droneOffsets.length
             ? droneOffsets[i]
             : (i % 2 == 0 ? 1.0 : -1.0);
@@ -985,7 +986,9 @@ class _CombatShipPainter extends CustomPainter {
   }
 
   void _drawProjectile(Canvas canvas, Offset pos, Color color) {
-    final paint = Paint()..color = color..style = PaintingStyle.fill;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
     canvas.drawCircle(pos, 4, paint);
     final glowPaint = Paint()
       ..color = color.withValues(alpha: 0.3)
@@ -1004,12 +1007,14 @@ class _StarfieldPainter extends CustomPainter {
 
   static List<_Star> _generateStars() {
     final rng = math.Random(42);
-    return List.generate(60, (_) => _Star(
-      x: rng.nextDouble(),
-      y: rng.nextDouble(),
-      r: 0.3 + rng.nextDouble() * 1.2,
-      a: 0.2 + rng.nextDouble() * 0.5,
-    ));
+    return List.generate(
+        60,
+        (_) => _Star(
+              x: rng.nextDouble(),
+              y: rng.nextDouble(),
+              r: 0.3 + rng.nextDouble() * 1.2,
+              a: 0.2 + rng.nextDouble() * 0.5,
+            ));
   }
 
   @override

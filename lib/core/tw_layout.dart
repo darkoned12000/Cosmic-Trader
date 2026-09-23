@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Shared breakpoints and adaptive layout utilities for Tradewars 2050.
+/// Shared breakpoints and adaptive layout utilities for Cosmic Trader.
 class TWLayout {
   TWLayout._();
 

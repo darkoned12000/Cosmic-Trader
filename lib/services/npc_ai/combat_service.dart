@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:tradewars_2050/data/models/npc_ship.dart';
-import 'package:tradewars_2050/data/models/player.dart';
-import 'package:tradewars_2050/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 
 class CombatResult {
   final bool attackerWon;
