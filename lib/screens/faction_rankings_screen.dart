@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/shared/hud_pill.dart';
 
 String _formatCredits(int credits) {
   if (credits >= 1000000000) {
@@ -693,27 +694,17 @@ class _RankingCard extends StatelessWidget {
 
   Widget _statPill(ColorScheme cs, IconData icon, String label) {
     return Expanded(
-      child: Container(
+      child: HudPill(
+        text: label,
+        background: cs.surfaceContainerHighest.withValues(alpha: 0.3),
+        foreground: cs.onSurface.withValues(alpha: 0.7),
+        icon: icon,
+        iconColor: cs.onSurface.withValues(alpha: 0.5),
+        iconSize: 12,
+        fontSize: 11,
+        radius: 6,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 12, color: cs.onSurface.withValues(alpha: 0.5)),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                color: cs.onSurface.withValues(alpha: 0.7),
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }

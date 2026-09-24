@@ -9,6 +9,8 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/screens/port_management_screen.dart';
 import 'package:cosmic_trader/widgets/lottery_widget.dart';
 import 'package:cosmic_trader/widgets/hold_button.dart';
+import 'package:cosmic_trader/widgets/shared/data_table_shell.dart';
+import 'package:cosmic_trader/widgets/shared/hud_pill.dart';
 
 /// Compact, HUD-styled trade view. Same trading logic as before -- only the
 /// layout changed: single-row header, one stat strip, and the three
@@ -272,28 +274,28 @@ class PortTradeView extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(width: 6),
-                    _pill(
-                      (_portClassLabels[port.portClass] ?? 'unknown')
+                    HudPill(
+                      text: (_portClassLabels[port.portClass] ?? 'unknown')
                           .toLowerCase(),
-                      cs.onSurface.withValues(alpha: 0.06),
-                      cs.onSurface.withValues(alpha: 0.6),
+                      background: cs.onSurface.withValues(alpha: 0.06),
+                      foreground: cs.onSurface.withValues(alpha: 0.6),
                     ),
                     if (port.ownerFaction != null) ...[
                       const SizedBox(width: 6),
-                      _pill(
-                        port.ownerFaction!.displayName.toLowerCase(),
-                        _factionColor(port.ownerFaction!)
+                      HudPill(
+                        text: port.ownerFaction!.displayName.toLowerCase(),
+                        background: _factionColor(port.ownerFaction!)
                             .withValues(alpha: 0.15),
-                        _factionColor(port.ownerFaction!),
+                        foreground: _factionColor(port.ownerFaction!),
                         bold: true,
                       ),
                     ],
                     if (port.isSecurityCompromised) ...[
                       const SizedBox(width: 6),
-                      _pill(
-                        'sabotaged',
-                        Colors.orange.withValues(alpha: 0.15),
-                        Colors.orange,
+                      HudPill(
+                        text: 'sabotaged',
+                        background: Colors.orange.withValues(alpha: 0.15),
+                        foreground: Colors.orange,
                         bold: true,
                       ),
                     ],
@@ -346,24 +348,6 @@ class PortTradeView extends StatelessWidget {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _pill(String text, Color bg, Color fg, {bool bold = false}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
-          color: fg,
-        ),
       ),
     );
   }
@@ -501,58 +485,28 @@ class PortTradeView extends StatelessWidget {
               ],
             ),
           ),
-        Container(
-          decoration: BoxDecoration(
-            border: Border.all(color: cs.onSurface.withValues(alpha: 0.12)),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              Container(
-                color: cs.onSurface.withValues(alpha: 0.04),
-                padding: EdgeInsets.symmetric(
-                    horizontal: 10, vertical: UiScale.spacing(8)),
-                child: Row(
-                  children: [
-                    Expanded(flex: 3, child: _colHeader(cs, 'commodity')),
-                    Expanded(flex: 1, child: _colHeader(cs, 'buy')),
-                    Expanded(flex: 1, child: _colHeader(cs, 'sell')),
-                    Expanded(flex: 2, child: _colHeader(cs, 'supply/dem')),
-                    Expanded(flex: 1, child: _colHeader(cs, 'hold')),
-                    Expanded(
-                      flex: 3,
-                      child: _colHeader(cs, 'actions', align: TextAlign.right),
-                    ),
-                  ],
-                ),
-              ),
-              for (var i = 0; i < _commodities.length; i++) ...[
-                if (i > 0)
-                  Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: cs.onSurface.withValues(alpha: 0.08),
-                  ),
-                _tradeRow(cs, mono, _commodities[i]),
-              ],
-            ],
-          ),
+        DataTableShell(
+          headers: const [
+            'commodity',
+            'buy',
+            'sell',
+            'supply/dem',
+            'hold',
+            'actions'
+          ],
+          flexes: const [3, 1, 1, 2, 1, 3],
+          headerAlignments: const [
+            null,
+            null,
+            null,
+            null,
+            null,
+            TextAlign.right
+          ],
+          itemCount: _commodities.length,
+          rowBuilder: (context, i) => _tradeRow(cs, mono, _commodities[i]),
         ),
       ],
-    );
-  }
-
-  Widget _colHeader(ColorScheme cs, String text, {TextAlign? align}) {
-    return Text(
-      text,
-      textAlign: align ?? TextAlign.left,
-      style: TextStyle(
-        fontSize: 10,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.4,
-        color: cs.onSurface.withValues(alpha: 0.45),
-      ),
     );
   }
 

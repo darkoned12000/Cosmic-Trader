@@ -8,6 +8,7 @@ import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/shared/panel_card.dart';
 
 class ShipStatusView extends StatefulWidget {
   final Player player;
@@ -374,50 +375,30 @@ class _ShipStatusViewState extends State<ShipStatusView> {
   }
 
   Widget _playerInfoCard(ThemeData theme, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.person_rounded, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Player Info',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _detailRow(cs, 'Username', widget.player.username),
-            _shipNameRow(cs),
-            _detailRow(
-                cs, 'Ship Class', _formatClassName(widget.player.shipClass)),
-            _detailRow(
-                cs, 'Credits', '\$${widget.player.credits.toStringAsFixed(0)}'),
-            _detailRow(cs, 'Turns',
-                '${widget.player.turns}/${widget.player.maxTurns}'),
-            const SizedBox(height: 8),
-            Divider(color: cs.surfaceContainerHighest),
-            const SizedBox(height: 8),
-            ListTile(
-              leading: Icon(Icons.lock_rounded,
-                  size: 20, color: cs.onSurface.withValues(alpha: 0.6)),
-              title: const Text('Change Password'),
-              trailing: Icon(Icons.chevron_right_rounded,
-                  size: 20, color: cs.onSurface.withValues(alpha: 0.4)),
-              onTap: _changePassword,
-              contentPadding: EdgeInsets.zero,
-            ),
-          ],
+    return PanelCard(
+      icon: Icons.person_rounded,
+      title: 'Player Info',
+      children: [
+        _detailRow(cs, 'Username', widget.player.username),
+        _shipNameRow(cs),
+        _detailRow(cs, 'Ship Class', _formatClassName(widget.player.shipClass)),
+        _detailRow(
+            cs, 'Credits', '\$${widget.player.credits.toStringAsFixed(0)}'),
+        _detailRow(
+            cs, 'Turns', '${widget.player.turns}/${widget.player.maxTurns}'),
+        const SizedBox(height: 8),
+        Divider(color: cs.surfaceContainerHighest),
+        const SizedBox(height: 8),
+        ListTile(
+          leading: Icon(Icons.lock_rounded,
+              size: 20, color: cs.onSurface.withValues(alpha: 0.6)),
+          title: const Text('Change Password'),
+          trailing: Icon(Icons.chevron_right_rounded,
+              size: 20, color: cs.onSurface.withValues(alpha: 0.4)),
+          onTap: _changePassword,
+          contentPadding: EdgeInsets.zero,
         ),
-      ),
+      ],
     );
   }
 
@@ -522,103 +503,84 @@ class _ShipStatusViewState extends State<ShipStatusView> {
       shieldIcon = Icons.brightness_4_rounded;
     }
 
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return PanelCard(
+      icon: Icons.domain_rounded,
+      title: 'Hull & Shields',
+      children: [
+        // Hull section
+        _equipmentNameRow(cs, Icons.shield_outlined,
+            _formatEquipmentName(widget.player.hullEquipment)),
+        _equipmentStatsRow(
+            cs,
+            _getHullStats(
+                widget.player.hullEquipment, widget.player.hullEquipmentLevel)),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              children: [
-                Icon(Icons.domain_rounded, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Hull & Shields',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // Hull section
-            _equipmentNameRow(cs, Icons.shield_outlined,
-                _formatEquipmentName(widget.player.hullEquipment)),
-            _equipmentStatsRow(
-                cs,
-                _getHullStats(widget.player.hullEquipment,
-                    widget.player.hullEquipmentLevel)),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '$hullPercent%',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    color: hullColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Icon(hullIcon, color: hullColor),
-              ],
-            ),
-            const SizedBox(height: 4),
-            LinearProgressIndicator(
-              value: widget.player.hull / widget.player.maxHull,
-              backgroundColor: cs.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation(hullColor),
-              minHeight: 6,
-              borderRadius: BorderRadius.circular(3),
-            ),
-            const SizedBox(height: 2),
             Text(
-              '${widget.player.hull.toStringAsFixed(0)} / ${widget.player.maxHull.toStringAsFixed(0)}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: cs.onSurface.withValues(alpha: 0.6),
+              '$hullPercent%',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: hullColor,
+                fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 12),
-            // Shield section
-            _equipmentNameRow(cs, Icons.bolt_outlined,
-                _formatEquipmentName(widget.player.shieldEquipment)),
-            _equipmentStatsRow(
-                cs,
-                _getShieldStats(widget.player.shieldEquipment,
-                    widget.player.shieldEquipmentLevel)),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '$shieldPercent%',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    color: shieldColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Icon(shieldIcon, color: shieldColor),
-              ],
-            ),
-            const SizedBox(height: 4),
-            LinearProgressIndicator(
-              value: widget.player.shields / widget.player.maxShields,
-              backgroundColor: cs.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation(shieldColor),
-              minHeight: 6,
-              borderRadius: BorderRadius.circular(3),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '${widget.player.shields.toStringAsFixed(0)} / ${widget.player.maxShields.toStringAsFixed(0)}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: cs.onSurface.withValues(alpha: 0.6),
-              ),
-            ),
+            Icon(hullIcon, color: hullColor),
           ],
         ),
-      ),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(
+          value: widget.player.hull / widget.player.maxHull,
+          backgroundColor: cs.surfaceContainerHighest,
+          valueColor: AlwaysStoppedAnimation(hullColor),
+          minHeight: 6,
+          borderRadius: BorderRadius.circular(3),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '${widget.player.hull.toStringAsFixed(0)} / ${widget.player.maxHull.toStringAsFixed(0)}',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: cs.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Shield section
+        _equipmentNameRow(cs, Icons.bolt_outlined,
+            _formatEquipmentName(widget.player.shieldEquipment)),
+        _equipmentStatsRow(
+            cs,
+            _getShieldStats(widget.player.shieldEquipment,
+                widget.player.shieldEquipmentLevel)),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              '$shieldPercent%',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: shieldColor,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Icon(shieldIcon, color: shieldColor),
+          ],
+        ),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(
+          value: widget.player.shields / widget.player.maxShields,
+          backgroundColor: cs.surfaceContainerHighest,
+          valueColor: AlwaysStoppedAnimation(shieldColor),
+          minHeight: 6,
+          borderRadius: BorderRadius.circular(3),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '${widget.player.shields.toStringAsFixed(0)} / ${widget.player.maxShields.toStringAsFixed(0)}',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: cs.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
+      ],
     );
   }
 
@@ -666,188 +628,130 @@ class _ShipStatusViewState extends State<ShipStatusView> {
     final slots =
         shipDef?.weaponSlots ?? widget.player.weaponSlots.keys.toList();
 
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return PanelCard(
+      icon: Icons.auto_awesome_rounded,
+      title: 'Engine & Weapons',
+      children: [
+        _equipmentNameRow(
+          cs,
+          Icons.speed_rounded,
+          _formatEquipmentName(widget.player.engineEquipment),
+        ),
+        _equipmentStatsRow(
+          cs,
+          _getEngineStats(
+            widget.player.engineEquipment,
+            widget.player.engineEquipmentLevel,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Divider(color: cs.surfaceContainerHighest),
+        const SizedBox(height: 8),
+        Text(
+          'Weapons',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurface.withValues(alpha: 0.7),
+          ),
+        ),
+        const SizedBox(height: 4),
+        ...slots.map((slot) {
+          final weaponType = widget.player.weaponTypes[slot];
+          final level = widget.player.weaponSlots[slot] ?? 0;
+          final weaponName =
+              weaponType != null ? _formatEquipmentName(weaponType) : '—';
+          final List<String> weaponStats =
+              weaponType != null ? _getWeaponStats(weaponType, level) : [];
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.auto_awesome_rounded, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Engine & Weapons',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _equipmentNameRow(
-              cs,
-              Icons.speed_rounded,
-              _formatEquipmentName(widget.player.engineEquipment),
-            ),
-            _equipmentStatsRow(
-              cs,
-              _getEngineStats(
-                widget.player.engineEquipment,
-                widget.player.engineEquipmentLevel,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Divider(color: cs.surfaceContainerHighest),
-            const SizedBox(height: 8),
-            Text(
-              'Weapons',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface.withValues(alpha: 0.7),
-              ),
-            ),
-            const SizedBox(height: 4),
-            ...slots.map((slot) {
-              final weaponType = widget.player.weaponTypes[slot];
-              final level = widget.player.weaponSlots[slot] ?? 0;
-              final weaponName =
-                  weaponType != null ? _formatEquipmentName(weaponType) : '—';
-              final List<String> weaponStats =
-                  weaponType != null ? _getWeaponStats(weaponType, level) : [];
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _formatSlotName(slot),
-                                style: TextStyle(
-                                  color: cs.onSurface.withValues(alpha: 0.6),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              Text(
-                                weaponName,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: cs.onSurface.withValues(alpha: 0.5),
-                                ),
-                              ),
-                              if (weaponStats.isNotEmpty)
-                                _equipmentStatsRow(cs, weaponStats),
-                            ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _formatSlotName(slot),
+                            style: TextStyle(
+                              color: cs.onSurface.withValues(alpha: 0.6),
+                              fontSize: 12,
+                            ),
                           ),
-                        ),
-                        Text(
-                          'Lv.$level',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 13,
+                          Text(
+                            weaponName,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: cs.onSurface.withValues(alpha: 0.5),
+                            ),
                           ),
-                        ),
-                      ],
+                          if (weaponStats.isNotEmpty)
+                            _equipmentStatsRow(cs, weaponStats),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      'Lv.$level',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
-              );
-            }),
-          ],
-        ),
-      ),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 
   Widget _shipCargoCard(ThemeData theme, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return PanelCard(
+      icon: Icons.inventory_2_rounded,
+      title: 'Cargo Hold & Components',
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              children: [
-                Icon(Icons.inventory_2_rounded, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Cargo Hold & Components',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+            Text(
+              'Capacity',
+              style: TextStyle(
+                color: cs.onSurface.withValues(alpha: 0.6),
+                fontSize: 13,
+              ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Capacity',
-                  style: TextStyle(
-                    color: cs.onSurface.withValues(alpha: 0.6),
-                    fontSize: 13,
-                  ),
-                ),
-                Text(
-                  '${widget.player.cargoSize}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
+            Text(
+              '${widget.player.cargoSize}',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 13,
+              ),
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 
   Widget _shipResourcesCard(ThemeData theme, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.monetization_on_rounded,
-                    color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Reputation & Research',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _resourceRow(cs, Icons.science_rounded, 'Research',
-                '${widget.player.researchPoints.toStringAsFixed(0)} RP'),
-            const SizedBox(height: 12),
-            _notorietyRow(cs),
-            const SizedBox(height: 12),
-            _factionStandingSection(theme, cs),
-            _ownedPortsSection(theme, cs),
-          ],
-        ),
-      ),
+    return PanelCard(
+      icon: Icons.monetization_on_rounded,
+      title: 'Reputation & Research',
+      children: [
+        _resourceRow(cs, Icons.science_rounded, 'Research',
+            '${widget.player.researchPoints.toStringAsFixed(0)} RP'),
+        const SizedBox(height: 12),
+        _notorietyRow(cs),
+        const SizedBox(height: 12),
+        _factionStandingSection(theme, cs),
+        _ownedPortsSection(theme, cs),
+      ],
     );
   }
 

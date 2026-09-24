@@ -4,6 +4,7 @@ import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/widgets/shared/stat_bar.dart';
 
 class PlanetScreen extends StatefulWidget {
   final Player player;
@@ -746,72 +747,22 @@ class _PlanetScreenState extends State<PlanetScreen> {
   }
 
   Widget _resourceBar(String label, int value, int max, Color color) {
-    final cs = Theme.of(context).colorScheme;
-    final fraction = max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label,
-                  style: TextStyle(
-                      color: cs.onSurface.withValues(alpha: 0.6),
-                      fontSize: 11)),
-              Text(_formatNumber(value),
-                  style: TextStyle(
-                      fontSize: 11, fontFamily: 'monospace', color: color)),
-            ],
-          ),
-          const SizedBox(height: 2),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: fraction,
-              backgroundColor: cs.surfaceContainerHighest,
-              color: color,
-              minHeight: 6,
-            ),
-          ),
-        ],
-      ),
+    return StatBar(
+      layout: StatBarLayout.stacked,
+      label: label,
+      value: _formatNumber(value),
+      percent: max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0,
+      color: color,
     );
   }
 
   Widget _defenseBar(String label, double value, double max, Color color) {
-    final cs = Theme.of(context).colorScheme;
-    final fraction = max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label,
-                  style: TextStyle(
-                      color: cs.onSurface.withValues(alpha: 0.6),
-                      fontSize: 11)),
-              Text('${value.toInt()} / ${max.toInt()}',
-                  style: TextStyle(
-                      fontSize: 11, fontFamily: 'monospace', color: color)),
-            ],
-          ),
-          const SizedBox(height: 2),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: fraction,
-              backgroundColor: cs.surfaceContainerHighest,
-              color: color,
-              minHeight: 6,
-            ),
-          ),
-        ],
-      ),
+    return StatBar(
+      layout: StatBarLayout.stacked,
+      label: label,
+      value: '${value.toInt()} / ${max.toInt()}',
+      percent: max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0,
+      color: color,
     );
   }
 

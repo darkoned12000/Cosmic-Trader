@@ -139,6 +139,11 @@ lib/
       sector_interaction_panel.dart -- NPC list (Hail/Attack/Scan details) + planet land/scan
       communications_panel.dart   -- Messages/Scan/Hail tabbed panel
       ship_status_summary.dart    -- compact hull/shields/cargo progress bars for sector view
+    shared/
+      panel_card.dart             -- density-aware PanelCard (rounded panel + header row)
+      stat_bar.dart               -- density-aware StatBar (icon + label + bar + value)
+      hud_pill.dart               -- density-aware HudPill (tiny rounded badge)
+      data_table_shell.dart       -- density-aware DataTableShell (bordered dense table)
   services/
     game_tick_service.dart        -- background timer (30s), batch NPC processing, turn replenishment,
                                      proximity-filtered event logging, NPC attack detection
@@ -228,6 +233,10 @@ lib/
 | `lib/widgets/galaxy_map/galaxy_map_painter.dart` | Extracted CustomPainter for galaxy map rendering |
 | `lib/widgets/galaxy_map/minimap_painter.dart` | Minimap overview CustomPainter |
 | `lib/widgets/galaxy_map/galaxy_hit_test.dart` | Extracted hit-testing logic for galaxy map |
+| `lib/widgets/shared/panel_card.dart` | Shared `PanelCard` — density-aware rounded panel with optional icon/title/trailing header |
+| `lib/widgets/shared/stat_bar.dart` | Shared `StatBar` — optional icon + label + progress bar + value row (inline) or label/value above bar (stacked); hull/shields/cargo, planet & faction bars |
+| `lib/widgets/shared/hud_pill.dart` | Shared `HudPill` — tiny rounded badge (port/faction/sabotaged/stat-chip tags) with radius/padding/font/icon overrides |
+| `lib/widgets/shared/data_table_shell.dart` | Shared `DataTableShell` — bordered dense table (header + divider-separated rows) |
 | `lib/services/game_tick_service.dart` | 30s background tick timer |
 | `lib/services/audio_service.dart` | Audio playback engine (music/sfx, folder scanning, loop mode, equalizer) |
 | `lib/services/npc_ai/npc_ai_service.dart` | NPC AI orchestrator |
@@ -414,8 +423,7 @@ Bundled assets (declared in `pubspec.yaml`):
 
 - `core/theme.dart` (TWTheme) is unused — theme built inline in main.dart from ThemeService
 - `flutter analyze` passes with 0 errors/warnings; 7 informational deprecation hints remain (`galaxy_map.dart` `translate`, `register_screen.dart` `Radio.groupValue/onChanged` ×2, `tactical_map.dart` and `video_settings_widget.dart` `activeColor`)
-- Repeated UI patterns (cards, stat bars, pills) duplicated across screens
-- No shared widget library for common patterns
+- Repeated UI patterns (cards, stat bars, pills) duplicated across screens → **A2 shared widget library**: `lib/widgets/shared/` ships `PanelCard`, `StatBar` (inline + stacked layouts), `HudPill` (radius/padding/font/icon overrides), `DataTableShell` (all density-aware via `UiScale.spacing()`). Adopted in `ship_status.dart` (5 panels), `port_trade_view.dart` (pills + trade table), `ship_status_summary.dart` (4 bars), `planet_screen.dart` (resource/defense bars), `faction_rankings_screen.dart` (stat pills). Screens whose cards use distinct visual families (radius-12 banded headers, padding-20 accent cards, ExpansionTile settings cards, hero/terminal styles) were audited and intentionally left as-is rather than forced.
 - No lint/format CI pipeline
 - Test coverage is minimal: `test/widget_test.dart` has 2 smoke tests only
 - No audio asset files shipped in the past — this is no longer the case; 5 tracks are now bundled

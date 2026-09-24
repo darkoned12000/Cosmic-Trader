@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/widgets/shared/stat_bar.dart';
 
 class ShipStatusSummary extends StatefulWidget {
   final Player player;
@@ -197,7 +198,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
             child: Column(
               children: [
                 // Hull
-                _StatusBar(
+                StatBar(
                   label: 'HULL',
                   value: '${widget.player.hull}/${widget.player.maxHull}',
                   percent: hullPercent / 100,
@@ -207,7 +208,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                 SizedBox(height: UiScale.spacing(10)),
 
                 // Shields
-                _StatusBar(
+                StatBar(
                   label: 'SHIELDS',
                   value: '${widget.player.shields}/${widget.player.maxShields}',
                   percent: shieldPercent / 100,
@@ -217,7 +218,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                 SizedBox(height: UiScale.spacing(10)),
 
                 // Drones
-                _StatusBar(
+                StatBar(
                   label: 'DRONES',
                   value: '${widget.player.drones}/${widget.player.maxDrones}',
                   percent: widget.player.maxDrones > 0
@@ -229,7 +230,7 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
                 SizedBox(height: UiScale.spacing(10)),
 
                 // Cargo
-                _StatusBar(
+                StatBar(
                   label: 'CARGO',
                   value: '${widget.player.cargoUsed}/${widget.player.maxCargo}',
                   percent: cargoPercent / 100,
@@ -272,88 +273,6 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _StatusBar extends StatelessWidget {
-  final String label;
-  final String value;
-  final double percent;
-  final Color color;
-  final IconData icon;
-
-  const _StatusBar({
-    required this.label,
-    required this.value,
-    required this.percent,
-    required this.color,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = Theme.of(context).colorScheme;
-
-    return Row(
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 6),
-        SizedBox(
-          width: 50,
-          child: Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: cs.onSurface.withValues(alpha: 0.6),
-              fontFamily: 'monospace',
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Stack(
-            children: [
-              Container(
-                height: 6,
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-              FractionallySizedBox(
-                widthFactor: percent.clamp(0.0, 1.0),
-                child: Container(
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(3),
-                    boxShadow: [
-                      BoxShadow(
-                        color: color.withValues(alpha: 0.4),
-                        blurRadius: 4,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 55,
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontFamily: 'monospace',
-              fontWeight: FontWeight.w600,
-              color: cs.onSurface,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

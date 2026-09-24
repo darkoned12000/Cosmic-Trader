@@ -446,6 +446,59 @@ built differently depending on the answer. Design the storage layer to be
     - New `test/game_settings_test.dart` (3 tests): JSON round-trip for UI
       scale / density / video / audio prefs, manual-scale-with-auto-off
       survival, and legacy-file defaults. `flutter test` now **15/15**.
+16. ✅ **A2 — shared widget library** (new):
+    - New `lib/widgets/shared/` with four density-aware building blocks, each
+      routing padding/gap tokens through `UiScale.spacing()` so Compact/Normal/
+      Cozy applies everywhere they're used:
+      - `PanelCard` — rounded-16 elevation-0 card with optional header row
+        (icon/leading + title + subtitle + trailing) above body children.
+        Replaces the copy-pasted `Card(elevation: 0, … Padding(16, Column(
+        [Row(Icon, 8, Text(title)), SizedBox(12), …])))` pattern.
+      - `StatBar` — the `_StatusBar` shape (optional icon + monospace label +
+        glowing progress bar + right-aligned value) plus a `stacked` layout
+        (label + value above the bar) for planet/faction readouts; label/value
+        column widths and gaps are density-aware.
+      - `HudPill` — tiny rounded badge (port-class / faction / "sabotaged" /
+        stat-chip tags) with optional icon, `radius`/`padding`/`fontSize`/
+        `overflow` overrides for exact look preservation, density-aware 7×1
+        default padding.
+      - `DataTableShell` — bordered dense table shell (shaded header row +
+        divider-separated body rows) with flex/alignment per column.
+    - **First adoption wave** (behavior-preserving; deleted ~223 lines of
+      duplicated code):
+      - `port_trade_view.dart` — 3 tags → `HudPill`; the commodity trade table
+        → `DataTableShell` (6 columns: commodity/buy/sell/supply-dem/hold/
+        actions). Deleted local `_pill` + `_colHeader` helpers.
+      - `ship_status_summary.dart` — 4 hull/shields/drones/cargo bars →
+        `StatBar`; deleted the 80-line private `_StatusBar` class.
+      - `ship_status.dart` — 5 of 6 cards → `PanelCard` (Player Info, Hull &
+        Shields, Engine & Weapons, Cargo Hold & Components, Reputation &
+        Research). The custom rocket `_shipHeaderCard` intentionally stays
+        hand-built.
+    - **Second adoption wave** (behavior-preserving; completes the sweep):
+      - Extended `HudPill` with `radius` / `overflow` / `iconSize` / `iconColor`
+        (preserves the faction stat-pill 6px-radius look) and `StatBar` with a
+        `StatBarLayout.stacked` variant (label + value above the bar) and an
+        optional inline icon.
+      - `planet_screen.dart` — `_resourceBar` / `_defenseBar` (7 call sites)
+        → `StatBar(layout: stacked)`; deleted both duplicated bar builders.
+      - `faction_rankings_screen.dart` — `_statPill` → `HudPill` (6px radius,
+        8×4 padding, 11px ellipsized label, 12px icon preserved exactly).
+    - **Full-coverage sweep result**: every remaining `Card(` site (48),
+      `HudPill` candidate, `LinearProgressIndicator` site (15) and table was
+      audited. Only the patterns above matched the shared widgets' contracts.
+      The rest are **deliberately distinct visual families** left as-is (fixed
+      sizing), so they keep their identity: radius-12 banded `Container` headers
+      (sector dashboard panels, banking, lottery, hardware emporium),
+      padding-20 + custom-accent `color:` cards (port management),
+      ExpansionTile settings cards with accent `side:` borders (audio/video/
+      font/ui-scale/system-resources), hero cards (Galactic Intelligence
+      Report), pill-border `_RankingCard`s, headline-layout hull/shield bars,
+      and bare embedded progress bars. These are candidates for future
+      parameterized passes, not forced migrations.
+    - Verify: `flutter analyze` **No issues found!**, `dart format` clean,
+      21/21 tests pass (suite includes user's hack/reputation tests),
+      `flutter build linux --debug` ✓.
 
 ### ✅ Analyzer cleanup — backlog resolved (0 findings)
 
