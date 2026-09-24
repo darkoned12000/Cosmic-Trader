@@ -382,7 +382,7 @@ class PortTradeView extends StatelessWidget {
     final chips = <(String, String, Color?)>[
       ('credits', '${player.credits}', null),
       ('cargo', '${player.cargoUsed}/${player.maxCargo}', null),
-      ('turns', '${player.turns}/${player.maxTurns}', null),
+      ('energy', '${player.energy}/${player.maxEnergy}', null),
       ('net worth', _formatCredits(port.netWorth), null),
       ('defense', '${port.defenseLevel}/4', null),
       ('cash', '$pct% $cashLabel', cashColor.shade300),

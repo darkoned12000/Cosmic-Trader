@@ -20,6 +20,7 @@ import 'package:cosmic_trader/screens/settings_screen.dart';
 import 'package:cosmic_trader/screens/ship_status.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/equalizer_widget.dart';
 import 'package:cosmic_trader/widgets/hud_strip.dart';
@@ -62,7 +63,10 @@ class _GameShellState extends State<GameShell> {
     _loadSettings();
     _loadNpcs();
     _loadHudSectors();
-    _tickService.onTickComplete = (_) => _reloadNpcs();
+    _tickService.onTickComplete = (_) {
+      _reloadNpcs();
+      _applySolarRecharge();
+    };
     _tickService.onTickError = (error) {
       debugPrint('[GameShell] Tick error: $error');
     };
@@ -109,6 +113,16 @@ class _GameShellState extends State<GameShell> {
       final loaded = await NpcStorage().loadAll();
       if (mounted) setState(() => _npcs = loaded);
     } catch (_) {}
+  }
+
+  /// Solar Array modules trickle-charge the active player each tick.
+  ///
+  /// This intentionally does nothing unless the module is installed and the
+  /// tank has room, so it stays a slow backup rather than free infinite fuel.
+  void _applySolarRecharge() {
+    final result = EnergyService.solarRecharge(_player);
+    if (result.unitsAdded <= 0) return;
+    _updatePlayer(result.player);
   }
 
   void _handleNpcAttack(NpcAttackEvent event) {
@@ -174,6 +188,8 @@ class _GameShellState extends State<GameShell> {
             currentSectorId: 1,
             turns: settings.initTurns,
             maxTurns: settings.initTurns,
+            energy: settings.initTurns,
+            maxEnergy: settings.initTurns,
             credits: settings.initCredits,
             maxCargo: settings.initHolds,
             cargoSize: settings.initHolds,
@@ -285,6 +301,10 @@ class _GameShellState extends State<GameShell> {
   }
 
   void _onSectorSelected(int sectorId) {
+    if (!EnergyService.canMove(_player)) {
+      _showError('Retract the Solar Array before moving.');
+      return;
+    }
     if (_player.currentSectorId != sectorId) {
       setState(() {
         _player = _player.copyWith(currentSectorId: sectorId);

@@ -10,6 +10,7 @@ import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/services/salvage_service.dart';
 
 class CombatScreen extends StatefulWidget {
   final Player player;
@@ -314,15 +315,30 @@ class _CombatScreenState extends State<CombatScreen>
     setState(() => _combatOver = true);
 
     int loot = 0;
+    SalvageReward salvage = const SalvageReward(scrapMetal: 0, scrapTech: 0);
     if (victory) {
       loot = (_npc.credits * 0.5).round();
-      _player = _player.withFactionStandingChange(_npc.faction, -5).copyWith(
-            credits: _player.credits + loot,
-            notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
-          );
-      _npc =
-          _npc.copyWith(credits: 0, cargo: {}, cargoUsed: 0, isDestroyed: true);
-      _combatLog.add('Loot recovered: $loot cr');
+      salvage = SalvageService.rollForNpc(_npc);
+      _player = SalvageService.applyToPlayer(
+        _player.withFactionStandingChange(_npc.faction, -5).copyWith(
+              credits: _player.credits + loot,
+              notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
+            ),
+        salvage,
+      );
+      _npc = _npc.copyWith(
+        credits: 0,
+        cargo: {},
+        cargoUsed: 0,
+        scrapMetal: 0,
+        scrapTech: 0,
+        isDestroyed: true,
+      );
+      _combatLog.add(
+        'Loot recovered: $loot cr, '
+        '${salvage.scrapMetal} scrap metal, '
+        '${salvage.scrapTech} scrap tech',
+      );
     } else if (fled) {
       _player = _player.copyWith(
         notoriety: math.min(100.0, _player.notoriety + 1).toDouble(),
@@ -331,7 +347,9 @@ class _CombatScreenState extends State<CombatScreen>
 
     if (victory) {
       ActionLogProvider.global.combat(
-          'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId} — looted $loot cr');
+          'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId} — '
+          'looted $loot cr, ${salvage.scrapMetal} scrap metal, '
+          '${salvage.scrapTech} scrap tech');
     } else if (fled) {
       ActionLogProvider.global.combat(
           'Fled from ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');

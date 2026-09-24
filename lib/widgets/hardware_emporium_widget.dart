@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/hardware_data.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -6,6 +7,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 
 class HardwareEmporiumWidget extends StatefulWidget {
   final Player player;
@@ -225,10 +227,33 @@ class _ServicesTab extends StatelessWidget {
     final shieldCost =
         (player.maxShields - player.shields) * shieldRechargeCostPerPoint;
     final hullCost = (player.maxHull - player.hull) * hullRepairCostPerPoint;
+    final refuelCost = EnergyService.refuelCost(player);
+    final missingEnergy = EnergyService.missingEnergy(player);
 
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
+        _ServiceCard(
+          icon: Icons.local_gas_station_rounded,
+          iconColor: Colors.amber,
+          title: 'Refuel Energy',
+          description:
+              'Restore ship energy (${player.energy}/${player.maxEnergy})',
+          cost: missingEnergy > 0 ? '$refuelCost cr' : 'Tank full',
+          canAfford: player.credits >= refuelCost,
+          disabled: missingEnergy <= 0 || player.credits < refuelCost,
+          onTap: () {
+            final result = EnergyService.refuel(player);
+            onPlayerUpdate(result.player);
+            ScaffoldMessenger.of(context).showSnackBar(
+              _snack(
+                'Refueled ${result.unitsAdded} energy (${result.creditsSpent} cr)',
+              ),
+            );
+          },
+          actionLabel: 'REFUEL',
+        ),
+        const SizedBox(height: 8),
         _ServiceCard(
           icon: Icons.bolt_rounded,
           iconColor: Colors.cyan,
@@ -943,6 +968,19 @@ class _ModulesTab extends StatelessWidget {
 }
 
 // ── Scrap Exchange Tab ─────────────────────────────────
+String _missingResourceText(HardwareItem item, Player player) {
+  final missing = <String>[];
+  final missingCredits = item.priceCredits - player.credits;
+  final missingScrapMetal = item.priceScrapMetal - player.scrapMetal;
+  final missingScrapTech = item.priceScrapTech - player.scrapTech;
+
+  if (missingCredits > 0) missing.add('$missingCredits cr');
+  if (missingScrapMetal > 0) missing.add('$missingScrapMetal scrap metal');
+  if (missingScrapTech > 0) missing.add('$missingScrapTech scrap tech');
+
+  return missing.isEmpty ? 'resources' : missing.join(', ');
+}
+
 class _ScrapTab extends StatelessWidget {
   final Player player;
   final Function(Player) onPlayerUpdate;
@@ -1032,47 +1070,35 @@ class _ScrapTab extends StatelessWidget {
         if (player.scrapMetal > 0)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _SellScrapCard(
-              label: 'Sell All Scrap Metal',
-              amount: player.scrapMetal,
-              totalCredits: player.scrapMetal * scrapMetalSellPrice,
+            child: _ScrapExchangeCard(
+              unitLabel: 'scrap metal',
+              shortLabel: 'metal',
               icon: Icons.calculate_outlined,
-              color: Colors.teal,
-              onSell: () {
-                final updated = player.copyWith(
-                  scrapMetal: 0,
-                  credits:
-                      player.credits + player.scrapMetal * scrapMetalSellPrice,
-                );
-                onPlayerUpdate(updated);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  _snack(
-                      'Sold ${player.scrapMetal} scrap metal for ${player.scrapMetal * scrapMetalSellPrice} cr'),
-                );
-              },
+              color: Colors.teal.shade300,
+              available: player.scrapMetal,
+              unitPrice: scrapMetalSellPrice,
+              applySale: (amount) => player.copyWith(
+                scrapMetal: player.scrapMetal - amount,
+                credits: player.credits + amount * scrapMetalSellPrice,
+              ),
+              onPlayerUpdate: onPlayerUpdate,
             ),
           ),
         if (player.scrapTech > 0)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _SellScrapCard(
-              label: 'Sell All Scrap Tech',
-              amount: player.scrapTech,
-              totalCredits: player.scrapTech * scrapTechSellPrice,
+            child: _ScrapExchangeCard(
+              unitLabel: 'scrap tech',
+              shortLabel: 'tech',
               icon: Icons.memory_rounded,
-              color: Colors.purple,
-              onSell: () {
-                final updated = player.copyWith(
-                  scrapTech: 0,
-                  credits:
-                      player.credits + player.scrapTech * scrapTechSellPrice,
-                );
-                onPlayerUpdate(updated);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  _snack(
-                      'Sold ${player.scrapTech} scrap tech for ${player.scrapTech * scrapTechSellPrice} cr'),
-                );
-              },
+              color: Colors.purple.shade300,
+              available: player.scrapTech,
+              unitPrice: scrapTechSellPrice,
+              applySale: (amount) => player.copyWith(
+                scrapTech: player.scrapTech - amount,
+                credits: player.credits + amount * scrapTechSellPrice,
+              ),
+              onPlayerUpdate: onPlayerUpdate,
             ),
           ),
         if (player.scrapMetal <= 0 && player.scrapTech <= 0)
@@ -1098,6 +1124,66 @@ class _ScrapTab extends StatelessWidget {
               ),
             ),
           ),
+        const SizedBox(height: 12),
+        Text('Buy Salvage',
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+                color: cs.onSurface)),
+        const SizedBox(height: 8),
+        Text(
+          'Emporium brokers sell reclaimed material above pawn rates. Salvage '
+          'from destroyed ships is cheaper.',
+          style: TextStyle(
+              fontSize: 10,
+              fontFamily: 'monospace',
+              color: cs.onSurface.withValues(alpha: 0.6)),
+        ),
+        const SizedBox(height: 8),
+        _ServiceCard(
+          icon: Icons.calculate_outlined,
+          iconColor: Colors.teal.shade300,
+          title: 'Buy $scrapMetalPurchaseBundle Scrap Metal',
+          description: 'Reclaimed hull plating and structural salvage',
+          cost: '$scrapMetalPurchasePrice cr',
+          canAfford: player.credits >= scrapMetalPurchasePrice,
+          disabled: player.credits < scrapMetalPurchasePrice,
+          onTap: () {
+            final updated = player.copyWith(
+              scrapMetal: player.scrapMetal + scrapMetalPurchaseBundle,
+              credits: player.credits - scrapMetalPurchasePrice,
+            );
+            onPlayerUpdate(updated);
+            ScaffoldMessenger.of(context).showSnackBar(
+              _snack(
+                  'Bought $scrapMetalPurchaseBundle scrap metal for $scrapMetalPurchasePrice cr'),
+            );
+          },
+          actionLabel: 'BUY METAL',
+        ),
+        const SizedBox(height: 8),
+        _ServiceCard(
+          icon: Icons.memory_rounded,
+          iconColor: Colors.purple.shade300,
+          title: 'Buy $scrapTechPurchaseBundle Scrap Tech',
+          description: 'Recovered circuits, drives, and control systems',
+          cost: '$scrapTechPurchasePrice cr',
+          canAfford: player.credits >= scrapTechPurchasePrice,
+          disabled: player.credits < scrapTechPurchasePrice,
+          onTap: () {
+            final updated = player.copyWith(
+              scrapTech: player.scrapTech + scrapTechPurchaseBundle,
+              credits: player.credits - scrapTechPurchasePrice,
+            );
+            onPlayerUpdate(updated);
+            ScaffoldMessenger.of(context).showSnackBar(
+              _snack(
+                  'Bought $scrapTechPurchaseBundle scrap tech for $scrapTechPurchasePrice cr'),
+            );
+          },
+          actionLabel: 'BUY TECH',
+        ),
       ],
     );
   }
@@ -1110,26 +1196,88 @@ class _ScrapTab extends StatelessWidget {
       );
 }
 
-class _SellScrapCard extends StatelessWidget {
-  final String label;
-  final int amount;
-  final int totalCredits;
+class _ScrapExchangeCard extends StatefulWidget {
+  final String unitLabel;
+  final String shortLabel;
   final IconData icon;
   final Color color;
-  final VoidCallback onSell;
+  final int available;
+  final int unitPrice;
+  final Player Function(int amount) applySale;
+  final Function(Player) onPlayerUpdate;
 
-  const _SellScrapCard({
-    required this.label,
-    required this.amount,
-    required this.totalCredits,
+  const _ScrapExchangeCard({
+    required this.unitLabel,
+    required this.shortLabel,
     required this.icon,
     required this.color,
-    required this.onSell,
+    required this.available,
+    required this.unitPrice,
+    required this.applySale,
+    required this.onPlayerUpdate,
   });
+
+  @override
+  State<_ScrapExchangeCard> createState() => _ScrapExchangeCardState();
+}
+
+class _ScrapExchangeCardState extends State<_ScrapExchangeCard> {
+  final TextEditingController _controller = TextEditingController(text: '1');
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _sell(BuildContext context, int amount) {
+    if (amount <= 0) {
+      _showError(context, 'Enter an amount greater than zero');
+      return;
+    }
+    if (amount > widget.available) {
+      _showError(
+          context, 'Only ${widget.available} ${widget.unitLabel} available');
+      return;
+    }
+
+    final credits = amount * widget.unitPrice;
+    final updated = widget.applySale(amount);
+    widget.onPlayerUpdate(updated);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Sold $amount ${widget.unitLabel} for $credits cr',
+          style: const TextStyle(fontFamily: 'monospace'),
+        ),
+        backgroundColor: Colors.deepPurpleAccent,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _sellEnteredAmount(BuildContext context) {
+    final amount = int.tryParse(_controller.text.trim()) ?? 0;
+    _sell(context, amount);
+  }
+
+  void _showError(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontFamily: 'monospace')),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final allValue = widget.available * widget.unitPrice;
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1137,47 +1285,130 @@ class _SellScrapCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: cs.outline.withValues(alpha: 0.15)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                        color: cs.onSurface)),
-                Text('$amount units → $totalCredits cr',
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        color: Colors.amber.shade300)),
-              ],
-            ),
-          ),
-          SizedBox(
-            height: 28,
-            child: ElevatedButton.icon(
-              onPressed: onSell,
-              icon: Icon(Icons.sell_rounded, size: 12),
-              label: Text('SELL',
+          Row(
+            children: [
+              Icon(widget.icon, size: 20, color: widget.color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Sell ${widget.unitLabel}',
                   style: TextStyle(
-                      fontSize: 9,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      letterSpacing: 1,
-                      fontFamily: 'monospace')),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                backgroundColor: Colors.deepPurpleAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6)),
+                      fontFamily: 'monospace',
+                      color: cs.onSurface),
+                ),
               ),
-            ),
+              Text(
+                '${widget.available} available',
+                style: TextStyle(
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                    color: cs.onSurface.withValues(alpha: 0.6)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${widget.unitPrice} cr per unit — sell all for $allValue cr',
+            style: TextStyle(
+                fontSize: 10,
+                fontFamily: 'monospace',
+                color: Colors.amber.shade300),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              SizedBox(
+                width: 90,
+                height: 34,
+                child: TextField(
+                  controller: _controller,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  textAlignVertical: TextAlignVertical.center,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    hintText: 'amt',
+                    hintStyle: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: cs.onSurface.withValues(alpha: 0.4)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SizedBox(
+                  height: 32,
+                  child: ElevatedButton(
+                    onPressed: () => _sellEnteredAmount(context),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      backgroundColor: Colors.deepPurpleAccent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6)),
+                    ),
+                    child: Text(
+                      'SELL ${widget.shortLabel.toUpperCase()}',
+                      style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          fontFamily: 'monospace'),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 30,
+                  child: OutlinedButton(
+                    onPressed: () => _sell(context, 1),
+                    child: const Text(
+                      'SELL 1',
+                      style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          fontFamily: 'monospace'),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SizedBox(
+                  height: 30,
+                  child: OutlinedButton(
+                    onPressed: () => _sell(context, widget.available),
+                    child: const Text(
+                      'SELL ALL',
+                      style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          fontFamily: 'monospace'),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1298,6 +1529,28 @@ class _ItemCard extends StatelessWidget {
                     fontFamily: 'monospace',
                     fontWeight: FontWeight.w600,
                     color: Colors.orange.shade300,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (restrictionReason == null && !canAfford) ...[
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.account_balance_wallet_outlined,
+                    size: 12, color: Colors.red.shade300),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Missing ${_missingResourceText(item, player)}',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w600,
+                      color: Colors.red.shade300,
+                    ),
                   ),
                 ),
               ],

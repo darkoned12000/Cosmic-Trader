@@ -125,6 +125,8 @@ class PlayerStorage {
       maxDrones: settings?.initDrones ?? 0,
       turns: settings?.initTurns ?? 1000,
       maxTurns: settings?.initTurns ?? 1000,
+      energy: settings?.initTurns ?? 1000,
+      maxEnergy: settings?.initTurns ?? 1000,
       credits: settings?.initCredits ?? 1000000,
       researchPoints: 0.0,
       faction: faction,

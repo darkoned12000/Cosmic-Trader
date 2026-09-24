@@ -47,12 +47,12 @@ class HudStrip extends StatelessWidget {
         player.maxShields > 0 ? player.shields / player.maxShields : 0.0;
 
     // The strip must never overflow: on narrow layouts the hull/shield bars
-    // and even the turns meter drop off rather than squashing the row.
+    // and even the energy meter drop off rather than squashing the row.
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final showBars = width >= 760;
-        final showTurns = width >= 560;
+        final showEnergy = width >= 560;
         return Container(
           decoration: BoxDecoration(
             color: cs.surfaceContainerHighest.withValues(alpha: 0.55),
@@ -103,13 +103,17 @@ class HudStrip extends StatelessWidget {
                 color: Colors.amber.shade600,
                 mono: mono,
               ),
-              if (showTurns) ...[
+              if (showEnergy) ...[
                 SizedBox(width: UiScale.spacing(18)),
                 _metric(
                   context,
-                  icon: Icons.bolt_rounded,
-                  value: '${player.turns} / ${player.maxTurns}',
-                  color: cs.onSurface.withValues(alpha: 0.55),
+                  icon: player.solarArrayDeployed
+                      ? Icons.lock_rounded
+                      : Icons.bolt_rounded,
+                  value: '${player.energy} / ${player.maxEnergy}',
+                  color: player.solarArrayDeployed
+                      ? Colors.amber.shade700
+                      : cs.onSurface.withValues(alpha: 0.55),
                   mono: mono,
                 ),
               ],

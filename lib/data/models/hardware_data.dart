@@ -98,6 +98,14 @@ final moduleDefs = <ModuleDef>[
     statLine: (l) => 'Cargo +${10 * l}',
   ),
   ModuleDef(
+    id: 'solarArray',
+    name: 'Solar Array',
+    description:
+        'Deployable collector banks trickle-charge ship energy over time',
+    icon: Icons.wb_sunny_rounded,
+    statLine: (l) => 'Energy Regen +${2 * l}/tick',
+  ),
+  ModuleDef(
     id: 'autoRepair',
     name: 'Auto-Repair System',
     description: 'Nanite drones repair hull damage over time',
@@ -422,6 +430,13 @@ const int droneCostScrapTech = 5;
 // ── Scrap exchange rates ───────────────────────────────
 const int scrapMetalSellPrice = 5;
 const int scrapTechSellPrice = 50;
+
+// Buying salvage is intentionally much more expensive than pawning it, so it
+// is a fallback rather than the intended primary source of scrap.
+const int scrapMetalPurchaseBundle = 50;
+const int scrapMetalPurchasePrice = 5000;
+const int scrapTechPurchaseBundle = 5;
+const int scrapTechPurchasePrice = 5000;
 
 // ── Master item list ───────────────────────────────────
 List<HardwareItem> _allItems = [];

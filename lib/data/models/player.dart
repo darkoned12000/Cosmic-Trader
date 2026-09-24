@@ -48,8 +48,26 @@ class Player {
   final int maxDrones;
 
   // ── Turns ───────────────────────────────────────────────────
+  //
+  // Legacy field retained for old save files only. B1 replaces it with
+  // [energy] below; see [EnergyService].
   final int turns;
   final int maxTurns;
+
+  // ── Energy ──────────────────────────────────────────────────
+  /// Current ship energy — the B1 replacement for legacy turns. Actions such
+  /// as warping, scanning, and port interactions spend energy; it is restored
+  /// by refueling at ports.
+  final int energy;
+
+  /// Maximum ship energy capacity.
+  final int maxEnergy;
+
+  /// True when the Solar Array is deployed.
+  ///
+  /// A deployed array trickle-charges energy each tick but locks the ship in
+  /// place — it must be retracted before warping.
+  final bool solarArrayDeployed;
 
   // ── Economy ─────────────────────────────────────────────────
   final int credits;
@@ -130,6 +148,9 @@ class Player {
     this.maxDrones = 0,
     this.turns = 1000,
     this.maxTurns = 1000,
+    this.energy = 1000,
+    this.maxEnergy = 1000,
+    this.solarArrayDeployed = false,
     required this.credits,
     required this.researchPoints,
     this.bankBalance = 0,
@@ -204,6 +225,9 @@ class Player {
     int? maxDrones,
     int? turns,
     int? maxTurns,
+    int? energy,
+    int? maxEnergy,
+    bool? solarArrayDeployed,
     int? credits,
     double? researchPoints,
     int? bankBalance,
@@ -252,6 +276,9 @@ class Player {
       maxDrones: maxDrones ?? this.maxDrones,
       turns: turns ?? this.turns,
       maxTurns: maxTurns ?? this.maxTurns,
+      energy: energy ?? this.energy,
+      maxEnergy: maxEnergy ?? this.maxEnergy,
+      solarArrayDeployed: solarArrayDeployed ?? this.solarArrayDeployed,
       credits: credits ?? this.credits,
       researchPoints: researchPoints ?? this.researchPoints,
       bankBalance: bankBalance ?? this.bankBalance,
@@ -303,6 +330,9 @@ class Player {
       'maxDrones': maxDrones,
       'turns': turns,
       'maxTurns': maxTurns,
+      'energy': energy,
+      'maxEnergy': maxEnergy,
+      'solarArrayDeployed': solarArrayDeployed,
       'credits': credits,
       'researchPoints': researchPoints,
       'bankBalance': bankBalance,
@@ -365,6 +395,9 @@ class Player {
       maxDrones: json['maxDrones'] as int? ?? 0,
       turns: json['turns'] as int? ?? 1000,
       maxTurns: json['maxTurns'] as int? ?? 1000,
+      energy: json['energy'] as int? ?? json['turns'] as int? ?? 1000,
+      maxEnergy: json['maxEnergy'] as int? ?? json['maxTurns'] as int? ?? 1000,
+      solarArrayDeployed: json['solarArrayDeployed'] as bool? ?? false,
       credits: json['credits'] as int? ?? 1000,
       researchPoints: (json['researchPoints'] as num?)?.toDouble() ?? 0.0,
       bankBalance: json['bankBalance'] as int? ?? 0,
@@ -399,8 +432,26 @@ class Player {
     );
   }
 
-  /// Check if the player has turns remaining to warp.
-  bool get canWarp => turns > 0;
+  /// Check if the player has energy remaining to warp.
+  bool get canWarp => energy > 0;
+
+  /// True when the ship is free to move (a deployed Solar Array locks it).
+  bool get canMove => !solarArrayDeployed;
+
+  /// True when [cost] energy can be spent right now.
+  bool hasEnergy(int cost) => energy >= cost;
+
+  /// Returns a copy with [cost] energy deducted, clamped at zero.
+  Player spendEnergy(int cost) {
+    final next = energy - cost;
+    return copyWith(energy: next < 0 ? 0 : next);
+  }
+
+  /// Returns a copy with [amount] energy restored, clamped to [maxEnergy].
+  Player refuelEnergy(int amount) {
+    final next = energy + amount;
+    return copyWith(energy: next > maxEnergy ? maxEnergy : next);
+  }
 
   /// Check if the ship is critically damaged.
   bool get criticalHull => hull <= 25;

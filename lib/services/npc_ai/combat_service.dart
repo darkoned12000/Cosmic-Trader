@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/services/salvage_service.dart';
 
 class CombatResult {
   final bool attackerWon;
@@ -30,6 +31,8 @@ class PlayerCombatResult {
   final int damageTaken;
   final bool npcDestroyed;
   final int loot;
+  final int lootScrapMetal;
+  final int lootScrapTech;
   final Player updatedPlayer;
   final NpcShip updatedNpc;
 
@@ -38,6 +41,8 @@ class PlayerCombatResult {
     required this.damageTaken,
     required this.npcDestroyed,
     required this.loot,
+    this.lootScrapMetal = 0,
+    this.lootScrapTech = 0,
     required this.updatedPlayer,
     required this.updatedNpc,
   });
@@ -247,14 +252,25 @@ class CombatService {
 
     final npcDestroyed = npcHull <= 0;
     int loot = 0;
+    var lootScrapMetal = 0;
+    var lootScrapTech = 0;
     if (npcDestroyed) {
       loot = (npc.credits * 0.5).round();
+      final salvage = SalvageService.rollForNpc(npc);
+      lootScrapMetal = salvage.scrapMetal;
+      lootScrapTech = salvage.scrapTech;
     }
 
-    final updatedPlayer = player.copyWith(
-      hull: playerHull,
-      shields: playerShields,
-      credits: player.credits + loot,
+    final updatedPlayer = SalvageService.applyToPlayer(
+      player.copyWith(
+        hull: playerHull,
+        shields: playerShields,
+        credits: player.credits + loot,
+      ),
+      SalvageReward(
+        scrapMetal: lootScrapMetal,
+        scrapTech: lootScrapTech,
+      ),
     );
 
     final updatedNpc = npc.copyWith(
@@ -264,6 +280,8 @@ class CombatService {
       credits: npcDestroyed ? 0 : npc.credits,
       cargo: npcDestroyed ? {} : npc.cargo,
       cargoUsed: npcDestroyed ? 0 : npc.cargoUsed,
+      scrapMetal: npcDestroyed ? 0 : npc.scrapMetal,
+      scrapTech: npcDestroyed ? 0 : npc.scrapTech,
     );
 
     debugPrint('[PlayerCombat] Dealt $damageDealt to ${npc.pilotName}, '
@@ -274,6 +292,8 @@ class CombatService {
       damageTaken: damageTaken,
       npcDestroyed: npcDestroyed,
       loot: loot,
+      lootScrapMetal: lootScrapMetal,
+      lootScrapTech: lootScrapTech,
       updatedPlayer: updatedPlayer,
       updatedNpc: updatedNpc,
     );
