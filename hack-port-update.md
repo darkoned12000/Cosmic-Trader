@@ -30,8 +30,35 @@ The current `HackingWidget` includes:
 - Reward previews that match the actual reward
 - Animated packet-sniffer style terminal traffic
 - Separate visible attempt history in the status panel
+- Conservative, aggressive, and resource extraction choices after a successful hack
+- Port security profiles that increase trace pressure on hardened ports
+- Persistent 30-minute sabotage that halves starting port combat shields
+- Persistent successful-hack record with a capped credit bonus for experienced hackers
+- Persistent per-port hack failure counts and 24-hour ban timestamps
+- Persistent faction standing changes for successful hacks and sabotage
+- Successful hacks add notoriety; sabotage adds more notoriety
 
-Phase 1 is complete. Phase 2 is now focused on atmosphere and feedback.
+## Review TODO
+
+### Resolved cleanup items
+
+- [x] Keep per-session guesses separate from per-port failed-session bans
+- [x] Keep reward previews and actual rewards synchronized
+- [x] Stop packet capture and animation controllers on disposal/game over
+- [x] Make the Codex dialog safe inside intrinsic-width dialog layouts
+- [x] Preserve hack history, reputation, and ban state across sessions
+- [x] Add keyboard input and non-scrolling attempt history
+
+### Deferred visual polish / feature discussion
+
+- [ ] Add richer port-network node animation
+- [ ] Add optional hacking sound effects
+- [ ] Add faction-specific breach dialogue
+- [ ] Add a breach progress sequence between stages
+- [ ] Add a more complete multi-stage code format with variable code length
+- [ ] Add mission/quest-specific reputation outcomes
+
+Phase 1 is complete, Phase 2 is complete, and Phase 3 is now focused on strategic gameplay.
 
 ---
 
@@ -314,32 +341,53 @@ Low-risk improvements:
 - Added keyboard input and a blinking slot cursor.
 - Added success/failure visual transitions.
 
-## Phase 2: Atmosphere — In Progress
+## Phase 2: Atmosphere — Complete
 
-- Improve the scanline/grid painter.
-- Add moving data packets.
-- Add packet-sniffer style terminal traffic with timestamps, protocols, endpoints, flags, and byte counts.
-- Show player input packets in a distinct brighter shade within the network feed.
-- Keep submitted code attempts in a separate, visible attempt-history panel so they do not scroll out of the network feed.
-- Add port-specific colors and terminal language.
-- Add optional audio feedback hooks.
-- Keep the existing accessibility and narrow-panel behavior intact.
+- Improved the scanline/grid painter.
+- Added moving data packets.
+- Added packet-sniffer style terminal traffic with timestamps, protocols, endpoints, flags, and byte counts.
+- Added player input packets in a distinct brighter shade within the network feed.
+- Kept submitted code attempts in a separate, visible attempt-history panel.
+- Added screen shake and glitch effects.
+- Added port-specific colors and terminal language.
+- Kept the existing accessibility and narrow-panel behavior intact.
 
-## Phase 3: Strategic Gameplay
+## Phase 3: Strategic Gameplay — Complete
 
 - Add conservative/aggressive extraction.
 - Add temporary sabotage outcomes.
 - Add port security difficulty profiles.
-- Add additional codes or multi-stage hacks for high-security ports.
-- Add replay-specific rewards or codex entries.
+- Add multi-stage codes for hardened ports.
+- Add persistent codex/history views.
 
-## Phase 4: Port Integration
+The first Phase 3 slice adds four extraction choices after a successful hack:
 
-- Pass the current `Port` into the hacking widget.
-- Use port class, owner, defense level, and hardware status for theming.
-- Add reputation or faction consequences.
-- Persist temporary hack results if they affect future port actions.
-- Display recent hack history in the port screen.
+- Conservative credits: 750–1,250 credits guaranteed
+- Aggressive credits: 2,000–4,000 credits when the security trace is low, reduced when the trace is high
+- Resources: 10 units of cargo
+- Port security profiles influence trace pressure and are shown in the terminal
+- Sabotage grants 15 research points and temporarily halves the port's starting combat shields for 30 minutes
+
+The replay record and codex are also implemented:
+
+- Successful hacks increment a persistent `successfulHacks` player record.
+- Each prior successful hack adds 25 credits to credit extraction rewards.
+- The replay bonus caps at 500 credits.
+- The record is shown on the extraction screen when a bonus is active.
+- Successfully hacked port names and the last breach timestamp are persisted.
+- The port screen includes a Hack Codex dialog for viewing the history.
+
+Hardened ports now use a two-stage hack: cracking the first code advances to a fresh secondary code with a new five-guess attempt counter.
+
+## Phase 4: Port Integration — Complete
+
+- Faction standing and notoriety changes are connected to hacking, combat, trade, planet, and NPC interactions.
+- Successful trades, NPC scans/trades, and planet scans improve standing with the relevant faction.
+- Hostile actions such as sabotage, combat victories, port capture/destruction, and claiming occupied planets reduce standing.
+- The Ship view displays notoriety and faction-standing meters for all four factions.
+- The Hack Codex persists successful port history, timestamps, security profiles, extraction rewards, and faction standing.
+- Temporary sabotage and per-port hack bans persist across sessions.
+- The core reputation system is ready to be extended by future missions and quest actions.
 
 ---
 
@@ -376,10 +424,10 @@ The update is successful when:
 
 # First Implementation Target
 
-Phase 2 will build on the completed Phase 1 foundation:
+Phase 3 now builds on the completed Phase 2 foundation:
 
-1. Expand the scanline painter into a subtle animated grid and packet layer.
-2. Add restrained screen shake/glitch feedback after incorrect submissions.
-3. Pass the current port into the hacking widget and derive colors and terminal language from its class/ownership.
-4. Keep the visual effects decorative and readable.
-5. Add audio feedback only where a safe platform-supported hook is available.
+1. Offer conservative, aggressive, and resource extraction choices after a successful hack. — Complete
+2. Make aggressive extraction depend on the final security trace. — Complete
+3. Add temporary sabotage outcomes. — Complete
+4. Add port security difficulty profiles. — Complete
+5. Add multi-stage codes and replay-specific rewards/codex entries. — Complete

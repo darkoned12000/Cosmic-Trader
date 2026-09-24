@@ -92,11 +92,13 @@ class _NpcTradeDialogState extends State<NpcTradeDialog> {
     final npcCargoUsed = newNpcCargo.values.fold(0, (a, b) => a + b);
 
     final netChange = _netCredits;
-    final updatedPlayer = player.copyWith(
-      credits: (player.credits + netChange).clamp(0, 9999999),
-      cargo: newPlayerCargo,
-      cargoUsed: playerCargoUsed.clamp(0, player.maxCargo),
-    );
+    final updatedPlayer = player
+        .copyWith(
+          credits: (player.credits + netChange).clamp(0, 9999999),
+          cargo: newPlayerCargo,
+          cargoUsed: playerCargoUsed.clamp(0, player.maxCargo),
+        )
+        .withFactionStandingChange(npc.faction, 1);
 
     final updatedNpc = npc.copyWith(
       credits: (npc.credits - netChange).clamp(0, 9999999),

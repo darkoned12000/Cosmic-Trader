@@ -45,9 +45,10 @@ lib/
     models/
       player.dart                 -- immutable Player, copyWith, toJson/fromJson, ship stats,
                                      ship class/definition, weapons, drones, cargo, banking,
-                                     ownedPorts, faction, equipment (hull/shield/engine + levels),
-                                     installedModules, scrapMetal/scrapTech, researchPoints,
-                                     notoriety, hardware
+                                     ownedPorts, faction + persisted faction standings, equipment
+                                     (hull/shield/engine + levels), installedModules,
+                                     scrapMetal/scrapTech, researchPoints, notoriety,
+                                     hardware, hack history/codex, per-port hack bans
       commodity.dart              -- CommodityConfig + CommodityRegistry (single source of
                                      truth for price/qty ranges; split-point pricing)
       sector.dart                 -- mutable Sector (coords, warps, structured port/planet
@@ -65,7 +66,8 @@ lib/
       universe_generator.dart     -- 8-phase generator (1258 lines, uses PathfindingService)
       faction.dart                -- Faction + FactionClass enum (duran/vinari/trader/pirate),
                                      heroes list, full lore (background, philosophy, motto, tech...)
-      faction_standing.dart       -- inter-faction reputation tracking via Map<FactionClass, int>
+      faction_standing.dart       -- inter-faction reputation model/defaults; Player persists
+                                     faction standings and resolves defaults for new factions
       npc_ship.dart               -- NpcShip model: identity, faction, shipDef, stats, equipment,
                                      cargo, personality, goal, memory, toJson/fromJson
       ship_templates.dart         -- ShipClassType enum (interceptor/battleship/freighter/
@@ -164,7 +166,7 @@ lib/
 | `lib/core/theme_service.dart` | Live color/brightness/font switching, 15 presets |
 | `lib/core/tw_layout.dart` | Responsive layout breakpoints |
 | `lib/core/npc_name_generator.dart` | Procedural NPC pilot/ship name generation |
-| `lib/data/models/player.dart` | Player + ship stats + equipment + modules + scrap + banking + faction |
+| `lib/data/models/player.dart` | Player + ship stats + equipment + modules + scrap + banking + faction standings + hack history/codex/bans |
 | `lib/data/models/commodity.dart` | CommodityConfig + CommodityRegistry (data-driven economy) |
 | `lib/data/models/sector.dart` | Sector content container + structured port/planet + npcShips counts |
 | `lib/data/models/planet.dart` | Enhanced Planet model (10 types, colonies, levels, defense, images) |
@@ -328,6 +330,8 @@ Three-panel responsive layout when enabled in Settings:
 - Mini-games: Lottery (pick-6), Hacking (3-digit code), Frequency Jamming (oscilloscope)
 - Hardware Emporium (7 tabs: Services/Weapons/Hull/Shields/Engines/Modules/Scrap; purchases deduct credits + scrap metal/tech, equipment replacement refunds partial scrap, scrap sells for credits)
 - Port combat (attack port defenses, surrender mechanics)
+- Hack Port mini-game: 5 code guesses per stage, 3 failed sessions per port, 24-hour bans, packet-sniffer terminal, port security profiles, two-stage hardened ports, extraction choices, and persistent Hack Codex
+- Hack outcomes modify persisted faction standing and notoriety; combat victories against NPCs and port owners, port captures/destruction, and successful trades with owned ports also modify faction standing/notoriety; sabotage persists a 30-minute port defense reduction
 - Adaptive layout: GridView (3 cols) on wide, vertical list on narrow
 
 ### Galaxy Map
@@ -429,8 +433,8 @@ See README.md for full roadmap. Key items remaining:
 - NPC repopulation via homeworlds (planet spawn fields exist, not wired to tick)
 - Damage-based fleeing for NPCs
 - Low-aggression immediate flee
-- Faction standing tracking with combat/trade impact
-- Player faction reputation UI
+- Faction standing changes from future mission/quest actions
+- Deeper NPC dialogue and faction-specific mission reactions
 - Ship damage & repair persistence (repair at hardware emporium exists, full damage model pending)
 - Dynamic commodity price fluctuations
 - Black market goods
@@ -451,6 +455,10 @@ See README.md for full roadmap. Key items remaining:
 ### Recently completed / partially implemented
 
 - **Planet system (phase 1)** — enhanced `Planet` model (10 types, atmospheres, colonies, Citadel levels, defenses, image pools), `PlanetScreen` with scan/claim/transfers/level-up, homeworld assignment in the generator, planet markers on maps; automation/invasion pending
+- **Hack Port phases 1-3** — packet-sniffer terminal, keyboard entry, trace meter, port security profiles, two-stage hardened ports, extraction choices, 10-cargo resource reward, 30-minute sabotage, persistent hack history/codex, per-port 24-hour bans, and persisted replay bonuses
+- **Reputation integration** — successful port hacks, sabotage, NPC combat/scans/trades, planet scans/claims, port combat, and faction-owned port trades modify persisted faction standing/notoriety; standing is displayed in the Hack Codex and Ship view
+- **Expanded reputation hooks** — reputation is ready for future mission/quest actions
+- **Ship-screen reputation display** — Ship view Resources card shows notoriety plus a faction-standing meter for Duran, Vinari, Traders, and Pirates
 - **Hardware emporium purchases** — all 7 tabs now transact (credits + scrap metal/tech), equipment replacement with scrap refunds, scrap exchange
 - **Registration ship selection** — 4 ship classes per faction with milestone locking (controlled by `unlockAllShips` setting)
 - **Desktop window management** — window_manager fullscreen/size/window-scale applied at startup from saved settings

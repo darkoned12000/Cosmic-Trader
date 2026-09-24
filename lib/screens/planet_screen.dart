@@ -61,9 +61,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
     if (planet.scanned) return;
 
     // Deduct a turn for manual scan
-    final updatedPlayer = widget.player.copyWith(
+    var updatedPlayer = widget.player.copyWith(
       turns: widget.player.turns - 1,
     );
+    final ownerFaction = planet.owner;
+    if (ownerFaction != null) {
+      updatedPlayer = updatedPlayer.withFactionStandingChange(ownerFaction, 1);
+    }
     widget.onPlayerUpdate(updatedPlayer);
 
     planet.scanned = true;
@@ -692,7 +696,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
     final sector = _currentSector;
     if (sector == null) return;
 
+    final previousOwner = planet.owner;
     planet.owner = widget.player.faction;
+    var updatedPlayer = widget.player;
+    if (previousOwner != null && previousOwner != widget.player.faction) {
+      updatedPlayer =
+          updatedPlayer.withFactionStandingChange(previousOwner, -3);
+    }
+    widget.onPlayerUpdate(updatedPlayer);
     await UniverseStorage.instance.saveSectors([sector]);
     ActionLogProvider.global.info(
       '${widget.player.faction.displayName} has claimed ${planet.name}',

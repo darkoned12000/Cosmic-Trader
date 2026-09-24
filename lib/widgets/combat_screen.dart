@@ -321,10 +321,17 @@ class _CombatScreenState extends State<CombatScreen>
     int loot = 0;
     if (victory) {
       loot = (_npc.credits * 0.5).round();
-      _player = _player.copyWith(credits: _player.credits + loot);
+      _player = _player.withFactionStandingChange(_npc.faction, -5).copyWith(
+            credits: _player.credits + loot,
+            notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
+          );
       _npc =
           _npc.copyWith(credits: 0, cargo: {}, cargoUsed: 0, isDestroyed: true);
       _combatLog.add('Loot recovered: $loot cr');
+    } else if (fled) {
+      _player = _player.copyWith(
+        notoriety: math.min(100.0, _player.notoriety + 1).toDouble(),
+      );
     }
 
     if (victory) {

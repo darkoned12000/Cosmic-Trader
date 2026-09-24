@@ -127,6 +127,9 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   Future<void> _handleScan(_SectorEntry entry) async {
     if (entry.npcShip case final npc?) {
       if (!mounted) return;
+      widget.onPlayerUpdate(
+        widget.player.withFactionStandingChange(npc.faction, 1),
+      );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         showDialog(

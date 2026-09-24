@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/widgets/hacking_widget.dart';
 
 Player _makePlayer() => Player(
@@ -35,6 +36,7 @@ void main() {
       ),
     );
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
 
     expect(tester.takeException(), isNull);
     expect(find.text('5 / 5'), findsOneWidget);
@@ -60,6 +62,35 @@ void main() {
     // Simulated packet traffic continues to flow while the hack is active.
     await tester.pump(const Duration(milliseconds: 1600));
     expect(find.textContaining('TCP '), findsAtLeastNWidgets(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('hardened ports start a two-stage hack',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(500, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HackingWidget(
+          player: _makePlayer(),
+          port: Port(
+            name: 'Vault Port',
+            portClass: PortClass.independent,
+            buyPrices: const {},
+            sellPrices: const {},
+            defenseLevel: 3,
+          ),
+          onSuccess: (_) {},
+          onFailure: (_) {},
+          onCancel: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('STAGE 1/2'), findsOneWidget);
+    expect(find.textContaining('HIGH SECURITY'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 }

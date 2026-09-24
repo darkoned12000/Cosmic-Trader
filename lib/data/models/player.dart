@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:crypto/crypto.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 
 /// Player model with ship stats for gameplay.
@@ -69,6 +70,32 @@ class Player {
   // ── Faction ─────────────────────────────────────────────────
   final FactionClass faction;
 
+  // ── Faction Standing ─────────────────────────────────────────
+  /// Persisted standing values keyed by faction name.
+  final Map<String, int> factionStandings;
+
+  // ── Hacking Record ───────────────────────────────────────────
+  /// Number of successful port hacks completed by this player.
+  final int successfulHacks;
+
+  /// Unique port names successfully hacked, used by the hacking codex.
+  final List<String> hackedPorts;
+
+  /// Timestamp of the most recent successful port hack.
+  final DateTime? lastHackAt;
+
+  /// Number of failed hack sessions by port name.
+  final Map<String, int> portHackFailures;
+
+  /// Epoch timestamps for active port hack bans.
+  final Map<String, int> portHackBannedUntil;
+
+  /// Security profile of the most recent successful hack.
+  final String? lastHackProfile;
+
+  /// Human-readable reward from the most recent successful hack.
+  final String? lastHackReward;
+
   // ── Notoriety ───────────────────────────────────────────────
   /// Global reputation score (0.0 to 100.0).
   /// Higher values make NPCs more aggressive and hostile.
@@ -112,10 +139,31 @@ class Player {
     this.scrapTech = 0,
     this.installedModules = const {},
     this.faction = FactionClass.trader,
+    this.factionStandings = const {},
+    this.successfulHacks = 0,
+    this.hackedPorts = const [],
+    this.lastHackAt,
+    this.portHackFailures = const {},
+    this.portHackBannedUntil = const {},
+    this.lastHackProfile,
+    this.lastHackReward,
     this.notoriety = 0.0,
   });
 
   bool ownsPort(String portName) => ownedPorts.contains(portName);
+
+  int factionStandingWith(FactionClass target) {
+    return factionStandings[target.name] ??
+        FactionStanding.defaultFor(faction).standings[target] ??
+        0;
+  }
+
+  Player withFactionStandingChange(FactionClass target, int delta) {
+    final updated = Map<String, int>.from(factionStandings);
+    updated[target.name] =
+        FactionStanding.modifyStanding(factionStandingWith(target), delta);
+    return copyWith(factionStandings: updated);
+  }
 
   int get effectiveEngineLevel => engineEquipmentLevel;
 
@@ -165,6 +213,14 @@ class Player {
     int? scrapTech,
     Map<String, int>? installedModules,
     FactionClass? faction,
+    Map<String, int>? factionStandings,
+    int? successfulHacks,
+    List<String>? hackedPorts,
+    DateTime? lastHackAt,
+    Map<String, int>? portHackFailures,
+    Map<String, int>? portHackBannedUntil,
+    String? lastHackProfile,
+    String? lastHackReward,
     double? notoriety,
   }) {
     return Player(
@@ -205,6 +261,14 @@ class Player {
       scrapTech: scrapTech ?? this.scrapTech,
       installedModules: installedModules ?? this.installedModules,
       faction: faction ?? this.faction,
+      factionStandings: factionStandings ?? this.factionStandings,
+      successfulHacks: successfulHacks ?? this.successfulHacks,
+      hackedPorts: hackedPorts ?? this.hackedPorts,
+      lastHackAt: lastHackAt ?? this.lastHackAt,
+      portHackFailures: portHackFailures ?? this.portHackFailures,
+      portHackBannedUntil: portHackBannedUntil ?? this.portHackBannedUntil,
+      lastHackProfile: lastHackProfile ?? this.lastHackProfile,
+      lastHackReward: lastHackReward ?? this.lastHackReward,
       notoriety: notoriety ?? this.notoriety,
     );
   }
@@ -248,6 +312,14 @@ class Player {
       'scrapTech': scrapTech,
       'installedModules': installedModules,
       'faction': faction.name,
+      'factionStandings': factionStandings,
+      'successfulHacks': successfulHacks,
+      'hackedPorts': hackedPorts,
+      'lastHackAt': lastHackAt?.toIso8601String(),
+      'portHackFailures': portHackFailures,
+      'portHackBannedUntil': portHackBannedUntil,
+      'lastHackProfile': lastHackProfile,
+      'lastHackReward': lastHackReward,
       'notoriety': notoriety,
     };
   }
@@ -309,6 +381,20 @@ class Player {
         (e) => e.name == json['faction'],
         orElse: () => FactionClass.trader,
       ),
+      factionStandings:
+          (json['factionStandings'] as Map?)?.cast<String, int>() ?? const {},
+      successfulHacks: json['successfulHacks'] as int? ?? 0,
+      hackedPorts: (json['hackedPorts'] as List?)?.cast<String>() ?? const [],
+      lastHackAt: json['lastHackAt'] != null
+          ? DateTime.parse(json['lastHackAt'] as String)
+          : null,
+      portHackFailures:
+          (json['portHackFailures'] as Map?)?.cast<String, int>() ?? const {},
+      portHackBannedUntil:
+          (json['portHackBannedUntil'] as Map?)?.cast<String, int>() ??
+              const {},
+      lastHackProfile: json['lastHackProfile'] as String?,
+      lastHackReward: json['lastHackReward'] as String?,
       notoriety: (json['notoriety'] as num?)?.toDouble() ?? 0.0,
     );
   }

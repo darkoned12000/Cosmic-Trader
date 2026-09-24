@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
@@ -289,35 +290,37 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         const SizedBox(height: 16),
         _playerInfoCard(theme, cs),
         const SizedBox(height: 16),
+        _shipResourcesCard(theme, cs),
+        const SizedBox(height: 16),
         _hullShieldCard(theme, cs),
         const SizedBox(height: 16),
         _shipWeaponsCard(theme, cs),
         const SizedBox(height: 16),
-        _shipEngineCard(theme, cs),
-        const SizedBox(height: 16),
         _shipCargoCard(theme, cs),
-        const SizedBox(height: 16),
-        _shipResourcesCard(theme, cs),
       ],
     );
   }
 
   Widget _buildTwoColumnGrid(ThemeData theme, ColorScheme cs) {
-    return GridView.count(
-      crossAxisCount: 2,
+    final cards = <Widget>[
+      _playerInfoCard(theme, cs),
+      _shipResourcesCard(theme, cs),
+      _hullShieldCard(theme, cs),
+      _shipWeaponsCard(theme, cs),
+      _shipCargoCard(theme, cs),
+    ];
+
+    return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 16,
-      crossAxisSpacing: 16,
-      childAspectRatio: 1.2,
-      children: [
-        _playerInfoCard(theme, cs),
-        _hullShieldCard(theme, cs),
-        _shipWeaponsCard(theme, cs),
-        _shipEngineCard(theme, cs),
-        _shipCargoCard(theme, cs),
-        _shipResourcesCard(theme, cs),
-      ],
+      itemCount: cards.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 16,
+        crossAxisSpacing: 16,
+        mainAxisExtent: 440,
+      ),
+      itemBuilder: (context, index) => cards[index],
     );
   }
 
@@ -676,7 +679,7 @@ class _ShipStatusViewState extends State<ShipStatusView> {
                 Icon(Icons.auto_awesome_rounded, color: cs.primary, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'Weapons',
+                  'Engine & Weapons',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -684,6 +687,30 @@ class _ShipStatusViewState extends State<ShipStatusView> {
               ],
             ),
             const SizedBox(height: 12),
+            _equipmentNameRow(
+              cs,
+              Icons.speed_rounded,
+              _formatEquipmentName(widget.player.engineEquipment),
+            ),
+            _equipmentStatsRow(
+              cs,
+              _getEngineStats(
+                widget.player.engineEquipment,
+                widget.player.engineEquipmentLevel,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Divider(color: cs.surfaceContainerHighest),
+            const SizedBox(height: 8),
+            Text(
+              'Weapons',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 4),
             ...slots.map((slot) {
               final weaponType = widget.player.weaponTypes[slot];
               final level = widget.player.weaponSlots[slot] ?? 0;
@@ -741,60 +768,6 @@ class _ShipStatusViewState extends State<ShipStatusView> {
     );
   }
 
-  Widget _shipEngineCard(ThemeData theme, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.bolt_rounded, color: cs.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Engine',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _equipmentNameRow(cs, Icons.speed_rounded,
-                _formatEquipmentName(widget.player.engineEquipment)),
-            _equipmentStatsRow(
-                cs,
-                _getEngineStats(widget.player.engineEquipment,
-                    widget.player.engineEquipmentLevel)),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Warp Drive',
-                  style: TextStyle(
-                    color: cs.onSurface.withValues(alpha: 0.6),
-                    fontSize: 13,
-                  ),
-                ),
-                Text(
-                  'Warp ${widget.player.engineEquipmentLevel}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _shipCargoCard(ThemeData theme, ColorScheme cs) {
     return Card(
       elevation: 0,
@@ -809,7 +782,7 @@ class _ShipStatusViewState extends State<ShipStatusView> {
                 Icon(Icons.inventory_2_rounded, color: cs.primary, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'Cargo Hold',
+                  'Cargo Hold & Components',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -857,7 +830,7 @@ class _ShipStatusViewState extends State<ShipStatusView> {
                     color: cs.primary, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'Resources',
+                  'Reputation & Research',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -870,6 +843,7 @@ class _ShipStatusViewState extends State<ShipStatusView> {
             const SizedBox(height: 12),
             _notorietyRow(cs),
             const SizedBox(height: 12),
+            _factionStandingSection(theme, cs),
             _ownedPortsSection(theme, cs),
           ],
         ),
@@ -957,6 +931,74 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         ),
       ],
     );
+  }
+
+  Widget _factionStandingSection(ThemeData theme, ColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.groups_rounded, size: 16, color: cs.primary),
+            const SizedBox(width: 8),
+            Text(
+              'Faction Standing',
+              style: TextStyle(
+                color: cs.onSurface.withValues(alpha: 0.6),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ...FactionClass.values.map((faction) {
+          final standing = widget.player.factionStandingWith(faction);
+          final color = _standingColor(standing);
+          final progress = ((standing + 100) / 200).clamp(0.0, 1.0);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      faction.displayName,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '$standing',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 4,
+                  backgroundColor: cs.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation(color),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Color _standingColor(int standing) {
+    if (standing >= 25) return Colors.green;
+    if (standing <= -30) return Colors.red;
+    return Colors.orange;
   }
 
   Widget _ownedPortsSection(ThemeData theme, ColorScheme cs) {

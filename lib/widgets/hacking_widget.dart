@@ -13,7 +13,9 @@ class HackingWidget extends StatefulWidget {
   final int failCount;
   final int maxAttempts;
   final int maxFailures;
+  final int? banUntilEpoch;
   final ValueChanged<Player> onSuccess;
+  final ValueChanged<Port>? onPortModified;
   final ValueChanged<int> onFailure;
   final VoidCallback onCancel;
 
@@ -24,7 +26,9 @@ class HackingWidget extends StatefulWidget {
     this.failCount = 0,
     this.maxAttempts = 5,
     this.maxFailures = 3,
+    this.banUntilEpoch,
     required this.onSuccess,
+    this.onPortModified,
     required this.onFailure,
     required this.onCancel,
   });
@@ -35,7 +39,7 @@ class HackingWidget extends StatefulWidget {
 
 class _HackingWidgetState extends State<HackingWidget>
     with TickerProviderStateMixin {
-  late final List<int> _secret;
+  late List<int> _secret;
   final List<_GuessRow> _history = [];
   late final List<String> _terminalMessages;
 
@@ -46,12 +50,14 @@ class _HackingWidgetState extends State<HackingWidget>
   final List<int?> _currentInput = [null, null, null];
 
   int _currentSlot = 0;
+  int _codeStage = 1;
   late int _attemptsLeft;
   bool _isGameOver = false;
   bool _isSubmitting = false;
   bool _showFailureOverlay = false;
   bool _showSuccessOverlay = false;
   int? _creditReward;
+  int? _aggressiveCreditReward;
   String? _cargoReward;
 
   late final FocusNode _keyboardFocus;
@@ -59,7 +65,12 @@ class _HackingWidgetState extends State<HackingWidget>
   late AnimationController _cursorController;
   late AnimationController _atmosphereController;
   Timer? _packetTimer;
+  Timer? _bootTimer;
+  Timer? _typewriterTimer;
+  Timer? _cooldownTimer;
   int _packetCounter = 0;
+  int _bootIndex = 0;
+  bool _isBooting = true;
 
   static const _digitKeys = <LogicalKeyboardKey>[
     LogicalKeyboardKey.digit0,
@@ -125,9 +136,53 @@ class _HackingWidgetState extends State<HackingWidget>
 
   int get _attemptTotal => max(1, widget.maxAttempts);
 
+  int get _aggressiveReward {
+    final baseReward = _aggressiveCreditReward ?? 0;
+    if (_tracePercent < 50) return baseReward;
+    return max(300, (baseReward / 3).round());
+  }
+
+  int get _recordBonus => min(500, widget.player.successfulHacks * 25);
+
+  String get _securityProfile {
+    final port = widget.port;
+    if (port == null) return 'STANDARD';
+    if (port.ownerFaction == FactionClass.pirate) return 'PIRATE BLACKSITE';
+    if (port.portClass == PortClass.hardwareEmporium) return 'HARDWARE CORE';
+    if (port.portClass == PortClass.federal && port.defenseLevel >= 3) {
+      return 'MILITARY LOCKDOWN';
+    }
+    if (port.defenseLevel >= 3) return 'HIGH SECURITY';
+    if (port.defenseLevel <= 1) return 'LOW SECURITY';
+    return 'STANDARD';
+  }
+
+  int get _totalStages => (widget.port?.defenseLevel ?? 0) >= 3 ? 2 : 1;
+
+  String get _stageLabel => 'STAGE $_codeStage/$_totalStages';
+
+  String get _securityProfileShort => switch (_securityProfile) {
+        'PIRATE BLACKSITE' => 'PIRATE',
+        'MILITARY LOCKDOWN' => 'MILITARY',
+        'HARDWARE CORE' => 'HARDWARE',
+        'HIGH SECURITY' => 'HIGH',
+        'LOW SECURITY' => 'LOW',
+        _ => 'STANDARD',
+      };
+
+  int get _traceBoost {
+    final defenseLevel = widget.port?.defenseLevel ?? 0;
+    if (defenseLevel >= 4) return 8;
+    if (defenseLevel >= 3) return 5;
+    if (defenseLevel >= 2) return 2;
+    return 0;
+  }
+
   int get _tracePercent {
     final usedAttempts = _attemptTotal - _attemptsLeft;
-    return (usedAttempts / _attemptTotal * 100).round().clamp(0, 100);
+    final baseTrace = usedAttempts / _attemptTotal * 100;
+    final profileTrace = usedAttempts * _traceBoost;
+    return (baseTrace + profileTrace).round().clamp(0, 100);
   }
 
   List<String> _buildInitialTerminalMessages() {
@@ -178,11 +233,74 @@ class _HackingWidgetState extends State<HackingWidget>
         '$destinationHost:$destinationPort  [$flag]  $bytes B';
   }
 
+  List<String> get _bootMessages => [
+        'Connecting to port security node...',
+        'Negotiating secure channel...',
+        'Loading packet filter...',
+        'Injecting access module...',
+        'Connection established.',
+      ];
+
+  bool get _isBanned =>
+      widget.banUntilEpoch != null &&
+      widget.banUntilEpoch! > DateTime.now().millisecondsSinceEpoch;
+
+  Duration get _banRemaining {
+    final until = widget.banUntilEpoch;
+    if (until == null) return Duration.zero;
+    final remaining = until - DateTime.now().millisecondsSinceEpoch;
+    return remaining > 0 ? Duration(milliseconds: remaining) : Duration.zero;
+  }
+
+  String get _banCountdown {
+    final remaining = _banRemaining;
+    final hours = remaining.inHours.toString().padLeft(2, '0');
+    final minutes = (remaining.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (remaining.inSeconds % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
+
+  void _startBootSequence() {
+    _bootTimer = Timer.periodic(const Duration(milliseconds: 90), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_bootIndex >= _bootMessages.length) {
+        timer.cancel();
+        _bootTimer = null;
+        setState(() => _isBooting = false);
+        return;
+      }
+      final message = _bootMessages[_bootIndex++];
+      setState(() => _addTerminalMessage(message));
+    });
+  }
+
+  void _startCooldownTimer() {
+    if (!_isBanned) return;
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_isBanned) {
+        _cooldownTimer?.cancel();
+        _cooldownTimer = null;
+        return;
+      }
+      setState(() {});
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _secret = _generateUniqueCode();
     _terminalMessages = _buildInitialTerminalMessages();
+    _terminalMessages.insert(0, 'Security profile: $_securityProfile.');
+    if (_totalStages > 1) {
+      _terminalMessages.insert(
+        1,
+        'Secondary authentication layer detected. Two code stages required.',
+      );
+    }
     _attemptsLeft = _attemptTotal;
     _glitchController = AnimationController(
       vsync: this,
@@ -201,6 +319,8 @@ class _HackingWidgetState extends State<HackingWidget>
       if (!mounted || _isGameOver) return;
       setState(() => _addTerminalMessage(_generatePacketTrace()));
     });
+    _startBootSequence();
+    _startCooldownTimer();
   }
 
   void _stopPacketCapture() {
@@ -211,6 +331,9 @@ class _HackingWidgetState extends State<HackingWidget>
   @override
   void dispose() {
     _stopPacketCapture();
+    _bootTimer?.cancel();
+    _typewriterTimer?.cancel();
+    _cooldownTimer?.cancel();
     _glitchController.dispose();
     _cursorController.dispose();
     _atmosphereController.dispose();
@@ -243,7 +366,10 @@ class _HackingWidgetState extends State<HackingWidget>
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent || _isGameOver) {
+    if ((event is! KeyDownEvent && event is! KeyRepeatEvent) ||
+        _isGameOver ||
+        _isBooting ||
+        _isBanned) {
       return KeyEventResult.ignored;
     }
 
@@ -270,7 +396,7 @@ class _HackingWidgetState extends State<HackingWidget>
 
   void _onDigitPressed(int digit) {
     _requestKeyboardFocus();
-    if (_isGameOver || _isSubmitting) return;
+    if (_isGameOver || _isSubmitting || _isBooting || _isBanned) return;
     if (_currentSlot >= 3) return;
     // Skip any locked positions
     while (_currentSlot < 3 && _locked[_currentSlot] != null) {
@@ -287,7 +413,7 @@ class _HackingWidgetState extends State<HackingWidget>
 
   void _onDelete() {
     _requestKeyboardFocus();
-    if (_isGameOver || _isSubmitting) return;
+    if (_isGameOver || _isSubmitting || _isBooting || _isBanned) return;
     setState(() {
       if (_currentSlot > 0) {
         _currentSlot--;
@@ -317,13 +443,80 @@ class _HackingWidgetState extends State<HackingWidget>
     }
   }
 
-  void _submitGuess() {
+  void _beginSecondaryStage() {
+    _codeStage++;
+    _secret = _generateUniqueCode();
+    _history.clear();
+    _locked
+      ..clear()
+      ..addAll(List<int?>.filled(3, null));
+    _currentInput
+      ..clear()
+      ..addAll(List<int?>.filled(3, null));
+    _currentSlot = 0;
+    _attemptsLeft = _attemptTotal;
+    _addTerminalMessage(
+        'PRIMARY CODE ACCEPTED. SECONDARY AUTHENTICATION REQUIRED.');
+    _addTerminalMessage(
+        'Generating stage $_codeStage/$_totalStages security code...');
+    _glitchController.forward(from: 0);
+    setState(() => _isSubmitting = false);
+  }
+
+  Future<void> _typewriterMessage(String message, int totalDurationMs) async {
+    _typewriterTimer?.cancel();
+    final targetIndex = _terminalMessages.length - 1;
+    final characterDelay = max(
+      12,
+      (totalDurationMs ~/ max(1, message.length)),
+    );
+    var characterIndex = 0;
+    final completer = Completer<void>();
+
+    _typewriterTimer = Timer.periodic(
+      Duration(milliseconds: characterDelay),
+      (timer) {
+        if (!mounted ||
+            targetIndex < 0 ||
+            targetIndex >= _terminalMessages.length) {
+          timer.cancel();
+          if (!completer.isCompleted) completer.complete();
+          return;
+        }
+        characterIndex++;
+        _terminalMessages[targetIndex] = message.substring(0, characterIndex);
+        if (characterIndex >= message.length) {
+          timer.cancel();
+          _typewriterTimer = null;
+          if (!completer.isCompleted) completer.complete();
+        } else {
+          setState(() {});
+        }
+      },
+    );
+    return completer.future;
+  }
+
+  void _submitGuess() async {
     _requestKeyboardFocus();
-    if (!_canSubmit || _isGameOver || _isSubmitting) return;
+    if (!_canSubmit ||
+        _isGameOver ||
+        _isSubmitting ||
+        _isBooting ||
+        _isBanned) {
+      return;
+    }
     setState(() {
       _isSubmitting = true;
       _addTerminalMessage('Injecting authentication packet...');
     });
+
+    final injectDuration = 400 + (_tracePercent * 3).clamp(0, 300).round();
+    await _typewriterMessage(
+      'Injecting authentication packet...',
+      injectDuration,
+    );
+    if (!mounted || _isGameOver) return;
 
     final guess = <int>[];
     for (var i = 0; i < 3; i++) {
@@ -345,9 +538,15 @@ class _HackingWidgetState extends State<HackingWidget>
         .add(_GuessRow(guess: List.from(guess), locked: List.from(newLocked)));
 
     if (allMatch) {
+      if (_codeStage < _totalStages) {
+        _beginSecondaryStage();
+        return;
+      }
+
       _isGameOver = true;
       _stopPacketCapture();
-      _creditReward = 500 + Random().nextInt(1501);
+      _creditReward = 750 + Random().nextInt(501);
+      _aggressiveCreditReward = 2000 + Random().nextInt(2001);
       _cargoReward = CommodityRegistry
           .names[Random().nextInt(CommodityRegistry.names.length)];
       _addTerminalMessage('AUTHENTICATION ACCEPTED.');
@@ -406,6 +605,10 @@ class _HackingWidgetState extends State<HackingWidget>
     final hackerRed = palette.red;
     final hackerCyan = palette.cyan;
     final darkBg = cs.surface;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final atmosphereAnimation = reduceMotion
+        ? const AlwaysStoppedAnimation<double>(0)
+        : _atmosphereController;
 
     return Focus(
       focusNode: _keyboardFocus,
@@ -419,11 +622,11 @@ class _HackingWidgetState extends State<HackingWidget>
             Positioned.fill(
               child: IgnorePointer(
                 child: AnimatedBuilder(
-                  animation: _atmosphereController,
+                  animation: atmosphereAnimation,
                   builder: (context, child) {
                     return CustomPaint(
                       painter: _ScanlinePainter(
-                        animation: _atmosphereController,
+                        animation: atmosphereAnimation,
                         accentColor: hackerCyan,
                         alertColor: hackerRed,
                         isAlert: _tracePercent >= 75,
@@ -439,15 +642,42 @@ class _HackingWidgetState extends State<HackingWidget>
             AnimatedBuilder(
               animation: _glitchController,
               builder: (context, child) {
+                if (reduceMotion) return child!;
                 final progress = _glitchController.value;
                 final envelope = sin(pi * progress);
-                return Transform.translate(
-                  offset: Offset(
-                    sin(progress * 45) * 3 * envelope,
-                    cos(progress * 37) * 2 * envelope,
+                final aberration = sin(progress * 60) * 0.025 * envelope;
+                final filteredChild = ColorFiltered(
+                  colorFilter: ColorFilter.matrix([
+                    1,
+                    0,
+                    0,
+                    0,
+                    aberration,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    -aberration,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                  ]),
+                  child: Transform.translate(
+                    offset: Offset(
+                      sin(progress * 45) * 3 * envelope,
+                      cos(progress * 37) * 2 * envelope,
+                    ),
+                    child: child,
                   ),
-                  child: child,
                 );
+                return filteredChild;
               },
               child: SafeArea(
                 child: LayoutBuilder(
@@ -481,6 +711,8 @@ class _HackingWidgetState extends State<HackingWidget>
                 isSuccess: false,
                 secret: _secret,
               ),
+
+            if (_isBanned) _buildCooldownOverlay(hackerRed, hackerCyan),
           ],
         ),
       ),
@@ -622,7 +854,17 @@ class _HackingWidgetState extends State<HackingWidget>
                     'State',
                     _isGameOver
                         ? (_showSuccessOverlay ? 'CRACKED' : 'CAUGHT')
-                        : 'ACTIVE'),
+                        : (_isBooting
+                            ? 'BOOTING'
+                            : (_isBanned ? 'BANNED' : 'ACTIVE'))),
+                _statusLine(green, 'Profile', _securityProfileShort),
+                _statusLine(green, 'Stage', _stageLabel),
+                _statusLine(
+                  green,
+                  'Ban',
+                  _isBanned ? _banCountdown : 'CLEAR',
+                  valueColor: _isBanned ? red : green,
+                ),
                 const SizedBox(height: 12),
                 Divider(color: green.withValues(alpha: 0.2), height: 1),
                 const SizedBox(height: 8),
@@ -681,39 +923,41 @@ class _HackingWidgetState extends State<HackingWidget>
   }
 
   Widget _buildNarrowLayout(Color green, Color red, Color cyan) {
-    return Column(
-      children: [
-        _buildHeader(green, cyan),
-        const SizedBox(height: 8),
-        _buildAttemptCounter(green, red),
-        const SizedBox(height: 12),
-        _buildTraceMeter(green, cyan, red),
-        const SizedBox(height: 12),
-        // Current input row
-        _buildCurrentRow(green),
-        const SizedBox(height: 12),
-        // Packet feed and attempt history stay side-by-side so neither is
-        // pushed out of view by the other.
-        SizedBox(
-          height: 120,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _buildTerminalLog(green, red, cyan),
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(
-                child: _buildAttemptHistory(green, red),
-              ),
-            ],
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          _buildHeader(green, cyan),
+          const SizedBox(height: 8),
+          _buildAttemptCounter(green, red),
+          const SizedBox(height: 12),
+          _buildTraceMeter(green, cyan, red),
+          const SizedBox(height: 12),
+          // Current input row
+          _buildCurrentRow(green),
+          const SizedBox(height: 12),
+          // Packet feed and attempt history stay side-by-side so neither is
+          // pushed out of view by the other.
+          SizedBox(
+            height: 120,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildTerminalLog(green, red, cyan),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: _buildAttemptHistory(green, red),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        // Number pad
-        _buildNumberPad(green, cyan, red),
-        const SizedBox(height: 16),
-      ],
+          const SizedBox(height: 12),
+          // Number pad
+          _buildNumberPad(green, cyan, red),
+          const SizedBox(height: 16),
+        ],
+      ),
     );
   }
 
@@ -763,6 +1007,26 @@ class _HackingWidgetState extends State<HackingWidget>
               fontSize: 10,
               color: cyan.withValues(alpha: 0.55),
               letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'PROFILE: $_securityProfile',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 10,
+              color: green.withValues(alpha: 0.55),
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _stageLabel,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 10,
+              color: const Color(0xFFFFFF66),
+              letterSpacing: 1.5,
             ),
           ),
           const SizedBox(height: 4),
@@ -832,7 +1096,9 @@ class _HackingWidgetState extends State<HackingWidget>
 
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: trace / 100),
-      duration: const Duration(milliseconds: 350),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 350),
       curve: Curves.easeOutCubic,
       builder: (context, value, child) {
         return Column(
@@ -1002,7 +1268,9 @@ class _HackingWidgetState extends State<HackingWidget>
     bool isActive = false,
   }) {
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
       width: size,
       height: size,
@@ -1024,19 +1292,35 @@ class _HackingWidgetState extends State<HackingWidget>
             : null,
       ),
       child: digit != null
-          ? Text(
-              '$digit',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: size * 0.5,
-                fontWeight: FontWeight.bold,
-                color: color,
-                shadows: glow
-                    ? [
-                        Shadow(
-                            color: color.withValues(alpha: 0.6), blurRadius: 8)
-                      ]
-                    : null,
+          ? AnimatedSwitcher(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
+              transitionBuilder: (child, animation) {
+                return SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, -0.35),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: FadeTransition(opacity: animation, child: child),
+                );
+              },
+              child: Text(
+                '$digit',
+                key: ValueKey('digit-$digit'),
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: size * 0.5,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                  shadows: glow
+                      ? [
+                          Shadow(
+                              color: color.withValues(alpha: 0.6),
+                              blurRadius: 8)
+                        ]
+                      : null,
+                ),
               ),
             )
           : (isActive
@@ -1044,7 +1328,9 @@ class _HackingWidgetState extends State<HackingWidget>
                   animation: _cursorController,
                   builder: (context, child) {
                     return Opacity(
-                      opacity: _cursorController.value > 0.35 ? 0.9 : 0.18,
+                      opacity: MediaQuery.disableAnimationsOf(context)
+                          ? 0.9
+                          : (_cursorController.value > 0.35 ? 0.9 : 0.18),
                       child: child,
                     );
                   },
@@ -1106,7 +1392,8 @@ class _HackingWidgetState extends State<HackingWidget>
           const SizedBox(height: 12),
           // Submit button
           GestureDetector(
-            onTap: _canSubmit ? _submitGuess : null,
+            onTap:
+                _canSubmit && !_isBooting && !_isBanned ? _submitGuess : null,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               width: double.infinity,
@@ -1133,7 +1420,9 @@ class _HackingWidgetState extends State<HackingWidget>
               ),
               alignment: Alignment.center,
               child: Text(
-                _isSubmitting ? 'PROCESSING...' : 'SUBMIT HACK',
+                _isSubmitting
+                    ? 'PROCESSING...'
+                    : (_isBooting ? 'BOOTING...' : 'SUBMIT HACK'),
                 style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 16,
@@ -1181,7 +1470,7 @@ class _HackingWidgetState extends State<HackingWidget>
     bool isWide = false,
   }) {
     return GestureDetector(
-      onTap: _isGameOver ? null : onTap,
+      onTap: _isGameOver || _isBooting || _isBanned ? null : onTap,
       child: Container(
         width: isWide ? 84 : 56,
         height: 48,
@@ -1208,6 +1497,54 @@ class _HackingWidgetState extends State<HackingWidget>
     );
   }
 
+  Widget _buildCooldownOverlay(Color red, Color cyan) {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.88),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_clock_rounded, size: 64, color: red),
+              const SizedBox(height: 16),
+              Text(
+                'PORT ACCESS BANNED',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: red,
+                  letterSpacing: 3,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'RETRY AVAILABLE IN',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: cyan.withValues(alpha: 0.7),
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _banCountdown,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: cyan,
+                  shadows: [Shadow(color: cyan, blurRadius: 12)],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildResultOverlay(
     Color accent,
     Color cyan, {
@@ -1217,7 +1554,9 @@ class _HackingWidgetState extends State<HackingWidget>
     return Positioned.fill(
       child: TweenAnimationBuilder<double>(
         tween: Tween<double>(begin: 0, end: 1),
-        duration: const Duration(milliseconds: 420),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 420),
         curve: Curves.easeOutCubic,
         builder: (context, value, child) {
           return Opacity(
@@ -1230,57 +1569,77 @@ class _HackingWidgetState extends State<HackingWidget>
         },
         child: Container(
           color: Colors.black.withValues(alpha: 0.85),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (isSuccess)
-                Icon(Icons.check_circle_outline, size: 64, color: accent)
-              else
-                Icon(Icons.error_outline, size: 64, color: accent),
-              const SizedBox(height: 16),
-              Text(
-                isSuccess ? 'ACCESS GRANTED' : 'INTRUSION DETECTED',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                  color: accent,
-                  letterSpacing: 4,
-                  shadows: [
-                    Shadow(
-                        color: accent.withValues(alpha: 0.5), blurRadius: 16),
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (isSuccess)
+                      Icon(Icons.check_circle_outline, size: 64, color: accent)
+                    else
+                      Icon(Icons.error_outline, size: 64, color: accent),
+                    const SizedBox(height: 16),
+                    Text(
+                      isSuccess ? 'ACCESS GRANTED' : 'INTRUSION DETECTED',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: accent,
+                        letterSpacing: 4,
+                        shadows: [
+                          Shadow(
+                              color: accent.withValues(alpha: 0.5),
+                              blurRadius: 16),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Code: ${secret[0]}${secret[1]}${secret[2]}',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 14,
+                        color: accent.withValues(alpha: 0.7),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (isSuccess)
+                      _buildSuccessRewardOptions(accent)
+                    else
+                      _buildFailurePenalty(),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                'Code: ${secret[0]}${secret[1]}${secret[2]}',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 14,
-                  color: accent.withValues(alpha: 0.7),
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (isSuccess)
-                _buildSuccessRewardOptions(accent)
-              else
-                _buildFailurePenalty(),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  Player _withHackRecord(Player player, String reward) {
+    return player.copyWith(
+      lastHackProfile: _securityProfile,
+      lastHackReward: reward,
+    );
+  }
+
   Widget _buildSuccessRewardOptions(Color accent) {
-    final creditReward = _creditReward ?? 0;
+    final creditReward = (_creditReward ?? 0) + _recordBonus;
+    final aggressiveReward = _aggressiveReward + _recordBonus;
     final cargoReward = _cargoReward ?? CommodityRegistry.names.first;
+    final cargoAmount = max(
+      0,
+      min(10, widget.player.maxCargo - widget.player.cargoUsed),
+    );
 
     return Column(
       children: [
         Text(
-          'SELECT REWARD:',
+          'SELECT EXTRACTION:',
           style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 11,
@@ -1289,34 +1648,99 @@ class _HackingWidgetState extends State<HackingWidget>
           ),
         ),
         const SizedBox(height: 12),
+        if (_recordBonus > 0) ...[
+          Text(
+            'BREACH RECORD BONUS  +$_recordBonus cr',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 10,
+              color: const Color(0xFFFFFF66),
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         _rewardButton(
           icon: Icons.monetization_on_rounded,
-          label: 'STEAL CREDITS',
+          label: 'CONSERVATIVE CREDITS',
           subtitle: '+$creditReward cr',
           color: accent,
           onTap: () {
             final updated = widget.player.copyWith(
               credits: widget.player.credits + creditReward,
             );
-            widget.onSuccess(updated);
+            widget.onSuccess(_withHackRecord(
+              updated,
+              'CONSERVATIVE CREDITS +$creditReward CR',
+            ));
+          },
+        ),
+        const SizedBox(height: 8),
+        _rewardButton(
+          icon: Icons.bolt_rounded,
+          label: 'AGGRESSIVE CREDITS',
+          subtitle: '+$aggressiveReward cr  •  TRACE $_tracePercent%',
+          color: _tracePercent >= 50
+              ? const Color(0xFFFFC857)
+              : const Color(0xFF00FFFF),
+          onTap: () {
+            final updated = widget.player.copyWith(
+              credits: widget.player.credits + aggressiveReward,
+            );
+            widget.onSuccess(_withHackRecord(
+              updated,
+              'AGGRESSIVE CREDITS +$aggressiveReward CR',
+            ));
           },
         ),
         const SizedBox(height: 8),
         _rewardButton(
           icon: Icons.diamond_rounded,
           label: 'STEAL RESOURCES',
-          subtitle: '+5 $cargoReward cargo',
-          color: accent,
-          onTap: () {
-            final newCargo = Map<String, int>.from(widget.player.cargo);
-            newCargo[cargoReward] = (newCargo[cargoReward] ?? 0) + 5;
-            final updated = widget.player.copyWith(
-              cargo: newCargo,
-              cargoUsed: widget.player.cargoUsed + 5,
-            );
-            widget.onSuccess(updated);
-          },
+          subtitle: cargoAmount > 0
+              ? '+$cargoAmount $cargoReward cargo'
+              : 'CARGO HOLD FULL',
+          color: cargoAmount > 0 ? accent : Colors.grey,
+          onTap: cargoAmount > 0
+              ? () {
+                  final newCargo = Map<String, int>.from(widget.player.cargo);
+                  newCargo[cargoReward] =
+                      (newCargo[cargoReward] ?? 0) + cargoAmount;
+                  final updated = widget.player.copyWith(
+                    cargo: newCargo,
+                    cargoUsed: widget.player.cargoUsed + cargoAmount,
+                  );
+                  widget.onSuccess(_withHackRecord(
+                    updated,
+                    'RESOURCE TRANSFER +$cargoAmount $cargoReward CARGO',
+                  ));
+                }
+              : null,
         ),
+        if (widget.port != null && widget.onPortModified != null) ...[
+          const SizedBox(height: 8),
+          _rewardButton(
+            icon: Icons.electric_bolt_rounded,
+            label: 'SABOTAGE PORT',
+            subtitle: '30 MIN DEFENSE REDUCTION',
+            color: const Color(0xFFFF8A00),
+            onTap: () {
+              final until = DateTime.now()
+                  .add(const Duration(minutes: 30))
+                  .millisecondsSinceEpoch;
+              widget.onPortModified!(
+                widget.port!.copyWith(securityCompromisedUntil: until),
+              );
+              final updated = widget.player.copyWith(
+                researchPoints: widget.player.researchPoints + 15,
+              );
+              widget.onSuccess(_withHackRecord(
+                updated,
+                'SABOTAGE +15 RESEARCH',
+              ));
+            },
+          ),
+        ],
       ],
     );
   }
@@ -1326,7 +1750,7 @@ class _HackingWidgetState extends State<HackingWidget>
     required String label,
     required String subtitle,
     required Color color,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -1345,27 +1769,29 @@ class _HackingWidgetState extends State<HackingWidget>
           children: [
             Icon(icon, color: color, size: 24),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: color,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
                   ),
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: color.withValues(alpha: 0.6),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: color.withValues(alpha: 0.6),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
@@ -1575,7 +2001,12 @@ class _ScanlinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ScanlinePainter oldDelegate) => true;
+  bool shouldRepaint(_ScanlinePainter oldDelegate) {
+    return oldDelegate.animation.value != animation.value ||
+        oldDelegate.accentColor != accentColor ||
+        oldDelegate.alertColor != alertColor ||
+        oldDelegate.isAlert != isAlert;
+  }
 }
 
 class _HackPalette {

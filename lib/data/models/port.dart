@@ -66,6 +66,10 @@ class Port {
   /// Mode of the current attack: "capture" or "destroy".
   final String? attackMode;
 
+  /// Timestamp until which a successful sabotage has weakened this port's
+  /// combat defenses. Null means no active sabotage.
+  final int? securityCompromisedUntil;
+
   const Port({
     required this.name,
     required this.portClass,
@@ -91,6 +95,7 @@ class Port {
     this.isDestroyed = false,
     this.attackerId,
     this.attackMode,
+    this.securityCompromisedUntil,
   });
 
   bool buys(String commodity) => buyPrices.containsKey(commodity);
@@ -99,6 +104,10 @@ class Port {
   bool get isOwned => owner != null && owner!.isNotEmpty;
 
   bool get isHardwareEmporium => portClass == PortClass.hardwareEmporium;
+
+  bool get isSecurityCompromised =>
+      securityCompromisedUntil != null &&
+      securityCompromisedUntil! > DateTime.now().millisecondsSinceEpoch;
 
   // ── Port Combat Derived Getters ───────────────────────────────
 
@@ -275,6 +284,8 @@ class Port {
     bool? isDestroyed,
     String? attackerId,
     String? attackMode,
+    int? securityCompromisedUntil,
+    bool clearSecurityCompromised = false,
   }) {
     return Port(
       name: name ?? this.name,
@@ -304,6 +315,9 @@ class Port {
       isDestroyed: isDestroyed ?? this.isDestroyed,
       attackerId: attackerId ?? this.attackerId,
       attackMode: attackMode ?? this.attackMode,
+      securityCompromisedUntil: clearSecurityCompromised
+          ? null
+          : (securityCompromisedUntil ?? this.securityCompromisedUntil),
     );
   }
 
@@ -333,6 +347,7 @@ class Port {
       'isDestroyed': isDestroyed,
       'attackerId': attackerId,
       'attackMode': attackMode,
+      'securityCompromisedUntil': securityCompromisedUntil,
     };
   }
 
@@ -374,6 +389,8 @@ class Port {
       isDestroyed: (json['isDestroyed'] as bool?) ?? false,
       attackerId: json['attackerId'] as String?,
       attackMode: json['attackMode'] as String?,
+      securityCompromisedUntil:
+          (json['securityCompromisedUntil'] as num?)?.toInt(),
     );
   }
 }

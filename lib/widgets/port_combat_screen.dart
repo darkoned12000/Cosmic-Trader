@@ -71,6 +71,16 @@ class _PortCombatScreenState extends State<PortCombatScreen>
     _port = widget.port;
     _combatLog = [];
 
+    if (_port.isSecurityCompromised) {
+      final fullShields = PortCombatService.initPortShields(_port.defenseLevel);
+      final currentShields =
+          _port.currentShields > 0 ? _port.currentShields : fullShields;
+      _port = _port.copyWith(
+        currentShields: math.min(currentShields, (fullShields * 0.5).round()),
+      );
+      _combatLog.add('SABOTAGE ACTIVE — PORT DEFENSES REDUCED 50%');
+    }
+
     _atkAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),

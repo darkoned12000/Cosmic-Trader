@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
@@ -20,8 +22,11 @@ class PortTradeView extends StatelessWidget {
   final VoidCallback onStealResources;
   final VoidCallback onBuyPort;
   final VoidCallback onAttackPort;
+  final VoidCallback onOpenHackCodex;
   final int hackFailCount;
   final int maxHackAttempts;
+  final int? hackBannedUntilEpoch;
+  final VoidCallback? onBanExpired;
 
   const PortTradeView({
     super.key,
@@ -33,8 +38,11 @@ class PortTradeView extends StatelessWidget {
     required this.onStealResources,
     required this.onBuyPort,
     required this.onAttackPort,
+    required this.onOpenHackCodex,
     required this.hackFailCount,
     required this.maxHackAttempts,
+    this.hackBannedUntilEpoch,
+    this.onBanExpired,
   });
 
   static List<String> get _commodities => CommodityRegistry.names;
@@ -118,11 +126,11 @@ class PortTradeView extends StatelessWidget {
       lastRegenTime: nowMs,
     ));
 
-    onPlayerUpdate(player.copyWith(
+    onPlayerUpdate(_withTradeReputation(player.copyWith(
       cargo: newCargo,
       cargoUsed: player.cargoUsed + amount,
       credits: player.credits - transactionValue - ownerFee,
-    ));
+    )));
   }
 
   void _sell(String commodity) {
@@ -154,11 +162,17 @@ class PortTradeView extends StatelessWidget {
       lastRegenTime: nowMs,
     ));
 
-    onPlayerUpdate(player.copyWith(
+    onPlayerUpdate(_withTradeReputation(player.copyWith(
       cargo: newCargo,
       cargoUsed: player.cargoUsed - amount,
       credits: player.credits + transactionValue - ownerFee,
-    ));
+    )));
+  }
+
+  Player _withTradeReputation(Player updated) {
+    final ownerFaction = port.ownerFaction;
+    if (ownerFaction == null) return updated;
+    return updated.withFactionStandingChange(ownerFaction, 1);
   }
 
   Color _factionColor(FactionClass fc) {
@@ -274,6 +288,15 @@ class PortTradeView extends StatelessWidget {
                         bold: true,
                       ),
                     ],
+                    if (port.isSecurityCompromised) ...[
+                      const SizedBox(width: 6),
+                      _pill(
+                        'sabotaged',
+                        Colors.orange.withValues(alpha: 0.15),
+                        Colors.orange,
+                        bold: true,
+                      ),
+                    ],
                   ],
                 ),
                 if (port.owner != null)
@@ -288,6 +311,15 @@ class PortTradeView extends StatelessWidget {
                     ),
                   ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: _headerButton(
+              icon: Icons.menu_book_rounded,
+              label: 'Codex',
+              color: cs.primary,
+              onPressed: onOpenHackCodex,
             ),
           ),
           if (port.portClass != PortClass.federal &&
@@ -690,8 +722,19 @@ class PortTradeView extends StatelessWidget {
             iconColor: isBanned ? Colors.grey : cs.error,
             title: isBanned ? 'Port banned' : 'Hack port',
             trailing: isBanned
-                ? 'blocked 24h'
-                : '${maxHackAttempts - hackFailCount}/$maxHackAttempts attempts',
+                ? _LiveBanCountdown(
+                    banUntilEpoch: hackBannedUntilEpoch ??
+                        player.portHackBannedUntil[port.name],
+                    onExpired: onBanExpired,
+                    color: cs.error.withValues(alpha: 0.6),
+                  )
+                : Text(
+                    '${maxHackAttempts - hackFailCount}/$maxHackAttempts attempts',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: cs.error.withValues(alpha: 0.6),
+                    ),
+                  ),
             trailingColor: cs.error.withValues(alpha: 0.6),
             onTap: isBanned ? null : onHackPort,
             showDivider: true,
@@ -700,7 +743,10 @@ class PortTradeView extends StatelessWidget {
             icon: Icons.flash_on_rounded,
             iconColor: Colors.orange,
             title: 'Steal resources',
-            trailing: 'jam security freq',
+            trailing: const Text(
+              'jam security freq',
+              style: TextStyle(fontSize: 11),
+            ),
             trailingColor: Colors.orange.withValues(alpha: 0.6),
             onTap: onStealResources,
             showDivider: ownsThisPort,
@@ -735,7 +781,7 @@ class PortTradeView extends StatelessWidget {
     required IconData icon,
     required Color iconColor,
     required String title,
-    required String? trailing,
+    required Widget? trailing,
     required Color? trailingColor,
     required VoidCallback? onTap,
     required bool showDivider,
@@ -765,13 +811,7 @@ class PortTradeView extends StatelessWidget {
                 if (trailing != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
-                    child: Text(
-                      trailing,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: trailingColor ?? Colors.grey,
-                      ),
-                    ),
+                    child: trailing,
                   ),
                 Icon(
                   Icons.chevron_right_rounded,
@@ -788,6 +828,79 @@ class PortTradeView extends StatelessWidget {
               thickness: 1,
               color: Colors.grey.withValues(alpha: 0.15)),
       ],
+    );
+  }
+}
+
+class _LiveBanCountdown extends StatefulWidget {
+  const _LiveBanCountdown({
+    required this.banUntilEpoch,
+    required this.color,
+    this.onExpired,
+  });
+
+  final int? banUntilEpoch;
+  final Color color;
+  final VoidCallback? onExpired;
+
+  @override
+  State<_LiveBanCountdown> createState() => _LiveBanCountdownState();
+}
+
+class _LiveBanCountdownState extends State<_LiveBanCountdown> {
+  Timer? _timer;
+  bool _didNotify = false;
+
+  Duration get _remaining {
+    final until = widget.banUntilEpoch;
+    if (until == null) return Duration.zero;
+    final value = until - DateTime.now().millisecondsSinceEpoch;
+    return value > 0 ? Duration(milliseconds: value) : Duration.zero;
+  }
+
+  String get _formatted {
+    final remaining = _remaining;
+    final hours = remaining.inHours.toString().padLeft(2, '0');
+    final minutes = (remaining.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (remaining.inSeconds % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_remaining == Duration.zero) {
+        _timer?.cancel();
+        _timer = null;
+        if (!_didNotify) {
+          _didNotify = true;
+          widget.onExpired?.call();
+        }
+        setState(() {});
+      } else {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _formatted,
+      style: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+        color: widget.color,
+      ),
     );
   }
 }
