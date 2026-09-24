@@ -149,7 +149,6 @@ lib/
                                      optional zebra striping)
     hud_strip.dart                -- persistent top HUD (sector name/ID, credits, turns,
                                      hull/shield bars), faction ambiance accent, responsive
-    warp_transition.dart          -- full-screen hyperspace flash + star-streak warp overlay
   services/
     game_tick_service.dart        -- background timer (30s), batch NPC processing, turn replenishment,
                                      proximity-filtered event logging, NPC attack detection
@@ -233,7 +232,6 @@ lib/
 | `lib/widgets/system_resources_widget.dart` | Dev overlay with FPS, CPU, memory monitoring |
 | `lib/widgets/dev_profiler.dart` | Lightweight named-span profiling tool |
 | `lib/widgets/hud_strip.dart` | Persistent top HUD (sector name/ID, credits, turns, hull/shield bars, faction ambiance accent; responsive) |
-| `lib/widgets/warp_transition.dart` | Full-screen hyperspace flash + star-streak warp overlay (~460ms) |
 | `lib/widgets/sector_view_widgets/action_log_provider.dart` | ChangeNotifier log singleton |
 | `lib/widgets/sector_view_widgets/action_log_panel.dart` | Color-coded log display |
 | `lib/widgets/sector_view_widgets/tactical_map.dart` | Sector tactical overview |
@@ -476,8 +474,8 @@ See README.md for full roadmap. Key items remaining:
 
 ### Recently completed / partially implemented
 
-- **A3 look & feel wave 1** — persistent HUD strip (sector name/credits/turns/hull/shields, faction ambiance accent) on both layouts; warp transition (star-rush streak overlay, no flash) on every sector change; single `faction_colors.dart` palette adopted across all 7 color-coded surfaces; 7 procedural SFX cues bundled + wired (buy/sell/hack/laser/warp/lottery/land); zebra rows option in `DataTableShell` (used by the port trade table); bundled Audiowide sci-fi display typeface selectable in the font picker. Remaining from the A3 spec: sortable Port Report columns, hover cursors/keyboard shortcuts, forced header typeface
-- **A3 playtest fixes** — SFX/music were silent because `AssetSource` paths were double-prefixed (`assets/` + `assets/…` → `assets/assets/…`); `playSfx`/`playMusic` now strip the prefix before handing to `AudioCache` and log failures instead of swallowing them (regression-guarded in `test/sfx_assets_test.dart`); font dropdown keyed by family names so a scanned bundled typeface no longer trips the "exactly one item" assertion (`test/font_settings_widget_test.dart`); warp overlay redesigned from flash/burst to a star-rush tunnel
+- **A3 look & feel wave 1** — persistent HUD strip (sector name/credits/turns/hull/shields, faction ambiance accent) on both layouts; single `faction_colors.dart` palette adopted across all 7 color-coded surfaces; 7 procedural SFX cues bundled + wired (buy/sell/hack/laser/warp/lottery/land); zebra rows option in `DataTableShell` (used by the port trade table); bundled Audiowide sci-fi display typeface selectable in the font picker. Remaining from the A3 spec: sortable Port Report columns, hover cursors/keyboard shortcuts, forced header typeface
+- **A3 playtest fixes** — SFX/music were silent because `AssetSource` paths were double-prefixed (`assets/` + `assets/…` → `assets/assets/…`); `playSfx`/`playMusic` now strip the prefix before handing to `AudioCache` and log failures instead of swallowing them (regression-guarded in `test/sfx_assets_test.dart`); font dropdown keyed by family names so a scanned bundled typeface no longer trips the "exactly one item" assertion (`test/font_settings_widget_test.dart`); warp visual transition removed (jumps are instant, warp SFX cue kept, `lib/widgets/warp_transition.dart` + its test deleted); the Sector panel became "Ship Inventory" (drones/cargo only — hull/shields moved to the HUD strip), and the FONTS settings gained a help dialog for bundling custom fonts
 - **Planet system (phase 1)** — enhanced `Planet` model (10 types, atmospheres, colonies, Citadel levels, defenses, image pools), `PlanetScreen` with scan/claim/transfers/level-up, homeworld assignment in the generator, planet markers on maps; automation/invasion pending
 - **Hack Port phases 1-3** — packet-sniffer terminal, keyboard entry, trace meter, port security profiles, two-stage hardened ports, extraction choices, 10-cargo resource reward, 30-minute sabotage, persistent hack history/codex, per-port 24-hour bans, and persisted replay bonuses
 - **Reputation integration** — successful port hacks, sabotage, NPC combat/scans/trades, planet scans/claims, port combat, and faction-owned port trades modify persisted faction standing/notoriety; standing is displayed in the Hack Codex and Ship view
