@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
@@ -17,13 +18,6 @@ const _factionIcons = {
   FactionClass.duran: Icons.shield_rounded,
   FactionClass.vinari: Icons.science_rounded,
   FactionClass.pirate: Icons.local_fire_department_rounded,
-};
-
-const _factionColors = {
-  FactionClass.trader: Colors.blue,
-  FactionClass.duran: Colors.red,
-  FactionClass.vinari: Colors.teal,
-  FactionClass.pirate: Colors.black,
 };
 
 class SectorInteractionPanel extends StatefulWidget {
@@ -93,7 +87,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     // Live NPC ships in this sector
     for (final npc in widget.npcs) {
       if (npc.isDestroyed) continue;
-      final color = _factionColors[npc.faction] ?? Colors.grey;
+      final color = factionColor(npc.faction);
       entries.add(_SectorEntry(
         id: 'npc_${npc.id}',
         type: _EntryType.npc,

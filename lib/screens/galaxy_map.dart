@@ -1,8 +1,10 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/star_field.dart';
@@ -641,10 +643,10 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
                         cs.onSurface.withValues(alpha: 0.4), 'Unexplored'),
                     _legendItem(Colors.greenAccent, '◆ Port'),
                     _legendItem(Colors.brown, '● Planet'),
-                    _legendItem(Colors.lightBlueAccent, '● Trader'),
-                    _legendItem(Colors.redAccent, '● Duran'),
-                    _legendItem(Colors.tealAccent, '● Vinari'),
-                    _legendItem(Colors.orange, '● Pirate'),
+                    _legendItem(factionColor(FactionClass.trader), '● Trader'),
+                    _legendItem(factionColor(FactionClass.duran), '● Duran'),
+                    _legendItem(factionColor(FactionClass.vinari), '● Vinari'),
+                    _legendItem(factionColor(FactionClass.pirate), '● Pirate'),
                   ],
                 ),
               ),

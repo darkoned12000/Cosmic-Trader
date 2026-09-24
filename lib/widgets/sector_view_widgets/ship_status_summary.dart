@@ -136,23 +136,8 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
 
   @override
   Widget build(BuildContext context) {
-    final hullPercent =
-        (widget.player.hull / widget.player.maxHull * 100).round();
-    final shieldPercent =
-        (widget.player.shields / widget.player.maxShields * 100).round();
     final cargoPercent =
         (widget.player.cargoUsed / widget.player.maxCargo * 100).round();
-
-    Color hullColor;
-    if (hullPercent > 75) {
-      hullColor = const Color(0xFF00FF41);
-    } else if (hullPercent > 50) {
-      hullColor = Colors.blue.shade300;
-    } else if (hullPercent > 25) {
-      hullColor = Colors.amber.shade300;
-    } else {
-      hullColor = const Color(0xFFFF0040);
-    }
 
     return Card(
       elevation: 0,
@@ -179,16 +164,20 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
             ),
             child: Row(
               children: [
-                Icon(Icons.rocket_launch_rounded,
+                Icon(Icons.inventory_2_rounded,
                     size: 18, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
-                Text(
-                  'SHIP STATUS',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.primary,
-                        letterSpacing: 1,
-                      ),
+                Expanded(
+                  child: Text(
+                    'SHIP INVENTORY',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.primary,
+                          letterSpacing: 1,
+                        ),
+                  ),
                 ),
               ],
             ),
@@ -197,26 +186,6 @@ class _ShipStatusSummaryState extends State<ShipStatusSummary> {
             padding: EdgeInsets.all(UiScale.spacing(12)),
             child: Column(
               children: [
-                // Hull
-                StatBar(
-                  label: 'HULL',
-                  value: '${widget.player.hull}/${widget.player.maxHull}',
-                  percent: hullPercent / 100,
-                  color: hullColor,
-                  icon: Icons.verified_user_rounded,
-                ),
-                SizedBox(height: UiScale.spacing(10)),
-
-                // Shields
-                StatBar(
-                  label: 'SHIELDS',
-                  value: '${widget.player.shields}/${widget.player.maxShields}',
-                  percent: shieldPercent / 100,
-                  color: Colors.blue.shade300,
-                  icon: Icons.shield_rounded,
-                ),
-                SizedBox(height: UiScale.spacing(10)),
-
                 // Drones
                 StatBar(
                   label: 'DRONES',

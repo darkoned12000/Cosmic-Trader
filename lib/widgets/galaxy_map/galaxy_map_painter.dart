@@ -1,6 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 
@@ -251,17 +251,7 @@ class GalaxyMapPainter extends CustomPainter {
         ];
         for (final npc in npcsHere) {
           if (dotIndex >= dotOffsets.length) break;
-          Color npcColor;
-          switch (npc.faction) {
-            case FactionClass.trader:
-              npcColor = Colors.lightBlueAccent;
-            case FactionClass.duran:
-              npcColor = Colors.redAccent;
-            case FactionClass.vinari:
-              npcColor = Colors.tealAccent;
-            case FactionClass.pirate:
-              npcColor = Colors.orange;
-          }
+          final npcColor = factionColor(npc.faction);
           final dotPos = pos + dotOffsets[dotIndex];
           canvas.drawCircle(
               dotPos,

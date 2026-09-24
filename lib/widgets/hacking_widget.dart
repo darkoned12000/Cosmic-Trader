@@ -6,6 +6,7 @@ import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 
 class HackingWidget extends StatefulWidget {
   final Player player;
@@ -510,6 +511,7 @@ class _HackingWidgetState extends State<HackingWidget>
       _isSubmitting = true;
       _addTerminalMessage('Injecting authentication packet...');
     });
+    AudioService.instance.playSfx('assets/sfx/hack.ogg');
 
     final injectDuration = 400 + (_tracePercent * 3).clamp(0, 300).round();
     await _typewriterMessage(

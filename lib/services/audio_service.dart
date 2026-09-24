@@ -109,18 +109,28 @@ class AudioService {
     }
   }
 
+  /// Builds the playback [Source] for [filePath].
+  ///
+  /// `assets/...` paths map to an [AssetSource]. [AudioCache] prepends its own
+  /// `assets/` prefix when loading, so the bundle key is passed *without* the
+  /// leading `assets/` — passing the full path would double-prefix it to
+  /// `assets/assets/...`, fail to load, and (previously) be swallowed into
+  /// silence.
+  Source _sourceFor(String filePath) {
+    if (filePath.startsWith('assets/')) {
+      return AssetSource(filePath.substring('assets/'.length));
+    }
+    return DeviceFileSource(filePath);
+  }
+
   Future<void> playMusic(String filePath) async {
     try {
-      Source source;
-      if (filePath.startsWith('assets/')) {
-        source = AssetSource(filePath);
-      } else {
-        source = DeviceFileSource(filePath);
-      }
       await _musicPlayer.stop();
-      await _musicPlayer.play(source);
+      await _musicPlayer.play(_sourceFor(filePath));
       currentTrack.value = _fileName(filePath);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[audio] playMusic failed ($filePath): $e');
+    }
   }
 
   Future<void> playTrack(int index) async {
@@ -199,15 +209,11 @@ class AudioService {
 
   Future<void> playSfx(String filePath) async {
     try {
-      Source source;
-      if (filePath.startsWith('assets/')) {
-        source = AssetSource(filePath);
-      } else {
-        source = DeviceFileSource(filePath);
-      }
       await _sfxPlayer.stop();
-      await _sfxPlayer.play(source);
-    } catch (_) {}
+      await _sfxPlayer.play(_sourceFor(filePath));
+    } catch (e) {
+      debugPrint('[audio] playSfx failed ($filePath): $e');
+    }
   }
 
   String _fileName(String path) {

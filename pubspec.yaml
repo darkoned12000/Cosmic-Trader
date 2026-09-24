@@ -84,6 +84,7 @@ flutter:
     - assets/images/factions/
     - assets/images/planets/
     - assets/music/
+    - assets/sfx/
     - assets/fonts/
   #   - images/a_dot_ham.jpeg
 
@@ -112,3 +113,8 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+  fonts:
+    - family: Audiowide
+      fonts:
+        - asset: assets/fonts/Audiowide.ttf

@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/core/faction_colors.dart' as fcol;
 import 'package:cosmic_trader/widgets/shared/hud_pill.dart';
 
 String _formatCredits(int credits) {
@@ -238,7 +239,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
             Icon(
               Icons.auto_awesome_rounded,
               size: 48,
-              color: _getFactionColor(leader.faction),
+              color: fcol.factionColor(leader.faction),
             ),
             const SizedBox(height: 12),
             Text(
@@ -262,14 +263,15 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 vertical: 6,
               ),
               decoration: BoxDecoration(
-                color: _getFactionColor(leader.faction).withValues(alpha: 0.15),
+                color:
+                    fcol.factionColor(leader.faction).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 'Dominant: ${_getFactionName(leader.faction)}',
                 style: theme.textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: _getFactionColor(leader.faction),
+                  color: fcol.factionColor(leader.faction),
                 ),
               ),
             ),
@@ -455,7 +457,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 return _BarEntry(
                   label: _getFactionName(s.faction),
                   value: total.toDouble(),
-                  color: _getFactionColor(s.faction),
+                  color: fcol.factionColor(s.faction),
                   formattedValue: '${_formatCredits(total)} cr',
                 );
               }).toList(),
@@ -491,7 +493,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 return _BarEntry(
                   label: _getFactionName(s.faction),
                   value: s.portsControlled.toDouble(),
-                  color: _getFactionColor(s.faction),
+                  color: fcol.factionColor(s.faction),
                   formattedValue: '${s.portsControlled} ports',
                 );
               }).toList(),
@@ -528,7 +530,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 return _BarEntry(
                   label: _getFactionName(s.faction),
                   value: totalCombat.toDouble(),
-                  color: _getFactionColor(s.faction),
+                  color: fcol.factionColor(s.faction),
                   formattedValue: '${s.kills}K / ${s.deaths}D',
                 );
               }).toList(),
@@ -582,7 +584,7 @@ class _RankingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final factionColor = _getFactionColor(stats.faction);
+    final factionColor = fcol.factionColor(stats.faction);
     final factionName = _getFactionName(stats.faction);
     final scorePct = maxScore > 0 ? stats.powerScore / maxScore : 0.0;
 
@@ -818,10 +820,10 @@ class _StackedBarChart extends StatelessWidget {
     return SizedBox(
       height: 180,
       child: Column(
-        children: factions.map((fc) {
-          final stats = getStats(fc);
-          final total = totals[fc] ?? 0;
-          final factionColor = _getFactionColor(fc);
+        children: factions.map((f) {
+          final stats = getStats(f);
+          final total = totals[f] ?? 0;
+          final factionColor = fcol.factionColor(f);
 
           return Padding(
             padding: const EdgeInsets.only(bottom: 14),
@@ -833,7 +835,7 @@ class _StackedBarChart extends StatelessWidget {
                     SizedBox(
                       width: 80,
                       child: Text(
-                        _getFactionName(fc),
+                        _getFactionName(f),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
@@ -893,19 +895,6 @@ class _StackedBarChart extends StatelessWidget {
         }).toList(),
       ),
     );
-  }
-}
-
-Color _getFactionColor(FactionClass fc) {
-  switch (fc) {
-    case FactionClass.duran:
-      return const Color(0xFFE53935);
-    case FactionClass.vinari:
-      return const Color(0xFF7C4DFF);
-    case FactionClass.trader:
-      return const Color(0xFF4CAF50);
-    case FactionClass.pirate:
-      return const Color(0xFF616161);
   }
 }
 
@@ -978,7 +967,7 @@ class _TopPilotCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final factionColor = _getFactionColor(entity.faction);
+    final factionColor = fcol.factionColor(entity.faction);
     final scorePct = maxScore > 0 ? entity.powerScore / maxScore : 0.0;
 
     return Container(

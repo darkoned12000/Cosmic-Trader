@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart' hide Hero;
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -37,19 +38,6 @@ class _KnowledgeBaseScreenState extends State<KnowledgeBaseScreen> {
     }
   }
 
-  Color _factionColor(FactionClass fc) {
-    switch (fc) {
-      case FactionClass.duran:
-        return Colors.redAccent;
-      case FactionClass.vinari:
-        return Colors.purpleAccent;
-      case FactionClass.trader:
-        return Colors.amber;
-      case FactionClass.pirate:
-        return Colors.cyanAccent;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -69,7 +57,7 @@ class _KnowledgeBaseScreenState extends State<KnowledgeBaseScreen> {
         itemBuilder: (context, index) {
           final faction = factions[index];
           final isExpanded = _expandedIds.contains(index);
-          final color = _factionColor(faction.factionClass);
+          final color = factionColor(faction.factionClass);
 
           return Card(
             elevation: 0,

@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
-import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/screens/port_management_screen.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/widgets/lottery_widget.dart';
 import 'package:cosmic_trader/widgets/hold_button.dart';
 import 'package:cosmic_trader/widgets/shared/data_table_shell.dart';
@@ -107,6 +108,7 @@ class PortTradeView extends StatelessWidget {
     final price = port.getEffectiveSellPrice(commodity).toInt();
     if (price <= 0) return;
     if (_remainingSupply(commodity) <= 0) return;
+    AudioService.instance.playSfx('assets/sfx/buy.ogg');
 
     final amount = 1;
     final newCargo = Map<String, int>.from(player.cargo);
@@ -141,6 +143,7 @@ class PortTradeView extends StatelessWidget {
     final currentQty = player.cargo[commodity] ?? 0;
     if (currentQty <= 0) return;
     if (_remainingDemand(commodity) <= 0) return;
+    AudioService.instance.playSfx('assets/sfx/sell.ogg');
 
     final amount = 1;
     final newCargo = Map<String, int>.from(player.cargo);
@@ -175,19 +178,6 @@ class PortTradeView extends StatelessWidget {
     final ownerFaction = port.ownerFaction;
     if (ownerFaction == null) return updated;
     return updated.withFactionStandingChange(ownerFaction, 1);
-  }
-
-  Color _factionColor(FactionClass fc) {
-    switch (fc) {
-      case FactionClass.duran:
-        return const Color(0xFF00BCD4);
-      case FactionClass.vinari:
-        return const Color(0xFF9C27B0);
-      case FactionClass.trader:
-        return const Color(0xFF4CAF50);
-      case FactionClass.pirate:
-        return const Color(0xFFFF5722);
-    }
   }
 
   @override
@@ -284,9 +274,9 @@ class PortTradeView extends StatelessWidget {
                       const SizedBox(width: 6),
                       HudPill(
                         text: port.ownerFaction!.displayName.toLowerCase(),
-                        background: _factionColor(port.ownerFaction!)
+                        background: factionColor(port.ownerFaction!)
                             .withValues(alpha: 0.15),
-                        foreground: _factionColor(port.ownerFaction!),
+                        foreground: factionColor(port.ownerFaction!),
                         bold: true,
                       ),
                     ],
@@ -486,6 +476,7 @@ class PortTradeView extends StatelessWidget {
             ),
           ),
         DataTableShell(
+          zebra: true,
           headers: const [
             'commodity',
             'buy',

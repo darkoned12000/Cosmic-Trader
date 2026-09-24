@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/core/app_exit.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
@@ -20,6 +22,7 @@ import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/equalizer_widget.dart';
+import 'package:cosmic_trader/widgets/hud_strip.dart';
 
 class GameShell extends StatefulWidget {
   final Player initialPlayer;
@@ -43,6 +46,11 @@ class _GameShellState extends State<GameShell> {
   GameSettings _settings = GameSettings.defaults();
   int _playerUpdateVersion = 0;
   List<NpcShip> _npcs = [];
+
+  /// Universe sectors loaded once by the shell for the persistent HUD strip
+  /// (sector name + faction ambiance). Tab screens still load their own copy.
+  List<Sector> _hudSectors = [];
+
   final GameTickService _tickService = GameTickService(
     tickInterval: const Duration(seconds: 30),
   );
@@ -53,6 +61,7 @@ class _GameShellState extends State<GameShell> {
     _player = widget.initialPlayer;
     _loadSettings();
     _loadNpcs();
+    _loadHudSectors();
     _tickService.onTickComplete = (_) => _reloadNpcs();
     _tickService.onTickError = (error) {
       debugPrint('[GameShell] Tick error: $error');
@@ -76,6 +85,16 @@ class _GameShellState extends State<GameShell> {
     GameShell.exitSaveHook = null;
     _tickService.stop();
     super.dispose();
+  }
+
+  Future<void> _loadHudSectors() async {
+    try {
+      await UniverseStorage.instance.ensureUniverse();
+      final sectors = await UniverseStorage.instance.loadUniverse();
+      if (mounted) setState(() => _hudSectors = sectors);
+    } catch (_) {
+      // HUD strip degrades gracefully to "…" until the universe is available.
+    }
   }
 
   Future<void> _loadNpcs() async {
@@ -189,17 +208,62 @@ class _GameShellState extends State<GameShell> {
   }
 
   Future<void> _updatePlayer(Player updated) async {
+    final prevSector = _player.currentSectorId;
     final version = ++_playerUpdateVersion;
     try {
       await PlayerStorage.instance.savePlayer(updated);
       if (mounted && version == _playerUpdateVersion) {
         setState(() => _player = updated);
+        // Any sector change (warp console, combat flee, …) runs the jump
+        // flash. Galaxy-map moves trigger via _onSectorSelected instead
+        // (they mutate _player before calling back in here).
+        if (updated.currentSectorId != prevSector) {
+          _triggerWarp(updated.currentSectorId);
+        }
       }
     } catch (e) {
       if (mounted) {
         _showError('Failed to save player: $e');
       }
     }
+  }
+
+  /// Plays the warp SFX cue on any sector change (warp console, galaxy map,
+  /// combat flee). The visual transition overlay was removed per playtest
+  /// feedback — jumps are instant now.
+  void _triggerWarp(int targetSectorId) {
+    if (!mounted) return;
+    AudioService.instance.playSfx('assets/sfx/warp.ogg');
+  }
+
+  /// Current sector for the HUD strip (name/ID), or null before the
+  /// universe finishes loading in the shell.
+  Sector? get _currentHudSector {
+    for (final s in _hudSectors) {
+      if (s.id == _player.currentSectorId) return s;
+    }
+    return null;
+  }
+
+  /// Dominant non-destroyed NPC faction in the current sector — tints the
+  /// HUD accent bar and the warp rush (per-sector faction ambiance).
+  FactionClass? _dominantFaction() {
+    final counts = <FactionClass, int>{};
+    for (final n in _npcs) {
+      if (n.isDestroyed || n.currentSectorId != _player.currentSectorId) {
+        continue;
+      }
+      counts[n.faction] = (counts[n.faction] ?? 0) + 1;
+    }
+    FactionClass? best;
+    var bestCount = 0;
+    counts.forEach((f, c) {
+      if (c > bestCount) {
+        best = f;
+        bestCount = c;
+      }
+    });
+    return best;
   }
 
   Future<void> _handleSettingsChanged(GameSettings updated) async {
@@ -221,11 +285,24 @@ class _GameShellState extends State<GameShell> {
   }
 
   void _onSectorSelected(int sectorId) {
-    setState(() {
-      _player = _player.copyWith(currentSectorId: sectorId);
-    });
-    _updatePlayer(_player);
+    if (_player.currentSectorId != sectorId) {
+      setState(() {
+        _player = _player.copyWith(currentSectorId: sectorId);
+      });
+      _updatePlayer(_player);
+      _triggerWarp(sectorId);
+    }
     setState(() => _currentIndex = 0);
+  }
+
+  /// Switches to the Planet tab with a fresh PlanetScreen and plays the
+  /// docking thump.
+  void _openPlanet() {
+    AudioService.instance.playSfx('assets/sfx/land.ogg');
+    setState(() {
+      _currentIndex = 5;
+      _planetKey = UniqueKey();
+    });
   }
 
   Future<void> _handleLogout() async {
@@ -336,49 +413,62 @@ class _GameShellState extends State<GameShell> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
+      body: Stack(
         children: [
-          SectorView(
-            key: _universeKey,
-            npcs: _npcs,
-            player: _player,
-            onPlayerUpdate: _updatePlayer,
-            onRefreshNpcs: _reloadNpcs,
-            onOpenPort: () => setState(() => _currentIndex = 4),
-            onOpenPlanet: () => setState(() {
-              _currentIndex = 5;
-              _planetKey = UniqueKey();
-            }),
-            fedSpaceEnd: _settings.fedSpaceEnd,
-          ),
-          GalaxyMap(
-            key: _universeKey,
-            npcs: _npcs,
-            currentSectorId: _player.currentSectorId,
-            onSectorSelected: _onSectorSelected,
-          ),
-          ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
-          ComputerScreen(
-            key: _universeKey,
-            player: _player,
-            onPlayerUpdate: _updatePlayer,
-          ),
-          PortScreen(
-            key: _universeKey,
-            player: _player,
-            onPlayerUpdate: _updatePlayer,
-          ),
-          PlanetScreen(
-            key: _planetKey,
-            player: _player,
-            onPlayerUpdate: _updatePlayer,
-          ),
-          SettingsScreen(
-            key: ValueKey('settings_${_settings.seed}'),
-            currentSettings: _settings,
-            onRegenerate: _handleRegenerateUniverse,
-            onSettingsChanged: _handleSettingsChanged,
+          Column(
+            children: [
+              HudStrip(
+                player: _player,
+                sector: _currentHudSector,
+                dominantFaction: _dominantFaction(),
+              ),
+              Expanded(
+                child: IndexedStack(
+                  index: _currentIndex,
+                  children: [
+                    SectorView(
+                      key: _universeKey,
+                      npcs: _npcs,
+                      player: _player,
+                      onPlayerUpdate: _updatePlayer,
+                      onRefreshNpcs: _reloadNpcs,
+                      onOpenPort: () => setState(() => _currentIndex = 4),
+                      onOpenPlanet: _openPlanet,
+                      fedSpaceEnd: _settings.fedSpaceEnd,
+                    ),
+                    GalaxyMap(
+                      key: _universeKey,
+                      npcs: _npcs,
+                      currentSectorId: _player.currentSectorId,
+                      onSectorSelected: _onSectorSelected,
+                    ),
+                    ShipStatusView(
+                        player: _player, onPlayerUpdate: _updatePlayer),
+                    ComputerScreen(
+                      key: _universeKey,
+                      player: _player,
+                      onPlayerUpdate: _updatePlayer,
+                    ),
+                    PortScreen(
+                      key: _universeKey,
+                      player: _player,
+                      onPlayerUpdate: _updatePlayer,
+                    ),
+                    PlanetScreen(
+                      key: _planetKey,
+                      player: _player,
+                      onPlayerUpdate: _updatePlayer,
+                    ),
+                    SettingsScreen(
+                      key: ValueKey('settings_${_settings.seed}'),
+                      currentSettings: _settings,
+                      onRegenerate: _handleRegenerateUniverse,
+                      onSettingsChanged: _handleSettingsChanged,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -570,49 +660,62 @@ class _GameShellState extends State<GameShell> {
 
           // Main Content Area
           Expanded(
-            child: IndexedStack(
-              index: _currentIndex,
+            child: Stack(
               children: [
-                SectorView(
-                  key: _universeKey,
-                  npcs: _npcs,
-                  player: _player,
-                  onPlayerUpdate: _updatePlayer,
-                  onRefreshNpcs: _reloadNpcs,
-                  onOpenPort: () => setState(() => _currentIndex = 4),
-                  onOpenPlanet: () => setState(() {
-                    _currentIndex = 5;
-                    _planetKey = UniqueKey();
-                  }),
-                  fedSpaceEnd: _settings.fedSpaceEnd,
-                ),
-                GalaxyMap(
-                  key: _universeKey,
-                  npcs: _npcs,
-                  currentSectorId: _player.currentSectorId,
-                  onSectorSelected: _onSectorSelected,
-                ),
-                ShipStatusView(player: _player, onPlayerUpdate: _updatePlayer),
-                ComputerScreen(
-                  key: _computerKey,
-                  player: _player,
-                  onPlayerUpdate: _updatePlayer,
-                ),
-                PortScreen(
-                  key: _universeKey,
-                  player: _player,
-                  onPlayerUpdate: _updatePlayer,
-                ),
-                PlanetScreen(
-                  key: _planetKey,
-                  player: _player,
-                  onPlayerUpdate: _updatePlayer,
-                ),
-                SettingsScreen(
-                  key: ValueKey('settings_${_settings.seed}'),
-                  currentSettings: _settings,
-                  onRegenerate: _handleRegenerateUniverse,
-                  onSettingsChanged: _handleSettingsChanged,
+                Column(
+                  children: [
+                    HudStrip(
+                      player: _player,
+                      sector: _currentHudSector,
+                      dominantFaction: _dominantFaction(),
+                    ),
+                    Expanded(
+                      child: IndexedStack(
+                        index: _currentIndex,
+                        children: [
+                          SectorView(
+                            key: _universeKey,
+                            npcs: _npcs,
+                            player: _player,
+                            onPlayerUpdate: _updatePlayer,
+                            onRefreshNpcs: _reloadNpcs,
+                            onOpenPort: () => setState(() => _currentIndex = 4),
+                            onOpenPlanet: _openPlanet,
+                            fedSpaceEnd: _settings.fedSpaceEnd,
+                          ),
+                          GalaxyMap(
+                            key: _universeKey,
+                            npcs: _npcs,
+                            currentSectorId: _player.currentSectorId,
+                            onSectorSelected: _onSectorSelected,
+                          ),
+                          ShipStatusView(
+                              player: _player, onPlayerUpdate: _updatePlayer),
+                          ComputerScreen(
+                            key: _computerKey,
+                            player: _player,
+                            onPlayerUpdate: _updatePlayer,
+                          ),
+                          PortScreen(
+                            key: _universeKey,
+                            player: _player,
+                            onPlayerUpdate: _updatePlayer,
+                          ),
+                          PlanetScreen(
+                            key: _planetKey,
+                            player: _player,
+                            onPlayerUpdate: _updatePlayer,
+                          ),
+                          SettingsScreen(
+                            key: ValueKey('settings_${_settings.seed}'),
+                            currentSettings: _settings,
+                            onRegenerate: _handleRegenerateUniverse,
+                            onSettingsChanged: _handleSettingsChanged,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

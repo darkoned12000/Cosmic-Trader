@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 
 enum _LotteryStage { menu, picking, drawing, results }
 
@@ -467,6 +468,7 @@ class _LotteryWidgetState extends State<LotteryWidget> {
 
     _matches = matches;
     _winnings = _prizeTiers[matches] ?? 0;
+    AudioService.instance.playSfx('assets/sfx/lottery.ogg');
 
     _exactOrder = _pickedNumbers.join() == _drawnNumbers.join();
     if (matches == 6 && _exactOrder) {

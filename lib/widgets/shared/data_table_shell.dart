@@ -17,6 +17,7 @@ class DataTableShell extends StatelessWidget {
     this.flexes,
     this.headerAlignments,
     this.borderColor,
+    this.zebra = false,
   });
 
   /// Column header labels.
@@ -27,6 +28,10 @@ class DataTableShell extends StatelessWidget {
 
   /// Per-column header text alignments.
   final List<TextAlign?>? headerAlignments;
+
+  /// Alternating-row shading for table readability (A3). Uses a faint
+  /// primary-tinted stripe so it stays legible on light and dark themes.
+  final bool zebra;
 
   final int itemCount;
 
@@ -75,7 +80,13 @@ class DataTableShell extends StatelessWidget {
                 thickness: 1,
                 color: cs.onSurface.withValues(alpha: 0.08),
               ),
-            rowBuilder(context, i),
+            if (zebra && i.isOdd)
+              ColoredBox(
+                color: cs.primary.withValues(alpha: 0.035),
+                child: rowBuilder(context, i),
+              )
+            else
+              rowBuilder(context, i),
           ],
         ],
       ),

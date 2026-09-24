@@ -500,6 +500,83 @@ built differently depending on the answer. Design the storage layer to be
       21/21 tests pass (suite includes user's hack/reputation tests),
       `flutter build linux --debug` ✓.
 
+17. ✅ **A3 — look & feel polish, wave 1** (new):
+    - **Consistent faction color language** — `lib/core/faction_colors.dart`
+      is now the single source of truth (`factionColor(FactionClass)` +
+      `FactionPalette` consts). The old palette was inconsistent everywhere:
+      the map used blue/teal accents while the leaderboard used violet/green,
+      two port screens used cyan/purple, and NPC lists used flat
+      `Colors.blue/red/teal/black`. Adopted in all 7 color-coded surfaces
+      (galaxy map dots + legend + painter, faction rankings, sector NPC list,
+      combat, port trade tags, port management, knowledge base) with one
+      canonical palette: Duran red-600, Vinari deep-purple, Trader green-500,
+      Pirate orange-500.
+    - **Persistent HUD strip** — new `lib/widgets/hud_strip.dart` sits above
+      the tab content on both the mobile and desktop layouts and is always
+      visible: sector name/ID, credits, turns, and compact hull/shield bars.
+      Responsive: the bars drop below 760px and turns below 560px so the row
+      never overflows (verified by the 580px/700px shell tests). Carries the
+      per-sector faction *ambiance* accent: a 3px bar + title tint from the
+      dominant NPC faction in the current sector (shell computes it from live
+      NPCs). All spacing routes through `UiScale.spacing()`.
+    - **Warp transition** — new `lib/widgets/warp_transition.dart`: a ~460ms
+      full-screen hyperspace flash + radial star streaks + collapsing faction
+      accent ring over every sector change (warp console, galaxy map moves,
+      combat flee), with the destination name under a `W A R P` header. The
+      shell triggers it from `_updatePlayer` sector deltas + `_onSectorSelected`.
+    - **SFX hookup** — generated a 7-cue procedural sound library
+      (`assets/sfx/*.ogg`, via ffmpeg lavfi — not hand-shipped samples): buy
+      blip, sell blip, hack two-tone, laser "pew" (real 1600→300 Hz sweep),
+      warp whoosh, lottery chime, landing thump. Wired into the actual events:
+      port trade buy/sell, combat fire, hack packet injection, lottery reveal,
+      warp, and planet dock (`_openPlanet` in the shell). `AudioService.playSfx`
+      was already asset-capable; the folder is declared in pubspec.
+    - **Table readability** — `DataTableShell` gained a `zebra: true`
+      option (faint primary-tinted alternating rows); the port trade table is
+      the first adopter.
+    - **Typography option** — bundled Audiowide (OFL, single-weight) as
+      `assets/fonts/Audiowide.ttf`, declared in pubspec under `fonts:`. The
+      existing Settings → Font font picker auto-scans `assets/fonts/`, so
+      "Audiowide" now appears as a selectable sci-fi display typeface with no
+      new UI. (Not forced onto any screen.)
+    - Not in this wave: sortable Port Report columns, hover cursors/keyboard
+      shortcuts, forced header typeface — kept for a later A3 pass.
+    - Verify: `flutter analyze` **No issues found!**, `dart format` clean,
+      21/21 tests pass, `flutter build linux --debug` ✓ (SFX + font verified
+      present in the bundled build).
+
+18. ✅ **A3 wave 1b — playtest fixes** (new):
+    - **SFX were silent — root cause found & fixed.** `AudioService` handed
+      full `assets/...` paths to audioplayers' `AssetSource`, but the engine's
+      `AudioCache` prepends its own `assets/` prefix, so the loader asked for
+      `assets/assets/...` — which doesn't exist in the bundle — threw, and the
+      `catch (_) {}` swallowed it into silence. This affected *every* cue (and
+      music used the same pattern, so it was silently dead too). Proven with a
+      guarded bundle-key test (`assets/sfx/buy.ogg` loads;
+      `assets/assets/sfx/buy.ogg` fails). `playMusic`/`playSfx` now strip the
+      leading `assets/` (`AssetSource` gets `sfx/buy.ogg` → `assets/sfx/buy.ogg`)
+      and log failures via `debugPrint` instead of swallowing them. New
+      regression test `test/sfx_assets_test.dart` pins the correct bundle key
+      for all 7 cues and asserts the double-prefixed key fails.
+    - **Font picker crashed with Audiowide selected.** The dropdown's items
+      were keyed by file name (`Audiowide.ttf`) while its `value` was the
+      family name (`Audiowide`) → "exactly one item with value Audiowide"
+      assertion. Items are now family names, deduped, and the persisted
+      selection is always present as an option. New widget test
+      `test/font_settings_widget_test.dart` (scans `assets/fonts/` via
+      `runAsync`, verifies no assertion + Audiowide offered).
+    - **Warp animation redesigned.** The full-screen flash/burst/ring (which
+      the playtest disliked) is replaced by a star-rush: 56 radial streaks +
+      dust motes whip outward from the jump point over ~500 ms — the
+      background starfield streaming past like flying through space — with a
+      barely-there veil (the underlying scene stays visible) and the faction
+      accent tinting a subset of streaks. The destination label moved to a
+      subtle bottom caption. New painter covered by
+      `test/warp_transition_test.dart` (steps the full animation, no throws).
+    - Verify: `flutter analyze` **No issues found!**, `dart format` clean,
+      37/37 tests pass, `flutter build linux --debug` ✓, 15 s live app run
+      (DeskTop session) with no `[audio]`/GStreamer errors logged.
+
 ### ✅ Analyzer cleanup — backlog resolved (0 findings)
 
 All 8 previous `info`-lints are now fixed — `flutter analyze` reports

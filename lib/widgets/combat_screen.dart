@@ -2,10 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
@@ -48,13 +49,6 @@ class _CombatScreenState extends State<CombatScreen>
   int _dronesReturned = 0;
 
   static const _droneHp = 15;
-
-  static final _factionColors = {
-    FactionClass.trader: Colors.blue,
-    FactionClass.duran: Colors.red,
-    FactionClass.vinari: Colors.teal,
-    FactionClass.pirate: Colors.black,
-  };
 
   final List<double> _dronePhases = [];
   final List<double> _droneOffsets = [];
@@ -156,6 +150,7 @@ class _CombatScreenState extends State<CombatScreen>
     if (_animating || _combatOver) return;
 
     setState(() => _animating = true);
+    AudioService.instance.playSfx('assets/sfx/laser.ogg');
 
     final dronesSent = _dronesToSend;
     final droneAtkDmg = dronesSent * _droneHp;
@@ -368,7 +363,7 @@ class _CombatScreenState extends State<CombatScreen>
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final npcColor = _factionColors[_npc.faction] ?? Colors.grey;
+    final npcColor = factionColor(_npc.faction);
 
     return Scaffold(
       backgroundColor: Colors.black,

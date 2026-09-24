@@ -63,13 +63,66 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
 
   List<String> get _fontOptions {
     final options = <String>['System Default'];
-    options.addAll(_customFonts);
+    // Family *names* (extension stripped), deduped: two files for the same
+    // typeface must not create duplicate DropdownButton values.
+    for (final f in _customFonts) {
+      final name = f.split('.').first;
+      if (!options.contains(name)) options.add(name);
+    }
+    // The persisted selection must always be selectable, even if its file
+    // isn't currently scanned.
+    if (widget.fontFamily.isNotEmpty && !options.contains(widget.fontFamily)) {
+      options.add(widget.fontFamily);
+    }
     return options;
   }
 
   String get _currentLabel {
     if (widget.fontFamily.isEmpty) return 'System Default';
     return widget.fontFamily;
+  }
+
+  /// Explains how players can bundle their own typefaces. Fonts placed in
+  /// `assets/fonts/` must be declared in `pubspec.yaml` to actually render;
+  /// the picker above scans that folder and shows the declared families.
+  void _showFontHelp(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.font_download_rounded, size: 20),
+            SizedBox(width: 8),
+            Text('Adding your own fonts'),
+          ],
+        ),
+        content: const SingleChildScrollView(
+          child: Text(
+            '1. Copy your .ttf or .otf file into the assets/fonts/ folder.\n'
+            '\n'
+            '2. Declare it in pubspec.yaml so the game knows the family name:\n'
+            '\n'
+            '   flutter:\n'
+            '     fonts:\n'
+            '       - family: MyFont\n'
+            '         fonts:\n'
+            '           - asset: assets/fonts/MyFont.ttf\n'
+            '\n'
+            '3. Run  flutter pub get  and restart the game.\n'
+            '\n'
+            'The new font family will then appear in the picker above.\n'
+            'The bundled Audiowide typeface is declared the same way in '
+            'pubspec.yaml, so you can use it as a template.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -102,6 +155,18 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
                     fontWeight: FontWeight.bold,
                     letterSpacing: 2,
                   )),
+              const SizedBox(width: 6),
+              IconButton(
+                icon: const Icon(Icons.help_outline_rounded, size: 16),
+                onPressed: () => _showFontHelp(context),
+                tooltip: 'How to add your own fonts',
+                visualDensity: VisualDensity.compact,
+                color: accent.withValues(alpha: 0.7),
+                style: IconButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(24, 24),
+                ),
+              ),
             ],
           ),
           children: [
@@ -230,16 +295,14 @@ class _FontSettingsWidgetState extends State<FontSettingsWidget> {
                       child: Text(
                         f,
                         style: TextStyle(
-                          fontFamily:
-                              f == 'System Default' ? null : f.split('.').first,
+                          fontFamily: f == 'System Default' ? null : f,
                         ),
                       ),
                     );
                   }).toList(),
                   onChanged: (v) {
                     if (v == null) return;
-                    widget.onFontFamilyChanged(
-                        v == 'System Default' ? '' : v.split('.').first);
+                    widget.onFontFamilyChanged(v == 'System Default' ? '' : v);
                     widget.onSaveSettings?.call(widget.buildSettings());
                   },
                 ),

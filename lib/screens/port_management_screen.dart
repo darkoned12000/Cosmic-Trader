@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
-import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 
@@ -169,7 +169,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: _factionColor(_port.ownerFaction!)
+                        color: factionColor(_port.ownerFaction!)
                             .withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -178,7 +178,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: _factionColor(_port.ownerFaction!),
+                          color: factionColor(_port.ownerFaction!),
                         ),
                       ),
                     ),
@@ -979,19 +979,6 @@ class _PortManagementScreenState extends State<PortManagementScreen>
   }
 
   // ── Helpers ───────────────────────────────────────────────────
-
-  Color _factionColor(FactionClass fc) {
-    switch (fc) {
-      case FactionClass.duran:
-        return const Color(0xFF00BCD4);
-      case FactionClass.vinari:
-        return const Color(0xFF9C27B0);
-      case FactionClass.trader:
-        return const Color(0xFF4CAF50);
-      case FactionClass.pirate:
-        return const Color(0xFFFF5722);
-    }
-  }
 
   String _portClassLabel(PortClass pc) {
     switch (pc) {
