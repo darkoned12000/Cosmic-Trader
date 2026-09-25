@@ -18,10 +18,15 @@ class NpcShip {
   final FactionClass faction;
   final ShipDefinition shipDef;
 
-  // ── Economy / Turns ──────────────────────────────────
+  // ── Economy / Energy (B1 fuel; pre-B1 saves migrate via fromJson) ──
   final int credits;
-  final int turns;
+  final int energy;
+  final int maxEnergy;
   final int currentSectorId;
+
+  // ── Solar Array (NPC trickle-charge backup, mirrors Player) ──
+  final int solarArrayLevel;
+  final bool solarArrayDeployed;
 
   // ── Ship Stats ───────────────────────────────────────
   final int hull;
@@ -74,7 +79,10 @@ class NpcShip {
     required this.faction,
     required this.shipDef,
     required this.credits,
-    required this.turns,
+    this.energy = 1000,
+    this.maxEnergy = 1000,
+    this.solarArrayLevel = 0,
+    this.solarArrayDeployed = false,
     required this.currentSectorId,
     required this.hull,
     required this.maxHull,
@@ -101,7 +109,7 @@ class NpcShip {
     this.totalDamageDealt = 0,
     this.totalDamageTaken = 0,
     this.notoriety = 0.0,
-  });
+  }) : assert(credits >= 0, 'NpcShip credits must never go negative');
 
   PersonalityConfig get personalityConfig =>
       PersonalityConfig.all[personality]!;
@@ -116,6 +124,24 @@ class NpcShip {
 
   int get cargoHoldCapacity => shipDef.maxCargo;
 
+  /// True when [cost] energy can be spent right now.
+  bool hasEnergy(int cost) => energy >= cost;
+
+  /// Copy with [cost] energy deducted, clamped at zero.
+  NpcShip spendEnergy(int cost) {
+    final next = energy - cost;
+    return copyWith(energy: next < 0 ? 0 : next);
+  }
+
+  /// Copy with [amount] energy restored, clamped to [maxEnergy].
+  NpcShip refuelEnergy(int amount) {
+    final next = energy + amount;
+    return copyWith(energy: next > maxEnergy ? maxEnergy : next);
+  }
+
+  /// Deployed arrays lock the ship in place (mirrors Player.canMove).
+  bool get canMove => !solarArrayDeployed;
+
   NpcShip copyWith({
     String? id,
     String? pilotName,
@@ -123,7 +149,10 @@ class NpcShip {
     FactionClass? faction,
     ShipDefinition? shipDef,
     int? credits,
-    int? turns,
+    int? energy,
+    int? maxEnergy,
+    int? solarArrayLevel,
+    bool? solarArrayDeployed,
     int? currentSectorId,
     int? hull,
     int? maxHull,
@@ -143,6 +172,11 @@ class NpcShip {
     int? scrapTech,
     NpcPersonality? personality,
     NpcGoal? currentGoal,
+    // Set true to actually clear the goal: passing `currentGoal: null`
+    // would be swallowed by the `?? this.currentGoal` fallback below and
+    // silently keep the old goal (this was a live stall bug — failed goals
+    // never cleared, blocking all future goal selection).
+    bool clearGoal = false,
     NpcMemory? memory,
     bool? isDestroyed,
     int? kills,
@@ -158,7 +192,10 @@ class NpcShip {
       faction: faction ?? this.faction,
       shipDef: shipDef ?? this.shipDef,
       credits: credits ?? this.credits,
-      turns: turns ?? this.turns,
+      energy: energy ?? this.energy,
+      maxEnergy: maxEnergy ?? this.maxEnergy,
+      solarArrayLevel: solarArrayLevel ?? this.solarArrayLevel,
+      solarArrayDeployed: solarArrayDeployed ?? this.solarArrayDeployed,
       currentSectorId: currentSectorId ?? this.currentSectorId,
       hull: hull ?? this.hull,
       maxHull: maxHull ?? this.maxHull,
@@ -177,7 +214,7 @@ class NpcShip {
       scrapMetal: scrapMetal ?? this.scrapMetal,
       scrapTech: scrapTech ?? this.scrapTech,
       personality: personality ?? this.personality,
-      currentGoal: currentGoal ?? this.currentGoal,
+      currentGoal: clearGoal ? null : (currentGoal ?? this.currentGoal),
       memory: memory ?? this.memory,
       isDestroyed: isDestroyed ?? this.isDestroyed,
       kills: kills ?? this.kills,
@@ -196,7 +233,10 @@ class NpcShip {
       'faction': faction.name,
       'shipDefName': shipDef.name,
       'credits': credits,
-      'turns': turns,
+      'energy': energy,
+      'maxEnergy': maxEnergy,
+      'solarArrayLevel': solarArrayLevel,
+      'solarArrayDeployed': solarArrayDeployed,
       'currentSectorId': currentSectorId,
       'hull': hull,
       'maxHull': maxHull,
@@ -239,7 +279,11 @@ class NpcShip {
       ),
       shipDef: shipDef,
       credits: json['credits'] as int? ?? 10000,
-      turns: json['turns'] as int? ?? 1000,
+      // Pre-energy save migration: legacy 'turns' seeds the tank.
+      energy: json['energy'] as int? ?? json['turns'] as int? ?? 1000,
+      maxEnergy: json['maxEnergy'] as int? ?? json['maxTurns'] as int? ?? 1000,
+      solarArrayLevel: json['solarArrayLevel'] as int? ?? 0,
+      solarArrayDeployed: json['solarArrayDeployed'] as bool? ?? false,
       currentSectorId: json['currentSectorId'] as int? ?? 1,
       hull: json['hull'] as int? ?? shipDef.maxHullCapacity,
       maxHull: json['maxHull'] as int? ?? shipDef.maxHullCapacity,
@@ -304,7 +348,8 @@ class NpcShip {
       faction: faction,
       shipDef: shipDef,
       credits: startingCredits,
-      turns: 1000,
+      energy: 1000,
+      maxEnergy: 1000,
       currentSectorId: currentSectorId,
       hull: shipDef.maxHullCapacity,
       maxHull: shipDef.maxHullCapacity,

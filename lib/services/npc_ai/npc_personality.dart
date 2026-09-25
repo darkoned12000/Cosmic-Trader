@@ -41,7 +41,6 @@ class PersonalityConfig {
       goalWeights: {
         NpcGoalType.tradeRoute: 0.60,
         NpcGoalType.explore: 0.15,
-        NpcGoalType.bankDeposit: 0.20,
         NpcGoalType.patrol: 0.05,
       },
       aggression: 0.1,
@@ -54,7 +53,6 @@ class PersonalityConfig {
       goalWeights: {
         NpcGoalType.explore: 0.60,
         NpcGoalType.tradeRoute: 0.25,
-        NpcGoalType.bankDeposit: 0.10,
         NpcGoalType.patrol: 0.05,
       },
       aggression: 0.05,
@@ -66,8 +64,6 @@ class PersonalityConfig {
     NpcPersonality.traderSmuggler: PersonalityConfig(
       goalWeights: {
         NpcGoalType.tradeRoute: 0.50,
-        NpcGoalType.bankDeposit: 0.30,
-        NpcGoalType.flee: 0.15,
         NpcGoalType.patrol: 0.05,
       },
       aggression: 0.2,
@@ -95,9 +91,10 @@ class PersonalityConfig {
     NpcPersonality.duranWarlord: PersonalityConfig(
       goalWeights: {
         NpcGoalType.attack: 0.50,
-        NpcGoalType.upgradeEquipment: 0.25,
-        NpcGoalType.patrol: 0.15,
-        NpcGoalType.explore: 0.10,
+        NpcGoalType.upgradeEquipment: 0.20,
+        NpcGoalType.patrol: 0.10,
+        NpcGoalType.tradeRoute: 0.05,
+        NpcGoalType.explore: 0.15,
       },
       aggression: 0.95,
       greed: 0.4,
@@ -110,7 +107,6 @@ class PersonalityConfig {
         NpcGoalType.raidPort: 0.35,
         NpcGoalType.attack: 0.25,
         NpcGoalType.tradeRoute: 0.20,
-        NpcGoalType.bankDeposit: 0.15,
         NpcGoalType.explore: 0.05,
       },
       aggression: 0.7,
@@ -123,10 +119,10 @@ class PersonalityConfig {
     // ── Vinari ───────────────────────────────────────
     NpcPersonality.vinariExplorer: PersonalityConfig(
       goalWeights: {
-        NpcGoalType.explore: 0.70,
+        NpcGoalType.explore: 0.65,
         NpcGoalType.patrol: 0.15,
         NpcGoalType.tradeRoute: 0.10,
-        NpcGoalType.flee: 0.05,
+        NpcGoalType.upgradeEquipment: 0.05,
       },
       aggression: 0.05,
       greed: 0.2,
@@ -136,10 +132,11 @@ class PersonalityConfig {
     ),
     NpcPersonality.vinariProtector: PersonalityConfig(
       goalWeights: {
-        NpcGoalType.patrol: 0.50,
+        NpcGoalType.patrol: 0.45,
         NpcGoalType.attack: 0.25,
         NpcGoalType.explore: 0.15,
         NpcGoalType.upgradeEquipment: 0.10,
+        NpcGoalType.tradeRoute: 0.05,
       },
       aggression: 0.5,
       greed: 0.1,
@@ -149,10 +146,9 @@ class PersonalityConfig {
     ),
     NpcPersonality.vinariSeeker: PersonalityConfig(
       goalWeights: {
-        NpcGoalType.explore: 0.60,
+        NpcGoalType.explore: 0.55,
         NpcGoalType.patrol: 0.20,
-        NpcGoalType.tradeRoute: 0.10,
-        NpcGoalType.bankDeposit: 0.10,
+        NpcGoalType.tradeRoute: 0.15,
       },
       aggression: 0.1,
       greed: 0.3,
@@ -164,10 +160,9 @@ class PersonalityConfig {
     // ── Pirates ──────────────────────────────────────
     NpcPersonality.pirateRaider: PersonalityConfig(
       goalWeights: {
-        NpcGoalType.attack: 0.50,
+        NpcGoalType.attack: 0.45,
         NpcGoalType.raidPort: 0.25,
-        NpcGoalType.bankDeposit: 0.15,
-        NpcGoalType.flee: 0.10,
+        NpcGoalType.tradeRoute: 0.10,
       },
       aggression: 0.8,
       greed: 0.9,
@@ -177,10 +172,9 @@ class PersonalityConfig {
     ),
     NpcPersonality.piratePillager: PersonalityConfig(
       goalWeights: {
-        NpcGoalType.raidPort: 0.50,
+        NpcGoalType.raidPort: 0.45,
         NpcGoalType.attack: 0.25,
-        NpcGoalType.bankDeposit: 0.20,
-        NpcGoalType.flee: 0.05,
+        NpcGoalType.tradeRoute: 0.10,
       },
       aggression: 0.85,
       greed: 0.95,
@@ -190,10 +184,9 @@ class PersonalityConfig {
     ),
     NpcPersonality.pirateHunter: PersonalityConfig(
       goalWeights: {
-        NpcGoalType.attack: 0.60,
+        NpcGoalType.attack: 0.55,
         NpcGoalType.explore: 0.20,
-        NpcGoalType.flee: 0.10,
-        NpcGoalType.bankDeposit: 0.10,
+        NpcGoalType.tradeRoute: 0.10,
       },
       aggression: 0.9,
       greed: 0.7,

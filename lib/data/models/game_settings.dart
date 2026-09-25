@@ -45,7 +45,7 @@ class GameSettings {
   final Map<String, CommodityConfig> commodityConfigs;
 
   // --- Player initial values ---
-  final int initTurns;
+  final int initEnergy;
   final int initCredits;
   final int initHolds;
   final int initDrones;
@@ -115,7 +115,7 @@ class GameSettings {
     this.pct5Warp = 0.10,
     this.pct6Warp = 0.05,
     this.pct7Warp = 0.02,
-    this.initTurns = 1000,
+    this.initEnergy = 1000,
     this.initCredits = 1000000,
     this.initHolds = 50,
     this.initDrones = 100,
@@ -201,7 +201,7 @@ class GameSettings {
     int? maxBubbleSize,
     List<String>? anomalyTypes,
     Map<String, CommodityConfig>? commodityConfigs,
-    int? initTurns,
+    int? initEnergy,
     int? initCredits,
     int? initHolds,
     int? initDrones,
@@ -255,7 +255,7 @@ class GameSettings {
       pct5Warp: pct5Warp ?? this.pct5Warp,
       pct6Warp: pct6Warp ?? this.pct6Warp,
       pct7Warp: pct7Warp ?? this.pct7Warp,
-      initTurns: initTurns ?? this.initTurns,
+      initEnergy: initEnergy ?? this.initEnergy,
       initCredits: initCredits ?? this.initCredits,
       initHolds: initHolds ?? this.initHolds,
       initDrones: initDrones ?? this.initDrones,
@@ -309,7 +309,7 @@ class GameSettings {
       'anomalyTypes': anomalyTypes,
       'commodityConfigs':
           commodityConfigs.map((k, v) => MapEntry(k, v.toJson())),
-      'initTurns': initTurns,
+      'initEnergy': initEnergy,
       'initCredits': initCredits,
       'initHolds': initHolds,
       'initDrones': initDrones,
@@ -368,7 +368,9 @@ class GameSettings {
             'Dark Matter Cloud'
           ],
       commodityConfigs: _readCommodityConfigs(json),
-      initTurns: json['initTurns'] as int? ?? 1000,
+      // Pre-energy migration: legacy 'initTurns' seeds initial energy.
+      initEnergy:
+          json['initEnergy'] as int? ?? json['initTurns'] as int? ?? 1000,
       initCredits: json['initCredits'] as int? ?? 1000000,
       initHolds: json['initHolds'] as int? ?? 50,
       initDrones: json['initDrones'] as int? ?? 100,
@@ -396,8 +398,14 @@ class GameSettings {
       Map<String, dynamic> json) {
     final raw = json['commodityConfigs'];
     if (raw is Map) {
-      return raw.map((k, v) => MapEntry(
+      final stored = raw.map((k, v) => MapEntry(
           k as String, CommodityConfig.fromJson(v as Map<String, dynamic>)));
+      // Merge registry additions (new commodities) into old settings files,
+      // keeping the player's edited ranges for existing goods.
+      for (final entry in CommodityRegistry.defaultsMap.entries) {
+        stored.putIfAbsent(entry.key, () => entry.value);
+      }
+      return stored;
     }
     // Legacy: individual fields (pre-commodity-registry).
     return _legacyConfigs(json);

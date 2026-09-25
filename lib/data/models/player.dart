@@ -47,17 +47,9 @@ class Player {
   final int drones;
   final int maxDrones;
 
-  // ── Turns ───────────────────────────────────────────────────
-  //
-  // Legacy field retained for old save files only. B1 replaces it with
-  // [energy] below; see [EnergyService].
-  final int turns;
-  final int maxTurns;
-
-  // ── Energy ──────────────────────────────────────────────────
-  /// Current ship energy — the B1 replacement for legacy turns. Actions such
-  /// as warping, scanning, and port interactions spend energy; it is restored
-  /// by refueling at ports.
+  // ── Energy (B1 fuel; pre-B1 saves migrate via fromJson legacy keys) ──
+  /// Current ship energy — actions such as warping, scanning, and port
+  /// interactions spend energy; it is restored by refueling at ports.
   final int energy;
 
   /// Maximum ship energy capacity.
@@ -146,8 +138,6 @@ class Player {
     this.cargo = const {},
     this.drones = 0,
     this.maxDrones = 0,
-    this.turns = 1000,
-    this.maxTurns = 1000,
     this.energy = 1000,
     this.maxEnergy = 1000,
     this.solarArrayDeployed = false,
@@ -223,8 +213,6 @@ class Player {
     Map<String, int>? cargo,
     int? drones,
     int? maxDrones,
-    int? turns,
-    int? maxTurns,
     int? energy,
     int? maxEnergy,
     bool? solarArrayDeployed,
@@ -274,8 +262,6 @@ class Player {
       cargo: cargo ?? this.cargo,
       drones: drones ?? this.drones,
       maxDrones: maxDrones ?? this.maxDrones,
-      turns: turns ?? this.turns,
-      maxTurns: maxTurns ?? this.maxTurns,
       energy: energy ?? this.energy,
       maxEnergy: maxEnergy ?? this.maxEnergy,
       solarArrayDeployed: solarArrayDeployed ?? this.solarArrayDeployed,
@@ -328,8 +314,6 @@ class Player {
       'cargo': cargo,
       'drones': drones,
       'maxDrones': maxDrones,
-      'turns': turns,
-      'maxTurns': maxTurns,
       'energy': energy,
       'maxEnergy': maxEnergy,
       'solarArrayDeployed': solarArrayDeployed,
@@ -393,8 +377,7 @@ class Player {
           (json['cargo'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
       drones: json['drones'] as int? ?? 0,
       maxDrones: json['maxDrones'] as int? ?? 0,
-      turns: json['turns'] as int? ?? 1000,
-      maxTurns: json['maxTurns'] as int? ?? 1000,
+      // Pre-energy save migration: legacy 'turns' keys seed the tank.
       energy: json['energy'] as int? ?? json['turns'] as int? ?? 1000,
       maxEnergy: json['maxEnergy'] as int? ?? json['maxTurns'] as int? ?? 1000,
       solarArrayDeployed: json['solarArrayDeployed'] as bool? ?? false,

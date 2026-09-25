@@ -1,10 +1,14 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
@@ -46,6 +50,39 @@ class NpcAiService {
   /// Sectors 1-10 are safe zones (no attacks allowed).
   static bool _isSafeZone(int sectorId) => sectorId <= 10;
 
+  /// Credits charged to an NPC for a level-1 Solar Array. NPCs have no
+  /// scrap economy, so only credits are charged (player price is 75k cr +
+  /// 30 scrap at level 1 — see hardware_data.dart module generation).
+  static const int npcSolarArrayCostCredits = 75000;
+
+  /// Reserve (in warp hops) an NPC keeps above its trip home, added on top
+  /// of the real path cost to the nearest Hardware Emporium.
+  static const int npcRefuelReserveHops = 2;
+
+  /// Patrol legs before the goal completes and re-enters selection.
+  static const int maxPatrolLegs = 5;
+
+  /// Fraction of tank below which an NPC always seeks refuel, regardless
+  /// of distance.
+  static const double npcRefuelFloorFraction = 0.10;
+
+  /// Fraction of tank above which the distance check is skipped (cheap
+  /// gate so full-tank NPCs never pay for a BFS — matters at 5000 sectors).
+  static const double npcRefuelCheckFraction = 0.25;
+
+  static bool _hasEnergy(NpcShip npc) => npc.energy > 0;
+
+  /// Goals cheap to interrupt when something more urgent (banking, refuel,
+  /// distress) comes up. Trade/attack/raid carry multi-leg state in
+  /// goal.params — clobbering them mid-route strands cargo and wastes trips,
+  /// so they run to completion unless fleeing or bone-dry (see below).
+  static bool _isInterruptible(NpcShip npc) {
+    final type = npc.currentGoal?.type;
+    return type == null ||
+        type == NpcGoalType.explore ||
+        type == NpcGoalType.patrol;
+  }
+
   // ────────────────────────────────────────────────────────────────
   // Public entry point
   // ────────────────────────────────────────────────────────────────
@@ -60,9 +97,18 @@ class NpcAiService {
     List<Player> players,
     List<NpcShip> allNpcs,
   ) {
-    if (npc.turns <= 0 || npc.isDestroyed) return npc;
+    if (npc.isDestroyed) return npc;
 
     var updated = npc;
+
+    // 0 — Solar Array trickle-charge (deployed arrays regen, lock movement).
+    final recharge = EnergyService.npcSolarRecharge(updated);
+    if (recharge.unitsAdded > 0) {
+      GameEventLog.global
+          .energy('NPC_ENERGY event=solar_recharge pilot=${updated.pilotName} '
+              'units=${recharge.unitsAdded} energy=${recharge.npc.energy}');
+      updated = recharge.npc;
+    }
 
     // 1 — Scan the current sector
     updated = _scanSector(updated, sectors, players, allNpcs);
@@ -71,61 +117,103 @@ class NpcAiService {
     updated = _executeGoal(updated, sectors, allNpcs);
 
     if (updated.isDestroyed) {
-      debugPrint(
+      GameEventLog.global.combat(
           '[${updated.pilotName}] Destroyed in Sector ${updated.currentSectorId}');
       return updated;
     }
 
     // 3 — Evaluate threats → flee immediately if outmatched
-    if (updated.turns > 0 &&
+    if (_hasEnergy(updated) &&
         _evaluateThreat(updated, sectors, players, allNpcs)) {
       updated = _setFleeGoal(updated, sectors);
     }
 
-    // 3b — Respond to nearby distress signals (override current goal)
-    if (updated.turns > 0 && updated.currentGoal?.type != NpcGoalType.flee) {
+    // 3b — Respond to nearby distress signals (override interruptible
+    // goals only; never yank a trade/attack/raid mid-leg). Unarmed NPCs
+    // sit out — sending power-0 responders into fights is pointless.
+    if (_hasEnergy(updated) &&
+        updated.currentGoal?.type != NpcGoalType.flee &&
+        _isInterruptible(updated) &&
+        updated.totalWeaponPower > 0) {
       final distressGoal = _respondToDistress(updated, sectors, allNpcs);
       if (distressGoal != null) {
         updated = updated.copyWith(currentGoal: distressGoal);
       }
     }
 
-    // 4 — Evaluate banking needs
-    if (updated.turns > 0 &&
+    // 4 — Evaluate banking needs (interruptible goals only; a travelling
+    // trade keeps its buy/sell legs instead of being clobbered right
+    // after buying).
+    if (_hasEnergy(updated) &&
         updated.currentGoal?.type != NpcGoalType.flee &&
+        _isInterruptible(updated) &&
         BankingAi.shouldDeposit(updated)) {
       final goal = BankingAi.createDepositGoal(updated, sectors);
       if (goal != null) {
-        debugPrint('[${updated.pilotName}] Banking: Heading to deposit '
-            '${goal.params['depositAmount']} cr');
+        GameEventLog.global
+            .banking('[${updated.pilotName}] Banking: Heading to deposit '
+                '${goal.params['depositAmount']} cr');
         updated = updated.copyWith(currentGoal: goal);
       }
     }
-    if (updated.turns > 0 &&
+    if (_hasEnergy(updated) &&
         updated.currentGoal?.type != NpcGoalType.flee &&
+        _isInterruptible(updated) &&
         BankingAi.shouldWithdraw(updated)) {
       final goal = BankingAi.createWithdrawGoal(updated, sectors);
       if (goal != null) {
-        debugPrint('[${updated.pilotName}] Banking: Heading to withdraw cr');
+        GameEventLog.global
+            .banking('[${updated.pilotName}] Banking: Heading to withdraw cr');
         updated = updated.copyWith(currentGoal: goal);
       }
     }
 
+    // 4b — Evaluate energy needs. Interruptible goals yield immediately;
+    // committed multi-leg goals only yield below the emergency floor
+    // (stranding mid-route wastes the trip, but running dry is worse —
+    // and post-buy cargo converts to a sell-first route on replan).
+    final energyCritical =
+        updated.energy < (updated.maxEnergy * npcRefuelFloorFraction).ceil();
+    if (_hasEnergy(updated) &&
+        updated.currentGoal?.type != NpcGoalType.flee &&
+        updated.currentGoal?.type != NpcGoalType.refuelEnergy &&
+        (_isInterruptible(updated) || energyCritical) &&
+        shouldRefuel(updated, sectors)) {
+      final goal = createRefuelGoal(updated, sectors);
+      if (goal != null) {
+        GameEventLog.global
+            .energy('NPC_ENERGY event=refuel_goal pilot=${updated.pilotName} '
+                'energy=${updated.energy} target=${goal.targetSectorId}');
+        updated = updated.copyWith(currentGoal: goal);
+      } else {
+        // Fuel low but no emporium discovered yet — roam to find one,
+        // exactly like a human player searching the map.
+        GameEventLog.global.energy(
+            'NPC_ENERGY event=refuel_unknown pilot=${updated.pilotName} '
+            'energy=${updated.energy}');
+        updated =
+            updated.copyWith(currentGoal: _createExploreGoal(updated, sectors));
+      }
+    }
+
     // 5 — Select a new goal if none is active
-    if (updated.turns > 0 && _needsNewGoal(updated)) {
+    if (_hasEnergy(updated) && _needsNewGoal(updated)) {
       final goal = _selectGoal(updated, sectors, players, allNpcs);
       if (goal != null) {
         updated = updated.copyWith(currentGoal: goal);
         final targetStr = goal.targetSectorId != null
             ? '→ Sector ${goal.targetSectorId}'
             : '';
-        debugPrint('[${updated.pilotName}] Goal: ${goal.type.name} $targetStr');
+        GameEventLog.global
+            .goal('[${updated.pilotName}] Goal: ${goal.type.name} $targetStr');
       }
     }
 
     // 6 — Move one hop towards the goal
-    if (updated.turns > 0) {
+    if (_hasEnergy(updated)) {
       updated = _move(updated, sectors);
+    } else if (!updated.isDestroyed) {
+      updated = _handleStranded(updated);
     }
 
     return updated;
@@ -164,6 +252,7 @@ class NpcAiService {
           portCredits: p.portCredits,
           desiredCredits: p.desiredCredits,
           owner: p.owner,
+          ownerFaction: p.ownerFaction,
         ),
       );
     }
@@ -230,7 +319,169 @@ class NpcAiService {
         return _executeRaidPortGoal(npc, sectors, allNpcs, goal);
       case NpcGoalType.upgradeEquipment:
         return _executeUpgradeGoal(npc, sectors, goal);
+      case NpcGoalType.refuelEnergy:
+        return _executeRefuelGoal(npc, sectors, goal);
     }
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Energy — refuel, solar, stranded
+  // ────────────────────────────────────────────────────────────────
+
+  /// True when [npc] should interrupt its plan to refuel.
+  ///
+  /// Distance-aware: the trigger is the real trip cost to the nearest
+  /// Hardware Emporium (hops × per-hop cost for this NPC's engine, plus a
+  /// reserve), so thirsty-engine ships and far-flung sectors both head home
+  /// earlier. Below a flat 10% floor the NPC always seeks refuel; above 25%
+  /// it never does (cheap gate, no pathfinding).
+  ///
+  /// Like human players, NPCs must *discover* emporiums first — only ports
+  /// recorded in [NpcMemory.discoveredPorts] (via sector scans) count. An
+  /// NPC that needs fuel but knows no emporium also returns true so the
+  /// caller can send it exploring instead of sitting still.
+  static bool shouldRefuel(NpcShip npc, List<Sector> sectors) {
+    if (npc.isDestroyed) return false;
+    if (npc.energy >= (npc.maxEnergy * npcRefuelCheckFraction).ceil()) {
+      return false;
+    }
+    if (npc.energy < (npc.maxEnergy * npcRefuelFloorFraction).ceil()) {
+      return true;
+    }
+    final path = nearestEmporiumPath(npc, sectors);
+    if (path == null) return true; // fuel low, no known emporium — go find one
+    final legCost = EnergyService.npcWarpCost(npc);
+    final tripCost =
+        (path.length - 1) * legCost + legCost * npcRefuelReserveHops;
+    return npc.energy < tripCost;
+  }
+
+  /// Sector IDs of Hardware Emporiums this NPC has actually discovered.
+  static Set<int> knownEmporiumSectors(NpcShip npc) {
+    return {
+      for (final entry in npc.memory.discoveredPorts.entries)
+        if (entry.value.portClass == PortClass.hardwareEmporium) entry.key,
+    };
+  }
+
+  /// Hop path to the nearest *discovered* Hardware Emporium, or null when
+  /// none is known or reachable. Travel passes through undiscovered sectors
+  /// freely — only the destination must be known.
+  /// Single hop-list source for both [shouldRefuel] and [createRefuelGoal].
+  static List<int>? nearestEmporiumPath(
+    NpcShip npc,
+    List<Sector> sectors,
+  ) {
+    final known = knownEmporiumSectors(npc);
+    if (known.isEmpty) return null;
+    if (known.contains(npc.currentSectorId)) return [npc.currentSectorId];
+    final target = PathfindingService.findNearestWhere(
+      sectors,
+      npc.currentSectorId,
+      (s) => known.contains(s.id),
+    );
+    if (target == null) return null;
+    return PathfindingService.findPath(
+      sectors,
+      npc.currentSectorId,
+      target,
+    );
+  }
+
+  /// Goal targeting the nearest Hardware Emporium for refuel.
+  static NpcGoal? createRefuelGoal(NpcShip npc, List<Sector> sectors) {
+    final path = nearestEmporiumPath(npc, sectors);
+    if (path == null || path.isEmpty) return null;
+    return NpcGoal(
+      type: NpcGoalType.refuelEnergy,
+      status: NpcGoalStatus.travelling,
+      createdAt: DateTime.now(),
+      params: {'targetSectorId': path.last},
+    );
+  }
+
+  static NpcShip _executeRefuelGoal(
+    NpcShip npc,
+    List<Sector> sectors,
+    NpcGoal goal,
+  ) {
+    if (npc.currentSectorId != goal.targetSectorId) return npc;
+    // Memory can go stale (port destroyed/captured) — fail cleanly so the
+    // NPC re-plans instead of drinking from an empty pump.
+    final sector = _findSector(sectors, npc.currentSectorId);
+    if (sector?.port?.isHardwareEmporium != true) {
+      GameEventLog.global
+          .energy('NPC_ENERGY event=refuel_stale pilot=${npc.pilotName} '
+              'sector=${npc.currentSectorId}');
+      return npc.copyWith(
+        currentGoal: goal.copyWith(status: NpcGoalStatus.failed),
+      );
+    }
+    final result = EnergyService.npcRefuel(npc);
+    if (result.unitsAdded <= 0) {
+      // Broke or full — don't loop on the pump; try banking next tick.
+      GameEventLog.global
+          .energy('NPC_ENERGY event=refuel_empty pilot=${npc.pilotName} '
+              'energy=${npc.energy} credits=${npc.credits}');
+      return npc.copyWith(
+        currentGoal: goal.copyWith(status: NpcGoalStatus.failed),
+      );
+    }
+    GameEventLog.global
+        .energy('NPC_ENERGY event=refuel_buy pilot=${npc.pilotName} '
+            'units=${result.unitsAdded} spent=${result.creditsSpent} '
+            'energy=${result.npc.energy}');
+    ActionLogProvider.global.trade(
+      '${npc.pilotName} refueled ${result.unitsAdded} energy '
+      '(${result.creditsSpent} cr)',
+    );
+    return result.npc.copyWith(
+      currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
+    );
+  }
+
+  /// Zero-energy fallback: withdraw-backed emergency reserve, then idle.
+  /// NPCs never hard-lock a human session, so no tow teleport is needed —
+  /// they wait for regen or their next reserve. The reserve is ALWAYS
+  /// granted, even when broke (deducting only what exists): a penniless NPC
+  /// that idles forever is a dead NPC, and live universes showed Vinari
+  /// explorers spiraling to exactly 0cr and freezing for good.
+  static NpcShip _handleStranded(NpcShip npc) {
+    if (npc.solarArrayLevel > 0 && !npc.solarArrayDeployed) {
+      GameEventLog.global
+          .energy('NPC_ENERGY event=array_deploy pilot=${npc.pilotName}');
+      return npc.copyWith(solarArrayDeployed: true);
+    }
+    final reserve = EnergyService.npcEmergencyEnergy(npc);
+    final fromBank = npc.credits >= reserve
+        ? 0
+        : (reserve - npc.credits).clamp(0, npc.bankBalance);
+    final fromCredits = (reserve - fromBank).clamp(0, npc.credits);
+    GameEventLog.global
+        .energy('NPC_ENERGY event=emergency_reserve pilot=${npc.pilotName} '
+            'units=$reserve fromBank=$fromBank');
+    return npc
+        .copyWith(
+          credits: npc.credits - fromCredits,
+          bankBalance: npc.bankBalance - fromBank,
+        )
+        .refuelEnergy(reserve);
+  }
+
+  /// Logs a dead trade route, starts its cooldown, and clears the goal so
+  /// reselection can run. Every terminal failure below is visible in the
+  /// trade log — silent kills were how live trade volume dropped to zero
+  /// unnoticed.
+  static NpcShip _failTrade(NpcShip npc, NpcGoal goal, String reason) {
+    GameEventLog.global.trade(
+      '[${npc.pilotName}] Trade: route failed ($reason)',
+    );
+    final key =
+        NpcMemory.routeKey(goal.buyPortId, goal.sellPortId, goal.commodity);
+    return npc.copyWith(
+      clearGoal: true,
+      memory: npc.memory.withFailedRoute(key),
+    );
   }
 
   static NpcShip _executeTradeGoal(
@@ -242,7 +493,7 @@ class NpcAiService {
     final sellPortId = goal.sellPortId;
     final commodity = goal.commodity;
     if (buyPortId == null || sellPortId == null || commodity == null) {
-      return npc.copyWith(currentGoal: null);
+      return npc.copyWith(clearGoal: true);
     }
 
     final phase = goal.params['phase'] as String? ?? 'travel_to_buy';
@@ -251,41 +502,75 @@ class NpcAiService {
     // ── Phase: arrived at buy port ──
     if (phase == 'travel_to_buy' && npc.currentSectorId == buyPortId) {
       final sector = _findSector(sectors, buyPortId);
-      if (sector == null) return npc.copyWith(currentGoal: null);
+      if (sector == null) {
+        return _failTrade(npc, goal, 'buy sector $buyPortId vanished');
+      }
       var port = sector.port;
-      if (port == null) return npc.copyWith(currentGoal: null);
+      if (port == null) {
+        return _failTrade(npc, goal, '${sector.name} lost its port');
+      }
 
       // Regen before reading
       port = port.regen(now: nowMs);
       sector.port = port;
 
-      final sellPrice = port.getEffectiveSellPrice(commodity);
-      if (sellPrice <= 0) return npc.copyWith(currentGoal: null);
+      final sellPrice = port.getEffectiveSellPriceFor(
+        commodity,
+        standing: FactionStanding.resolveFor(
+          npc.faction,
+          port.ownerFaction,
+          npc.memory.factionStandings,
+        ),
+      );
+      if (sellPrice <= 0) {
+        return _failTrade(npc, goal, '${port.name} no longer sells $commodity');
+      }
 
       final availableHolds = npc.cargoHoldCapacity - npc.cargoUsed;
-      if (availableHolds <= 0) return npc.copyWith(currentGoal: null);
+      if (availableHolds <= 0) {
+        return _failTrade(npc, goal, 'holds full');
+      }
 
       final availableSupply = port.getSupply(commodity);
-      if (availableSupply <= 0) return npc.copyWith(currentGoal: null);
+      if (availableSupply <= 0) {
+        return _failTrade(npc, goal, '${port.name} out of $commodity supply');
+      }
 
-      final maxBuyable = (npc.credits / sellPrice)
-          .floor()
-          .clamp(1, availableHolds.clamp(0, availableSupply));
+      // Affordability includes the owner surcharge (omitting it drove
+      // credits negative whenever cost landed within 5% of the bankroll —
+      // caught live by the credits>=0 assert).
+      final taxRate = port.isOwned ? port.ownerTaxRate : 0.0;
+      final unitCost = sellPrice * (1 + taxRate);
+      final affordable = unitCost <= 0
+          ? availableHolds.clamp(0, availableSupply)
+          : (npc.credits / unitCost).floor();
+      if (affordable <= 0) {
+        return _failTrade(
+            npc, goal, 'cannot afford 1 $commodity at ${port.name}');
+      }
+      var maxBuyable =
+          affordable.clamp(1, availableHolds.clamp(0, availableSupply));
+      var cost = (maxBuyable * sellPrice).round();
+      var ownerSurcharge =
+          port.isOwned ? (cost * port.ownerTaxRate).round() : 0;
+      // Rounding guard: never let cost + fee exceed the bankroll.
+      while (maxBuyable > 0 && cost + ownerSurcharge > npc.credits) {
+        maxBuyable--;
+        cost = (maxBuyable * sellPrice).round();
+        ownerSurcharge = port.isOwned ? (cost * port.ownerTaxRate).round() : 0;
+      }
       if (maxBuyable <= 0) {
-        debugPrint(
+        GameEventLog.global.trade(
             '[${npc.pilotName}] Trade: Not enough credits for $commodity at ${port.name}');
-        return npc.copyWith(currentGoal: null);
+        return npc.copyWith(clearGoal: true);
       }
 
       final newCargo = Map<String, int>.from(npc.cargo);
       newCargo[commodity] = (newCargo[commodity] ?? 0) + maxBuyable;
-      final cost = (maxBuyable * sellPrice).round();
 
       // Mutate port: decrement supply, add credits (port earns from selling)
       final newSupply = Map<String, int>.from(port.supply);
       newSupply[commodity] = availableSupply - maxBuyable;
-      final ownerSurcharge =
-          port.isOwned ? (cost * port.ownerTaxRate).round() : 0;
       sector.port = port.copyWith(
         supply: newSupply,
         portCredits: port.portCredits + cost,
@@ -293,9 +578,18 @@ class NpcAiService {
         lastRegenTime: nowMs,
       );
 
-      debugPrint('[${npc.pilotName}] Trade: Bought $maxBuyable $commodity at '
+      GameEventLog.global.trade(
+          '[${npc.pilotName}] Trade: Bought $maxBuyable $commodity at '
           '${port.name} (${sellPrice.toStringAsFixed(0)} cr)'
           '${ownerSurcharge > 0 ? ' [+${ownerSurcharge}cr owner fee]' : ''}');
+      EconomyMetrics.global.recordTrade(
+        commodity: commodity,
+        units: maxBuyable,
+        credits: cost,
+        actorFaction: npc.faction.name,
+        isPlayer: false,
+        isBuy: true,
+      );
 
       return npc.copyWith(
         credits: npc.credits - cost - ownerSurcharge,
@@ -315,37 +609,60 @@ class NpcAiService {
     // ── Phase: arrived at sell port ──
     if (phase == 'travel_to_sell' && npc.currentSectorId == sellPortId) {
       final sector = _findSector(sectors, sellPortId);
-      if (sector == null) return npc.copyWith(currentGoal: null);
+      if (sector == null) {
+        return _failTrade(npc, goal, 'sell sector $sellPortId vanished');
+      }
       var port = sector.port;
-      if (port == null) return npc.copyWith(currentGoal: null);
+      if (port == null) {
+        return _failTrade(npc, goal, '${sector.name} lost its port');
+      }
 
       // Regen before reading
       port = port.regen(now: nowMs);
       sector.port = port;
 
-      final buyPrice = port.getEffectiveBuyPrice(commodity);
-      if (buyPrice <= 0) return npc.copyWith(currentGoal: null);
+      final buyPrice = port.getEffectiveBuyPriceFor(
+        commodity,
+        standing: FactionStanding.resolveFor(
+          npc.faction,
+          port.ownerFaction,
+          npc.memory.factionStandings,
+        ),
+      );
+      if (buyPrice <= 0) {
+        return _failTrade(npc, goal, '${port.name} no longer buys $commodity');
+      }
 
       var quantity = npc.cargo[commodity] ?? 0;
-      if (quantity <= 0) return npc.copyWith(currentGoal: null);
+      if (quantity <= 0) {
+        return _failTrade(npc, goal, 'hold empty of $commodity');
+      }
 
       // Cap by available demand
       final availableDemand = port.getDemand(commodity);
-      if (availableDemand <= 0) return npc.copyWith(currentGoal: null);
+      if (availableDemand <= 0) {
+        return _failTrade(npc, goal, '${port.name} has no $commodity demand');
+      }
       quantity = quantity.clamp(1, availableDemand);
 
       // Cap by port credits
       final grossRevenue = (quantity * buyPrice).round();
       final actualRevenue = grossRevenue.clamp(0, port.portCredits.floor());
       if (actualRevenue <= 0) {
-        debugPrint('[${npc.pilotName}] Trade: Port ${port.name} has '
-            'insufficient credits to buy $quantity $commodity');
-        return npc.copyWith(currentGoal: null);
+        GameEventLog.global
+            .trade('[${npc.pilotName}] Trade: Port ${port.name} has '
+                'insufficient credits to buy $quantity $commodity');
+        return npc.copyWith(clearGoal: true);
       }
 
-      // Recompute quantity if port is short on credits
-      final actualQuantity =
-          (actualRevenue / buyPrice).floor().clamp(1, quantity);
+      // Recompute quantity if port is short on credits. Floor first —
+      // clamping a zero affordable quantity up to 1 would force a
+      // below-value sale, so bail out instead.
+      final affordableQty = (actualRevenue / buyPrice).floor();
+      if (affordableQty <= 0) {
+        return _failTrade(npc, goal, '${port.name} cannot cover 1 $commodity');
+      }
+      final actualQuantity = affordableQty.clamp(1, quantity);
 
       final cost =
           goal.buyPrice != null ? (actualQuantity * goal.buyPrice!).round() : 0;
@@ -367,15 +684,25 @@ class NpcAiService {
         lastRegenTime: nowMs,
       );
 
-      debugPrint('[${npc.pilotName}] Trade: Sold $actualQuantity $commodity at '
+      GameEventLog.global.trade(
+          '[${npc.pilotName}] Trade: Sold $actualQuantity $commodity at '
           '${port.name} (${buyPrice.toStringAsFixed(0)} cr) '
-          '— ${profit >= 0 ? "profit" : "loss"} ${profit.abs()} cr'
+          '${goal.buyPrice != null ? '— ${profit >= 0 ? "profit" : "loss"} ${profit.abs()} cr' : '— cleared holds for $actualRevenue cr'}'
           '${ownerTax > 0 ? ' [-${ownerTax}cr owner fee]' : ''}');
+      EconomyMetrics.global.recordTrade(
+        commodity: commodity,
+        units: actualQuantity,
+        credits: actualRevenue,
+        actorFaction: npc.faction.name,
+        isPlayer: false,
+        isBuy: false,
+      );
 
       return npc.copyWith(
         credits: npc.credits + npcReceives,
         cargo: newCargo,
         cargoUsed: npc.cargoUsed - actualQuantity,
+        memory: npc.memory.copyWith(lastTradeTime: DateTime.now()),
         currentGoal: goal.copyWith(
           status: NpcGoalStatus.complete,
           params: {...goal.params, 'profit': profit},
@@ -424,16 +751,28 @@ class NpcAiService {
   ) {
     if (npc.currentSectorId != goal.targetSectorId) return npc;
 
+    // Destination must still be a live port — memory goes stale when
+    // ports are captured/destroyed en route (same rule as refuel/trade).
+    final sector = _findSector(sectors, npc.currentSectorId);
+    if (sector?.port == null) {
+      GameEventLog.global.banking(
+          '[${npc.pilotName}] Banking: port at Sector ${npc.currentSectorId} '
+          'gone — deposit aborted');
+      return npc.copyWith(clearGoal: true);
+    }
+
     final result = BankingAi.executeDeposit(npc, goal);
     if (!result.executed) {
-      return npc.copyWith(currentGoal: null);
+      return npc.copyWith(clearGoal: true);
     }
 
     final deposited = (npc.credits - result.npc.credits).abs();
-    debugPrint('[${result.npc.pilotName}] Banking: Deposited $deposited cr '
-        '(bank: ${result.npc.bankBalance} cr)');
+    GameEventLog.global
+        .banking('[${result.npc.pilotName}] Banking: Deposited $deposited cr '
+            '(bank: ${result.npc.bankBalance} cr)');
 
     return result.npc.copyWith(
+      memory: result.npc.memory.copyWith(lastBankTime: DateTime.now()),
       currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
     );
   }
@@ -445,15 +784,25 @@ class NpcAiService {
   ) {
     if (npc.currentSectorId != goal.targetSectorId) return npc;
 
+    final sector = _findSector(sectors, npc.currentSectorId);
+    if (sector?.port == null) {
+      GameEventLog.global.banking(
+          '[${npc.pilotName}] Banking: port at Sector ${npc.currentSectorId} '
+          'gone — withdrawal aborted');
+      return npc.copyWith(clearGoal: true);
+    }
+
     final result = BankingAi.executeWithdraw(npc, goal);
     if (!result.executed) {
-      return npc.copyWith(currentGoal: null);
+      return npc.copyWith(clearGoal: true);
     }
 
     final withdrawn = (result.npc.credits - npc.credits).abs();
-    debugPrint('[${result.npc.pilotName}] Banking: Withdrew $withdrawn cr');
+    GameEventLog.global
+        .banking('[${result.npc.pilotName}] Banking: Withdrew $withdrawn cr');
 
     return result.npc.copyWith(
+      memory: result.npc.memory.copyWith(lastBankTime: DateTime.now()),
       currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
     );
   }
@@ -464,7 +813,7 @@ class NpcAiService {
     NpcGoal goal,
   ) {
     if (npc.currentSectorId == goal.targetSectorId) {
-      debugPrint(
+      GameEventLog.global.goal(
           '[${npc.pilotName}] Explore: Reached Sector ${goal.targetSectorId}');
       return npc.copyWith(
         currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
@@ -479,6 +828,16 @@ class NpcAiService {
     NpcGoal goal,
   ) {
     if (npc.currentSectorId == goal.targetSectorId) {
+      // Patrols expire after a few legs so the NPC re-enters goal selection
+      // (trade/attack/bank) instead of wandering forever. An absorbing
+      // patrol was a live stall bug: once adopted, _needsNewGoal never fired
+      // again and all trade/combat/banking stopped.
+      final legs = (goal.params['legs'] as int? ?? 0) + 1;
+      if (legs >= maxPatrolLegs) {
+        return npc.copyWith(
+          currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
+        );
+      }
       // Pick a new random patrol target
       final current = _findSector(sectors, npc.currentSectorId);
       if (current == null || current.warpRoutes.isEmpty) {
@@ -492,6 +851,7 @@ class NpcAiService {
           params: {
             'targetSectorId': next,
             'homeSector': goal.params['homeSector'] ?? npc.currentSectorId,
+            'legs': legs,
           },
         ),
       );
@@ -524,16 +884,17 @@ class NpcAiService {
 
     // Safe zone check — no attacks allowed
     if (_isSafeZone(npc.currentSectorId)) {
-      debugPrint('[${npc.pilotName}] Attack: Cannot attack in safe zone '
-          'Sector ${npc.currentSectorId}');
-      return npc.copyWith(currentGoal: null);
+      GameEventLog.global
+          .combat('[${npc.pilotName}] Attack: Cannot attack in safe zone '
+              'Sector ${npc.currentSectorId}');
+      return npc.copyWith(clearGoal: true);
     }
 
     final targetId = goal.targetId;
     if (targetId == null) {
       // No specific NPC target — player-targeting goal arrived at sector.
       // Player attack is handled separately by GameTickService.
-      debugPrint('[${npc.pilotName}] Attack: Arrived in Sector '
+      GameEventLog.global.combat('[${npc.pilotName}] Attack: Arrived in Sector '
           '${npc.currentSectorId} (hunting player)');
       return npc.copyWith(
         currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
@@ -552,9 +913,10 @@ class NpcAiService {
     }
 
     if (target == null) {
-      debugPrint('[${npc.pilotName}] Attack: Target $targetId not found in '
-          'Sector ${npc.currentSectorId}');
-      return npc.copyWith(currentGoal: null);
+      GameEventLog.global
+          .combat('[${npc.pilotName}] Attack: Target $targetId not found in '
+              'Sector ${npc.currentSectorId}');
+      return npc.copyWith(clearGoal: true);
     }
 
     final myPower = CombatService.calculateFirepower(npc);
@@ -593,14 +955,14 @@ class NpcAiService {
           '(${target.shipName}) in Sector ${npc.currentSectorId}');
       log.combat(
           NpcDeathCries.formatDeathCry(target.pilotName, target.faction));
-      debugPrint(
+      GameEventLog.global.combat(
           '[${result.attacker.pilotName}] Combat: Destroyed ${target.pilotName} '
           'in Sector ${npc.currentSectorId}');
     } else {
       log.combat('[${result.attacker.pilotName}] Engaged ${target.pilotName} '
           '(dealt ${result.result.damageToDefender}, '
           'took ${result.result.damageToAttacker})');
-      debugPrint(
+      GameEventLog.global.combat(
           '[${result.attacker.pilotName}] Combat: Engaged ${target.pilotName} '
           '(dealt ${result.result.damageToDefender}, '
           'took ${result.result.damageToAttacker})');
@@ -621,13 +983,14 @@ class NpcAiService {
 
     final sector = _findSector(sectors, goal.targetSectorId!);
     final port = sector?.port;
-    if (port == null) return npc.copyWith(currentGoal: null);
+    if (port == null) return npc.copyWith(clearGoal: true);
 
     // Safe zone check
     if (_isSafeZone(sector!.id)) {
-      debugPrint('[${npc.pilotName}] Raid: Cannot attack port in safe zone '
-          'Sector ${sector.id}');
-      return npc.copyWith(currentGoal: null);
+      GameEventLog.global
+          .combat('[${npc.pilotName}] Raid: Cannot attack port in safe zone '
+              'Sector ${sector.id}');
+      return npc.copyWith(clearGoal: true);
     }
 
     // NPC owner defense response
@@ -647,7 +1010,7 @@ class NpcAiService {
         if (effectiveOwner.personalityConfig.aggression > 0.5) {
           ownerDefenseDamage =
               (CombatService.calculateFirepower(effectiveOwner) * 0.5).round();
-          debugPrint(
+          GameEventLog.global.combat(
               '[${npc.pilotName}] Raid: Port owner ${effectiveOwner.pilotName} '
               'joins defense!');
         } else {
@@ -658,7 +1021,7 @@ class NpcAiService {
               allNpcs[idx] =
                   effectiveOwner.copyWith(currentSectorId: adjSectorId);
             }
-            debugPrint(
+            GameEventLog.global.combat(
                 '[${npc.pilotName}] Raid: Port owner ${effectiveOwner.pilotName} '
                 'flees to Sector $adjSectorId');
           }
@@ -743,7 +1106,8 @@ class NpcAiService {
           currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
           notoriety: (updatedNpc.notoriety + 10).clamp(0, 100),
         );
-        debugPrint('[${npc.pilotName}] Raid: Captured ${port.name}');
+        GameEventLog.global
+            .combat('[${npc.pilotName}] Raid: Captured ${port.name}');
         ActionLogProvider.global.warning(
           '${npc.pilotName} captured ${port.name} in Sector ${sector.id}',
         );
@@ -754,15 +1118,17 @@ class NpcAiService {
           currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
           notoriety: (updatedNpc.notoriety + 20).clamp(0, 100),
         );
-        debugPrint('[${npc.pilotName}] Raid: Destroyed ${port.name}');
+        GameEventLog.global
+            .combat('[${npc.pilotName}] Raid: Destroyed ${port.name}');
         ActionLogProvider.global.error(
           '${npc.pilotName} destroyed ${port.name} in Sector ${sector.id}',
         );
       }
     } else if (result.attackerDefeated) {
       sector.port = PortCombatService.endCombatRetreat(sector.port!);
-      updatedNpc = updatedNpc.copyWith(currentGoal: null);
-      debugPrint('[${npc.pilotName}] Raid: Defeated by ${port.name} defenses');
+      updatedNpc = updatedNpc.copyWith(clearGoal: true);
+      GameEventLog.global
+          .combat('[${npc.pilotName}] Raid: Defeated by ${port.name} defenses');
       ActionLogProvider.global.info(
         '${npc.pilotName} was repelled from ${port.name} in Sector ${sector.id}',
       );
@@ -780,15 +1146,154 @@ class NpcAiService {
     List<Sector> sectors,
     NpcGoal goal,
   ) {
-    if (npc.currentSectorId == goal.targetSectorId) {
-      // Placeholder: upgrade logic deferred
-      debugPrint('[${npc.pilotName}] Upgrade: Arrived for equipment upgrade '
-          '(deferred)');
-      return npc.copyWith(
+    if (npc.currentSectorId != goal.targetSectorId) return npc;
+
+    var updated = npc;
+    // 1 — Repairs first: hull and shields back to full when affordable.
+    updated = _repairShip(updated);
+
+    // 2 — Solar Array for qualifying personalities (existing behavior).
+    if (updated.solarArrayLevel <= 0 &&
+        updated.credits >= npcSolarArrayCostCredits &&
+        (updated.personalityConfig.caution > 0.5 ||
+            updated.personalityConfig.explorationDrive > 0.6)) {
+      GameEventLog.global
+          .energy('NPC_ENERGY event=array_buy pilot=${updated.pilotName} '
+              'spent=$npcSolarArrayCostCredits');
+      ActionLogProvider.global.trade(
+        '${updated.pilotName} installed a Solar Array',
+      );
+      return updated.copyWith(
+        credits: updated.credits - npcSolarArrayCostCredits,
+        solarArrayLevel: 1,
+        solarArrayDeployed: false,
         currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
       );
     }
+
+    // 3 — One equipment upgrade per visit, defense-first for peaceful
+    // factions (aggression ≤ 0.5): shields → hull → engine → weapons.
+    // Aggressive factions lead with weapons. Levels feed the combat
+    // formulas automatically (firepower +5/hull level, durability +10;
+    // engine level cuts warp cost); shield levels also raise maxShields
+    // since nothing else reads that stat for NPCs.
+    final defensive = updated.personalityConfig.aggression <= 0.5;
+    final order = defensive
+        ? const ['shields', 'hull', 'engine', 'weapons']
+        : const ['weapons', 'hull', 'shields', 'engine'];
+    for (final slot in order) {
+      final bought = _buyUpgrade(updated, slot);
+      if (bought != null) {
+        updated = bought;
+        break;
+      }
+    }
+    if (identical(updated, npc)) {
+      GameEventLog.global.goal(
+        '[${npc.pilotName}] Upgrade: nothing affordable '
+        '(credits=${npc.credits})',
+      );
+    }
+    return updated.copyWith(
+      currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
+    );
+  }
+
+  /// Hull/shield repairs at 2cr / 1cr per point. Never strands the ship:
+  /// keeps at least a full-tank refuel in reserve.
+  static NpcShip _repairShip(NpcShip npc) {
+    final reserve = EnergyService.npcRefuelCost(
+        npc.copyWith(energy: 0, maxEnergy: npc.maxEnergy));
+    var hull = npc.hull;
+    var shields = npc.shields;
+    var spent = 0;
+
+    final hullMissing = npc.maxHull - hull;
+    final hullAffordable =
+        (npc.credits - reserve - spent).clamp(0, hullMissing * 2) ~/ 2;
+    hull += hullAffordable;
+    spent += hullAffordable * 2;
+
+    final shieldsMissing = npc.maxShields - shields;
+    final shieldsAffordable =
+        (npc.credits - reserve - spent).clamp(0, shieldsMissing);
+    shields += shieldsAffordable;
+    spent += shieldsAffordable;
+
+    if (spent > 0) {
+      GameEventLog.global.goal(
+        '[${npc.pilotName}] Upgrade: repaired hull+$hullAffordable '
+        'shields+$shieldsAffordable for ${spent}cr',
+      );
+      return npc.copyWith(
+        hull: hull,
+        shields: shields,
+        credits: npc.credits - spent,
+      );
+    }
     return npc;
+  }
+
+  static const int _maxEquipmentLevel = 5;
+  static const int _maxWeaponLevel = 3;
+
+  /// Single equipment purchase for [slot], or null when capped or
+  /// unaffordable (keeps 5k operating cash after the price).
+  static NpcShip? _buyUpgrade(NpcShip npc, String slot) {
+    int level;
+    int price;
+    switch (slot) {
+      case 'hull':
+        level = npc.hullEquipmentLevel;
+        if (level >= _maxEquipmentLevel) return null;
+        price = 15000 * level;
+        break;
+      case 'shields':
+        level = npc.shieldEquipmentLevel;
+        if (level >= _maxEquipmentLevel) return null;
+        price = 15000 * level;
+        break;
+      case 'engine':
+        level = npc.engineEquipmentLevel;
+        if (level >= _maxEquipmentLevel) return null;
+        price = 20000 * level;
+        break;
+      case 'weapons':
+        if (npc.weaponSlots.isEmpty) return null;
+        final weakest = npc.weaponSlots.entries
+            .reduce((a, b) => a.value <= b.value ? a : b);
+        if (weakest.value >= _maxWeaponLevel) return null;
+        price = 15000 * weakest.value;
+        if (npc.credits - price < 5000) return null;
+        GameEventLog.global.goal(
+          '[${npc.pilotName}] Upgrade: ${weakest.key} → level '
+          '${weakest.value + 1} for ${price}cr',
+        );
+        final slots = Map<String, int>.from(npc.weaponSlots);
+        slots[weakest.key] = weakest.value + 1;
+        return npc.copyWith(
+          credits: npc.credits - price,
+          weaponSlots: slots,
+        );
+      default:
+        return null;
+    }
+    if (npc.credits - price < 5000) return null;
+    GameEventLog.global.goal(
+      '[${npc.pilotName}] Upgrade: $slot → level ${level + 1} '
+      'for ${price}cr',
+    );
+    final extraShields = slot == 'shields' ? 20 : 0;
+    return npc.copyWith(
+      credits: npc.credits - price,
+      hullEquipmentLevel: slot == 'hull' ? level + 1 : npc.hullEquipmentLevel,
+      shieldEquipmentLevel:
+          slot == 'shields' ? level + 1 : npc.shieldEquipmentLevel,
+      engineEquipmentLevel:
+          slot == 'engine' ? level + 1 : npc.engineEquipmentLevel,
+      maxShields: npc.maxShields + extraShields,
+      shields: npc.shields + extraShields,
+    );
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -857,8 +1362,9 @@ class NpcAiService {
     final targetId =
         current.warpRoutes[_rng.nextInt(current.warpRoutes.length)];
 
-    debugPrint('[${npc.pilotName}] Flee: Evading threat in Sector '
-        '${npc.currentSectorId} → Sector $targetId');
+    GameEventLog.global
+        .goal('[${npc.pilotName}] Flee: Evading threat in Sector '
+            '${npc.currentSectorId} → Sector $targetId');
 
     return npc.copyWith(
       currentGoal: NpcGoal(
@@ -928,9 +1434,16 @@ class NpcAiService {
   ) {
     switch (type) {
       case NpcGoalType.tradeRoute:
+        // Full holds are fine when the NPC carries sellable cargo — it
+        // becomes a sell-first route (see _createTradeRouteGoal). Without
+        // this, full holds deadlocked all future trading: no new route
+        // could start, and nothing else empties cargo.
+        // Credits gate only the buy leg: a broke NPC sitting on sellable
+        // cargo needs to trade most of all.
+        final hasSpace = npc.cargoUsed < npc.cargoHoldCapacity;
+        final hasCargo = npc.cargo.values.any((q) => q > 0);
         return npc.memory.discoveredPorts.length >= 2 &&
-            npc.credits > 100 &&
-            npc.cargoUsed < npc.cargoHoldCapacity;
+            (hasSpace ? npc.credits > 100 : hasCargo);
       case NpcGoalType.explore:
         return _hasUnvisitedSectors(npc, sectors);
       case NpcGoalType.bankDeposit:
@@ -948,7 +1461,11 @@ class NpcAiService {
       case NpcGoalType.flee:
         return false;
       case NpcGoalType.upgradeEquipment:
-        return npc.credits + npc.bankBalance > 100000;
+        // Mid-wealth threshold: cheapest upgrades run ~15k, so NPCs start
+        // outfitting (repairs + level 2) well before array money (75k+).
+        return npc.credits + npc.bankBalance > 25000;
+      case NpcGoalType.refuelEnergy:
+        return _hasEnergy(npc) || npc.credits + npc.bankBalance > 0;
     }
   }
 
@@ -1009,6 +1526,8 @@ class NpcAiService {
         return null;
       case NpcGoalType.upgradeEquipment:
         return _createUpgradeGoal(npc, sectors);
+      case NpcGoalType.refuelEnergy:
+        return createRefuelGoal(npc, sectors);
     }
   }
 
@@ -1016,13 +1535,33 @@ class NpcAiService {
     NpcShip npc,
     List<Sector> sectors,
   ) {
+    // Sell-first whenever there is no economical buy leg: full holds, or
+    // mere nibs (< 25% of capacity) not worth topping up with a fresh buy.
+    // Aborted routes leave partial cargo that would otherwise ride along
+    // unsold forever while new commodities pile on top.
+    final hasSpace = npc.cargoUsed < npc.cargoHoldCapacity;
+    final hasCargo = npc.cargo.values.any((q) => q > 0);
+    final nibs = hasCargo && npc.cargoUsed < npc.cargoHoldCapacity * 0.25;
+    if ((!hasSpace || nibs) && hasCargo) {
+      return _createSellOnlyGoal(npc, sectors);
+    }
     final route = TradeEvaluator.findBestTradeRoute(
       npc.currentSectorId,
       npc.memory.discoveredPorts,
       sectors,
       npc.personalityConfig.maxTravelDistance,
+      avoidRoutes: npc.memory.coolingRoutes(),
+      credits: npc.credits.toDouble(),
+      actorFaction: npc.faction,
+      standings: npc.memory.factionStandings,
     );
-    if (route == null) return null;
+    if (route == null) {
+      GameEventLog.global.goal(
+        '[${npc.pilotName}] Goal: trade wanted but no route from '
+        '${npc.memory.discoveredPorts.length} known ports',
+      );
+      return null;
+    }
 
     return NpcGoal(
       type: NpcGoalType.tradeRoute,
@@ -1036,6 +1575,62 @@ class NpcAiService {
         'buyPrice': route.buyPrice,
         'sellPrice': route.sellPrice,
         'phase': 'travel_to_buy',
+      },
+    );
+  }
+
+  /// Sell-first route for full holds: best known buyer for carried cargo.
+  /// Returns null (with a log line) when nothing on board has a reachable
+  /// buyer — the NPC keeps exploring instead of idling on dead inventory.
+  static NpcGoal? _createSellOnlyGoal(NpcShip npc, List<Sector> sectors) {
+    final maxTravel = npc.personalityConfig.maxTravelDistance;
+    String? bestCommodity;
+    int? bestPortId;
+    var bestPrice = 0.0;
+
+    npc.cargo.forEach((commodity, qty) {
+      if (qty <= 0) return;
+      for (final entry in npc.memory.discoveredPorts.entries) {
+        final price = entry.value.getEffectiveBuyPrice(
+          commodity,
+          standing: FactionStanding.resolveFor(
+            npc.faction,
+            entry.value.ownerFaction,
+            npc.memory.factionStandings,
+          ),
+        );
+        if (price <= 0) continue;
+        final path = PathfindingService.findPath(
+          sectors,
+          npc.currentSectorId,
+          entry.key,
+        );
+        if (path == null || path.length - 1 > maxTravel) continue;
+        if (price > bestPrice) {
+          bestPrice = price;
+          bestCommodity = commodity;
+          bestPortId = entry.key;
+        }
+      }
+    });
+
+    if (bestCommodity == null || bestPortId == null) {
+      GameEventLog.global.goal(
+        '[${npc.pilotName}] Goal: holds full but no buyer known for '
+        'on-board cargo',
+      );
+      return null;
+    }
+    return NpcGoal(
+      type: NpcGoalType.tradeRoute,
+      status: NpcGoalStatus.travelling,
+      createdAt: DateTime.now(),
+      params: {
+        'targetSectorId': bestPortId,
+        'buyPortId': bestPortId,
+        'sellPortId': bestPortId,
+        'commodity': bestCommodity,
+        'phase': 'travel_to_sell',
       },
     );
   }
@@ -1117,8 +1712,9 @@ class NpcAiService {
 
     if (bestSignal == null) return null;
 
-    debugPrint('[${npc.pilotName}] Responding to distress call from '
-        '${bestSignal.targetName} in Sector ${bestSignal.sectorId}');
+    GameEventLog.global
+        .combat('[${npc.pilotName}] Responding to distress call from '
+            '${bestSignal.targetName} in Sector ${bestSignal.sectorId}');
 
     return NpcGoal(
       type: NpcGoalType.attack,
@@ -1245,19 +1841,16 @@ class NpcAiService {
   }
 
   static NpcGoal? _createUpgradeGoal(NpcShip npc, List<Sector> sectors) {
-    // Find nearest port with a Hardware Emporium
-    final hwSectorId = PathfindingService.findNearestWhere(
-      sectors,
-      npc.currentSectorId,
-      (s) => s.port?.isHardwareEmporium == true,
-    );
-    if (hwSectorId == null) return null;
+    // Discovered emporiums only — same rule as refuel. Null when none
+    // known; the goal selector treats null as "pick something else".
+    final path = nearestEmporiumPath(npc, sectors);
+    if (path == null || path.isEmpty) return null;
 
     return NpcGoal(
       type: NpcGoalType.upgradeEquipment,
       status: NpcGoalStatus.travelling,
       createdAt: DateTime.now(),
-      params: {'targetSectorId': hwSectorId},
+      params: {'targetSectorId': path.last},
     );
   }
 
@@ -1266,7 +1859,13 @@ class NpcAiService {
   // ────────────────────────────────────────────────────────────────
 
   static NpcShip _move(NpcShip npc, List<Sector> sectors) {
-    if (npc.turns <= 0) return npc;
+    if (!_hasEnergy(npc)) return npc;
+
+    // Deployed Solar Array locks the ship (mirrors Player.canMove).
+    if (!npc.canMove) return npc;
+
+    final cost = EnergyService.npcWarpCost(npc);
+    if (!npc.hasEnergy(cost)) return _handleStranded(npc);
 
     final goal = npc.currentGoal;
 
@@ -1281,12 +1880,12 @@ class NpcAiService {
       );
       if (path != null && path.length > 1) {
         final next = path[1];
-        debugPrint('[${npc.pilotName}] ${goal.type.name}: Sector '
-            '${npc.currentSectorId} → Sector $next');
-        return npc.copyWith(
-          currentSectorId: next,
-          turns: npc.turns - 1,
-        );
+        GameEventLog.global
+            .movement('[${npc.pilotName}] ${goal.type.name}: Sector '
+                '${npc.currentSectorId} → Sector $next');
+        return npc.spendEnergy(cost).copyWith(
+              currentSectorId: next,
+            );
       }
     }
 
@@ -1295,12 +1894,11 @@ class NpcAiService {
     if (current == null || current.warpRoutes.isEmpty) return npc;
 
     final next = current.warpRoutes[_rng.nextInt(current.warpRoutes.length)];
-    debugPrint(
+    GameEventLog.global.movement(
         '[${npc.pilotName}] Wander: Sector ${npc.currentSectorId} → Sector $next');
-    return npc.copyWith(
-      currentSectorId: next,
-      turns: npc.turns - 1,
-    );
+    return npc.spendEnergy(cost).copyWith(
+          currentSectorId: next,
+        );
   }
 
   // ────────────────────────────────────────────────────────────────

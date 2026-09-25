@@ -61,4 +61,14 @@ void main() {
     expect(restored.uiScaleAuto, true);
     expect(restored.uiDensity, UiDensity.normal);
   });
+
+  test('legacy initTurns seeds initEnergy on old settings files', () {
+    final restored = GameSettings.fromJson(const {'initTurns': 432});
+    expect(restored.initEnergy, 432);
+
+    final modern = GameSettings.fromJson(
+      GameSettings.defaults().copyWith(initEnergy: 777).toJson(),
+    );
+    expect(modern.initEnergy, 777);
+  });
 }

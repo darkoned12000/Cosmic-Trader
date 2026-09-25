@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
@@ -8,6 +8,7 @@ import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
@@ -26,6 +27,10 @@ class NpcAttackEvent {
 
 class GameTickService {
   static final Set<String> _lockedNpcIds = {};
+
+  /// Shared RNG for per-tick price drift (B2). Random walk, not seeded —
+  /// live markets shouldn't replay identically.
+  static final math.Random _tickRng = math.Random();
 
   static void lockNpc(String npcId) => _lockedNpcIds.add(npcId);
   static void unlockNpc(String npcId) => _lockedNpcIds.remove(npcId);
@@ -64,14 +69,15 @@ class GameTickService {
   void start() {
     if (_isRunning) return;
     _isRunning = true;
-    debugPrint('[TickService] Started — interval: ${tickInterval.inSeconds}s');
-    _timer = Timer.periodic(tickInterval, (_) => _processTick());
+    GameEventLog.global
+        .system('[TickService] Started — interval: ${tickInterval.inSeconds}s');
+    _timer = Timer.periodic(tickInterval, (_) => processTickNow());
   }
 
   Future<void> stop() async {
     _timer?.cancel();
     _isRunning = false;
-    debugPrint('[TickService] Stopped');
+    GameEventLog.global.system('[TickService] Stopped');
   }
 
   void updateInterval(Duration newInterval) {
@@ -82,9 +88,33 @@ class GameTickService {
     }
   }
 
-  Future<void> _processTick() async {
-    if (!_isRunning) return;
+  /// Runs a single game tick. Re-entrant calls (a previous tick still in
+  /// flight — common at 1s dev intervals with BFS-heavy selections) are
+  /// skipped and counted: concurrent ticks load/save the same JSON files,
+  /// so overlapping runs double-count metrics while last-write-wins
+  /// storage silently discards one run's NPC/cargo updates (phantom trade
+  /// volume with no matching holdings). Public so tests can drive ticks
+  /// without a timer.
+  int overlapSkips = 0;
+  bool _tickInProgress = false;
 
+  Future<void> processTickNow() async {
+    if (_tickInProgress) {
+      overlapSkips++;
+      GameEventLog.global.system(
+          '[TickService] Tick skipped — previous still running '
+          '($overlapSkips overlaps so far)');
+      return;
+    }
+    _tickInProgress = true;
+    try {
+      await _runTickBody();
+    } finally {
+      _tickInProgress = false;
+    }
+  }
+
+  Future<void> _runTickBody() async {
     onTickStart?.call();
 
     try {
@@ -99,12 +129,13 @@ class GameTickService {
           'tick_load_players', () => PlayerStorage.instance.loadPlayers());
 
       if (sectors.isEmpty || npcs.isEmpty) {
-        debugPrint('[TickService] No sectors or NPCs to process');
+        GameEventLog.global
+            .system('[TickService] No sectors or NPCs to process');
         onTickComplete?.call(npcs);
         return;
       }
 
-      // Regenerate port supply/demand before NPC processing
+      // Regenerate port supply/demand + drift prices before NPC processing
       int portsRegened = 0;
       final nowMs = DateTime.now().millisecondsSinceEpoch;
       DevProfiler.instance.trace('tick_port_regen', () {
@@ -113,6 +144,11 @@ class GameTickService {
             final regenerated = sector.port!.regen(now: nowMs);
             if (regenerated != sector.port) {
               sector.port = regenerated;
+              portsRegened++;
+            }
+            final drifted = sector.port!.applyDrift(_tickRng);
+            if (!identical(drifted, sector.port)) {
+              sector.port = drifted;
               portsRegened++;
             }
           }
@@ -124,10 +160,12 @@ class GameTickService {
           players.isNotEmpty ? players.first.currentSectorId : 0;
       final closeSectors = _reachableWithin(playerSector, sectors, 2);
 
-      // Find NPCs with turns remaining and process them
+      // Find NPCs with energy remaining and process them
       int processed = 0;
       int skipped = 0;
+      int stranded = 0;
       int destroyed = 0;
+      int errored = 0;
       final log = ActionLogProvider.global;
 
       DevProfiler.instance.trace('tick_npc_processing (${npcs.length} npcs)',
@@ -138,9 +176,8 @@ class GameTickService {
             destroyed++;
             continue;
           }
-          if (npc.turns <= 0) {
-            skipped++;
-            continue;
+          if (npc.energy <= 0) {
+            stranded++;
           }
           if (isNpcLocked(npc.id)) {
             skipped++;
@@ -148,7 +185,17 @@ class GameTickService {
           }
 
           final before = npc;
-          npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
+          try {
+            npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
+          } catch (e) {
+            // One bad NPC (bad data, failed assert) must never abort the
+            // whole tick — keep its pre-tick state and move on. The error
+            // is logged so it gets fixed instead of looping silently.
+            errored++;
+            GameEventLog.global
+                .system('[TickService] NPC error (${npc.pilotName}): $e');
+            continue;
+          }
           final after = npcs[i];
           processed++;
 
@@ -174,25 +221,16 @@ class GameTickService {
             log.combat('${npc.pilotName} destroyed another vessel');
           }
         }
+        if (errored > 0) {
+          GameEventLog.global.system(
+              '[TickService] $errored NPC(s) errored this tick (state kept)');
+        }
       });
 
-      // Replenish turns for NPCs that have run out (every 60 ticks ~ 30min at 30s)
-      // This prevents NPCs from going permanently idle
-      if (skipped > 0 && _runsSinceLastReplenish++ % 60 == 0) {
-        DevProfiler.instance.trace('tick_replenish_turns', () {
-          int replenished = 0;
-          for (int i = 0; i < npcs.length; i++) {
-            if (npcs[i].turns <= 0 && !npcs[i].isDestroyed) {
-              npcs[i] = npcs[i].copyWith(turns: 200);
-              replenished++;
-            }
-          }
-          if (replenished > 0) {
-            debugPrint(
-                '[TickService] Replenished turns for $replenished idle NPCs');
-          }
-        });
-      }
+      // No turn replenishment: NPCs refuel at Hardware Emporiums, trickle-
+      // charge via Solar Arrays, or take an emergency reserve when stranded
+      // (see NpcAiService._handleStranded). Zero-energy NPCs are still
+      // processed so they can recover.
 
       // Save all updated NPCs (destroyed ones retained for stats/history)
       await DevProfiler.instance
@@ -214,7 +252,7 @@ class GameTickService {
           // No combat in FedSpace
           if (fedSpaceEnd <= 0 || playerSectorId > fedSpaceEnd) {
             for (final npc in npcs) {
-              if (npc.isDestroyed || npc.turns <= 0) continue;
+              if (npc.isDestroyed || npc.energy <= 0) continue;
               if (isNpcLocked(npc.id)) continue;
               if (npc.currentSectorId != playerSectorId) continue;
               if (!NpcAiService.shouldAttackPlayer(npc, player)) continue;
@@ -241,10 +279,11 @@ class GameTickService {
       stopwatch.stop();
       DevProfiler.instance
           .record('tick_total', stopwatch.elapsedMicroseconds / 1000.0);
-      debugPrint('[TickService] Tick complete: $processed processed, '
-          '$skipped skipped, $destroyed destroyed '
-          '(${stopwatch.elapsedMilliseconds}ms) '
-          '[$portsRegened ports regened]');
+      GameEventLog.global
+          .system('[TickService] Tick complete: $processed processed, '
+              '$skipped skipped, $stranded stranded, $destroyed destroyed, '
+              '$errored errored (${stopwatch.elapsedMilliseconds}ms) '
+              '[$portsRegened ports regened]');
 
       onTickComplete?.call(npcs);
 
@@ -254,12 +293,10 @@ class GameTickService {
         onNpcAttacksPlayer?.call(finalAttackEvent);
       }
     } catch (e) {
-      debugPrint('[TickService] Error: $e');
+      GameEventLog.global.system('[TickService] Error: $e');
       onTickError?.call(e);
     }
   }
-
-  int _runsSinceLastReplenish = 0;
 
   /// Returns set of sector IDs within [maxHops] warps of [fromId].
   Set<int> _reachableWithin(int fromId, List<Sector> sectors, int maxHops) {

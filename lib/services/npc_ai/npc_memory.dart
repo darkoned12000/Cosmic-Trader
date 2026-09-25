@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 
 class PortInfo {
@@ -9,6 +10,7 @@ class PortInfo {
   final double portCredits;
   final double desiredCredits;
   final String? owner;
+  final FactionClass? ownerFaction;
 
   const PortInfo({
     required this.name,
@@ -19,6 +21,7 @@ class PortInfo {
     this.portCredits = 0,
     this.desiredCredits = 0,
     this.owner,
+    this.ownerFaction,
   });
 
   double get cashRatio {
@@ -28,11 +31,15 @@ class PortInfo {
 
   double get priceMultiplier => 0.5 + 0.5 * cashRatio;
 
-  double getEffectiveSellPrice(String commodity) =>
-      (sellPrices[commodity] ?? 0) * priceMultiplier;
+  double getEffectiveSellPrice(String commodity, {int standing = 0}) =>
+      (sellPrices[commodity] ?? 0) *
+      priceMultiplier *
+      Port.standingBuyMultiplier(standing);
 
-  double getEffectiveBuyPrice(String commodity) =>
-      (buyPrices[commodity] ?? 0) * priceMultiplier;
+  double getEffectiveBuyPrice(String commodity, {int standing = 0}) =>
+      (buyPrices[commodity] ?? 0) *
+      priceMultiplier *
+      Port.standingSellMultiplier(standing);
 
   Map<String, dynamic> toJson() {
     return {
@@ -44,6 +51,7 @@ class PortInfo {
       'portCredits': portCredits,
       'desiredCredits': desiredCredits,
       'owner': owner,
+      'ownerFaction': ownerFaction?.name,
     };
   }
 
@@ -70,7 +78,16 @@ class PortInfo {
       portCredits: (json['portCredits'] as num?)?.toDouble() ?? 0.0,
       desiredCredits: (json['desiredCredits'] as num?)?.toDouble() ?? 0.0,
       owner: json['owner'] as String?,
+      ownerFaction: _parseFactionClass(json['ownerFaction'] as String?),
     );
+  }
+
+  static FactionClass? _parseFactionClass(String? name) {
+    if (name == null) return null;
+    for (final v in FactionClass.values) {
+      if (v.name == name) return v;
+    }
+    return null;
   }
 }
 
@@ -104,6 +121,14 @@ class NpcMemory {
   final DateTime? lastTradeTime;
   final DateTime? lastBankTime;
 
+  /// Failed trade routes ("buyId>sellId:commodity" → epoch ms). A route
+  /// that just failed is skipped by route selection until the cooldown
+  /// lapses, so NPCs don't spin on doomed routes built from stale prices.
+  final Map<String, int> failedRoutes;
+
+  /// Cooldown before a failed route becomes eligible again.
+  static const Duration routeCooldown = Duration(minutes: 5);
+
   const NpcMemory({
     this.visitedSectors = const {},
     this.discoveredPorts = const {},
@@ -112,6 +137,7 @@ class NpcMemory {
     this.factionStandings = const {},
     this.lastTradeTime,
     this.lastBankTime,
+    this.failedRoutes = const {},
   });
 
   factory NpcMemory.empty() => const NpcMemory();
@@ -124,6 +150,7 @@ class NpcMemory {
     Map<String, int>? factionStandings,
     DateTime? lastTradeTime,
     DateTime? lastBankTime,
+    Map<String, int>? failedRoutes,
   }) {
     return NpcMemory(
       visitedSectors: visitedSectors ?? this.visitedSectors,
@@ -133,6 +160,7 @@ class NpcMemory {
       factionStandings: factionStandings ?? this.factionStandings,
       lastTradeTime: lastTradeTime ?? this.lastTradeTime,
       lastBankTime: lastBankTime ?? this.lastBankTime,
+      failedRoutes: failedRoutes ?? this.failedRoutes,
     );
   }
 
@@ -172,6 +200,35 @@ class NpcMemory {
     return copyWith(factionStandings: updated);
   }
 
+  /// Route key for cooldown tracking.
+  static String routeKey(int? buyPortId, int? sellPortId, String? commodity) =>
+      '$buyPortId>$sellPortId:$commodity';
+
+  /// Records a failed route, starting its cooldown.
+  NpcMemory withFailedRoute(String key, {int? nowMs}) {
+    final updated = Map<String, int>.from(failedRoutes);
+    updated[key] = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    return copyWith(failedRoutes: updated);
+  }
+
+  /// True when [key] failed within [routeCooldown] (stale entries are
+  /// pruned on read).
+  bool isRouteCooling(String key, {int? nowMs}) {
+    final at = failedRoutes[key];
+    if (at == null) return false;
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    return now - at < routeCooldown.inMilliseconds;
+  }
+
+  /// Live (unexpired) failed-route keys for route selection to skip.
+  Set<String> coolingRoutes({int? nowMs}) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    return {
+      for (final entry in failedRoutes.entries)
+        if (now - entry.value < routeCooldown.inMilliseconds) entry.key,
+    };
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'visitedSectors': visitedSectors.toList(),
@@ -185,6 +242,7 @@ class NpcMemory {
       'factionStandings': factionStandings,
       'lastTradeTime': lastTradeTime?.toIso8601String(),
       'lastBankTime': lastBankTime?.toIso8601String(),
+      'failedRoutes': failedRoutes.map((k, v) => MapEntry(k, v)),
     };
   }
 
@@ -220,6 +278,10 @@ class NpcMemory {
       lastBankTime: json['lastBankTime'] != null
           ? DateTime.parse(json['lastBankTime'] as String)
           : null,
+      failedRoutes: (json['failedRoutes'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toInt()),
+          ) ??
+          const {},
     );
   }
 }

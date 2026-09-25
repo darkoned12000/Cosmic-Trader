@@ -6,6 +6,7 @@ import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/screens/port_management_screen.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/widgets/lottery_widget.dart';
@@ -69,6 +70,14 @@ class PortTradeView extends StatelessWidget {
   int _remainingSupply(String commodity) => port.getSupply(commodity);
   int _remainingDemand(String commodity) => port.getDemand(commodity);
 
+  /// Player standing toward the port's owner faction (0 when unowned).
+  /// Drives B3 standing-discounted prices in _canBuy/_canSell/_buy/_sell.
+  int get _portStanding {
+    final ownerFaction = port.ownerFaction;
+    if (ownerFaction == null) return 0;
+    return player.factionStandingWith(ownerFaction);
+  }
+
   int _playerAmount(String commodity) => player.cargo[commodity] ?? 0;
 
   String _formatCredits(double value) {
@@ -87,7 +96,9 @@ class PortTradeView extends StatelessWidget {
   bool _canBuy(String commodity) {
     if (!port.sells(commodity)) return false;
     if (_remainingSupply(commodity) <= 0) return false;
-    final price = port.getEffectiveSellPrice(commodity);
+    final price = port
+        .getEffectiveSellPriceFor(commodity, standing: _portStanding)
+        .toInt();
     if (price <= 0) return false;
     final totalCost = price * (1 + _ownerFeeRate);
     if (player.credits < totalCost) return false;
@@ -98,14 +109,18 @@ class PortTradeView extends StatelessWidget {
   bool _canSell(String commodity) {
     if (!port.buys(commodity)) return false;
     if (_remainingDemand(commodity) <= 0) return false;
-    final price = port.getEffectiveBuyPrice(commodity);
+    final price = port
+        .getEffectiveBuyPriceFor(commodity, standing: _portStanding)
+        .toInt();
     if (price <= 0) return false;
     if ((player.cargo[commodity] ?? 0) <= 0) return false;
     return true;
   }
 
   void _buy(String commodity) {
-    final price = port.getEffectiveSellPrice(commodity).toInt();
+    final price = port
+        .getEffectiveSellPriceFor(commodity, standing: _portStanding)
+        .toInt();
     if (price <= 0) return;
     if (_remainingSupply(commodity) <= 0) return;
     AudioService.instance.playSfx('assets/sfx/buy.ogg');
@@ -135,10 +150,20 @@ class PortTradeView extends StatelessWidget {
       cargoUsed: player.cargoUsed + amount,
       credits: player.credits - transactionValue - ownerFee,
     )));
+    EconomyMetrics.global.recordTrade(
+      commodity: commodity,
+      units: amount,
+      credits: transactionValue,
+      actorFaction: player.faction.name,
+      isPlayer: true,
+      isBuy: true,
+    );
   }
 
   void _sell(String commodity) {
-    final price = port.getEffectiveBuyPrice(commodity).toInt();
+    final price = port
+        .getEffectiveBuyPriceFor(commodity, standing: _portStanding)
+        .toInt();
     if (price <= 0) return;
     final currentQty = player.cargo[commodity] ?? 0;
     if (currentQty <= 0) return;
@@ -172,6 +197,14 @@ class PortTradeView extends StatelessWidget {
       cargoUsed: player.cargoUsed - amount,
       credits: player.credits + transactionValue - ownerFee,
     )));
+    EconomyMetrics.global.recordTrade(
+      commodity: commodity,
+      units: amount,
+      credits: transactionValue,
+      actorFaction: player.faction.name,
+      isPlayer: true,
+      isBuy: false,
+    );
   }
 
   Player _withTradeReputation(Player updated) {

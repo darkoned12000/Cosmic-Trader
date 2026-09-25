@@ -66,6 +66,25 @@ class Port {
   /// Mode of the current attack: "capture" or "destroy".
   final String? attackMode;
 
+  /// Per-commodity random-walk drift factors (B2). Random walk ±3% per game
+  /// tick with mean reversion toward 1.0, clamped to [0.7, 1.4]. Multiplied
+  /// into effective prices so quiet ports still move. Owner overrides win.
+  final Map<String, double> priceDrift;
+
+  /// Homeworld premium on goods this port buys (B2 regionals): set at
+  /// universe generation from BFS distance to faction homeworlds
+  /// (1.30/1.20/1.10 at 0/1/2 hops for the faction's preferred good).
+  /// Absent keys read 1.0.
+  final Map<String, double> regionalBuyBonus;
+
+  /// Anomaly market modifier (B2 regionals, all goods, buy side).
+  /// Boom 1.10 / bust 0.90 in or adjacent to an anomaly sector, else 1.0.
+  final double anomalyBuyBonus;
+
+  /// Anomaly market modifier on all goods this port buys (B2 regionals):
+  /// boom 1.10 / bust 0.90 for ports in or adjacent to an anomaly sector,
+  /// 1.0 elsewhere. Set at generation.
+
   /// Timestamp until which a successful sabotage has weakened this port's
   /// combat defenses. Null means no active sabotage.
   final int? securityCompromisedUntil;
@@ -90,6 +109,9 @@ class Port {
     this.accumulatedRevenue = 0.0,
     this.ownerTaxRate = 0.05,
     this.pricingOverride,
+    this.priceDrift = const {},
+    this.regionalBuyBonus = const {},
+    this.anomalyBuyBonus = 1.0,
     this.currentShields = 0,
     this.isUnderAttack = false,
     this.isDestroyed = false,
@@ -195,8 +217,8 @@ class Port {
   /// Whether the next storage level can be purchased (max 10).
   bool get canUpgradeStorage => storageLevel < 10;
 
-  /// Get the effective price multiplier for a commodity, considering both
-  /// cash-driven pricing and any owner pricing override.
+  /// Get the effective price multiplier for a commodity, considering cash-
+  /// driven pricing and any owner pricing override (which wins outright).
   double getEffectivePriceMultiplier(String? commodity) {
     if (commodity != null && pricingOverride?.containsKey(commodity) == true) {
       return pricingOverride![commodity]!;
@@ -204,11 +226,86 @@ class Port {
     return priceMultiplier;
   }
 
+  /// Scarcity premium on goods the port sells: full shelves read 0.75x
+  /// (glut discount), bare shelves 1.25x. Neutral 1.0x at half stock.
+  /// Returns 1.0 when the port carries no stock line for [commodity].
+  double supplyPriceMultiplier(String commodity) {
+    final max = effectiveMaxSupply(commodity);
+    if (max <= 0) return 1.0;
+    final ratio = (supply[commodity] ?? 0) / max;
+    return (1.25 - 0.5 * ratio.clamp(0.0, 1.0));
+  }
+
+  /// Demand premium on goods the port buys: desperate (full demand book)
+  /// reads 1.25x, satisfied 0.75x. Neutral 1.0x at half book.
+  /// Returns 1.0 when the port has no demand line for [commodity].
+  double demandPriceMultiplier(String commodity) {
+    final max = effectiveMaxDemand(commodity);
+    if (max <= 0) return 1.0;
+    final ratio = (demand[commodity] ?? 0) / max;
+    return (0.75 + 0.5 * ratio.clamp(0.0, 1.0));
+  }
+
+  /// Current drift factor for [commodity] (1.0 when never drifted).
+  double driftFor(String commodity) => priceDrift[commodity] ?? 1.0;
+
+  /// One tick of random-walk drift for every traded commodity: ±3% uniform
+  /// step plus 15% mean reversion toward 1.0, clamped to [0.7, 1.4].
+  /// Returns an updated Port (this unchanged).
+  Port applyDrift(math.Random rng) {
+    final traded = <String>{...buyPrices.keys, ...sellPrices.keys};
+    if (traded.isEmpty) return this;
+    final drift = Map<String, double>.from(priceDrift);
+    for (final commodity in traded) {
+      final current = drift[commodity] ?? 1.0;
+      final stepped =
+          current + (1.0 - current) * 0.15 + (rng.nextDouble() * 0.06 - 0.03);
+      drift[commodity] = stepped.clamp(0.7, 1.4);
+    }
+    return copyWith(priceDrift: drift);
+  }
+
   double getEffectiveSellPrice(String commodity) =>
-      getSellPrice(commodity) * getEffectivePriceMultiplier(commodity);
+      getEffectiveSellPriceFor(commodity);
 
   double getEffectiveBuyPrice(String commodity) =>
-      getBuyPrice(commodity) * getEffectivePriceMultiplier(commodity);
+      getEffectiveBuyPriceFor(commodity);
+
+  /// Buy-side price with faction standing applied (B3): +100 standing →
+  /// 20% cheaper, −100 → 20% markup. Clamped to [0.8, 1.25].
+  /// This is the price a buyer PAYS the port.
+  static double standingBuyMultiplier(int standing) =>
+      (1 - standing * 0.002).clamp(0.8, 1.25);
+
+  /// Sell-side price with faction standing applied (B3): +100 standing →
+  /// 20% richer payout, −100 → 20% docked. Clamped to [0.8, 1.25].
+  /// This is what the port PAYS the seller.
+  static double standingSellMultiplier(int standing) =>
+      (1 + standing * 0.002).clamp(0.8, 1.25);
+
+  double getEffectiveSellPriceFor(String commodity, {int standing = 0}) {
+    if (pricingOverride?.containsKey(commodity) == true) {
+      return getSellPrice(commodity) * getEffectivePriceMultiplier(commodity);
+    }
+    return getSellPrice(commodity) *
+        getEffectivePriceMultiplier(commodity) *
+        supplyPriceMultiplier(commodity) *
+        driftFor(commodity) *
+        standingBuyMultiplier(standing);
+  }
+
+  double getEffectiveBuyPriceFor(String commodity, {int standing = 0}) {
+    if (pricingOverride?.containsKey(commodity) == true) {
+      return getBuyPrice(commodity) * getEffectivePriceMultiplier(commodity);
+    }
+    return getBuyPrice(commodity) *
+        getEffectivePriceMultiplier(commodity) *
+        demandPriceMultiplier(commodity) *
+        driftFor(commodity) *
+        (regionalBuyBonus[commodity] ?? 1.0) *
+        anomalyBuyBonus *
+        standingSellMultiplier(standing);
+  }
 
   /// Regenerate supply/demand toward maxSupply/maxDemand over a 24-hour
   /// cycle. Each call restores a fraction proportional to the time elapsed
@@ -279,6 +376,9 @@ class Port {
     Map<String, double>? pricingOverride,
     bool clearOwner = false,
     bool clearPricingOverride = false,
+    Map<String, double>? priceDrift,
+    Map<String, double>? regionalBuyBonus,
+    double? anomalyBuyBonus,
     int? currentShields,
     bool? isUnderAttack,
     bool? isDestroyed,
@@ -310,6 +410,9 @@ class Port {
       pricingOverride: clearPricingOverride
           ? null
           : (pricingOverride ?? this.pricingOverride),
+      priceDrift: priceDrift ?? this.priceDrift,
+      regionalBuyBonus: regionalBuyBonus ?? this.regionalBuyBonus,
+      anomalyBuyBonus: anomalyBuyBonus ?? this.anomalyBuyBonus,
       currentShields: currentShields ?? this.currentShields,
       isUnderAttack: isUnderAttack ?? this.isUnderAttack,
       isDestroyed: isDestroyed ?? this.isDestroyed,
@@ -342,6 +445,9 @@ class Port {
       'accumulatedRevenue': accumulatedRevenue,
       'ownerTaxRate': ownerTaxRate,
       'pricingOverride': pricingOverride,
+      'priceDrift': priceDrift,
+      'regionalBuyBonus': regionalBuyBonus,
+      'anomalyBuyBonus': anomalyBuyBonus,
       'currentShields': currentShields,
       'isUnderAttack': isUnderAttack,
       'isDestroyed': isDestroyed,
@@ -384,6 +490,15 @@ class Port {
       ownerTaxRate: (json['ownerTaxRate'] as num?)?.toDouble() ?? 0.05,
       pricingOverride: (json['pricingOverride'] as Map<String, dynamic>?)
           ?.cast<String, double>(),
+      priceDrift: (json['priceDrift'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toDouble()),
+          ) ??
+          {},
+      regionalBuyBonus: (json['regionalBuyBonus'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toDouble()),
+          ) ??
+          {},
+      anomalyBuyBonus: (json['anomalyBuyBonus'] as num?)?.toDouble() ?? 1.0,
       currentShields: (json['currentShields'] as int?) ?? 0,
       isUnderAttack: (json['isUnderAttack'] as bool?) ?? false,
       isDestroyed: (json['isDestroyed'] as bool?) ?? false,

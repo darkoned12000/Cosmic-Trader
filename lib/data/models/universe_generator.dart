@@ -74,6 +74,7 @@ class UniverseGenerator {
 
     // === Phase 8: planets, NPCs, aliens ===
     _assignPlanets(sectors, rng);
+    _assignRegionals(sectors);
     _assignNpcsAndAliens(sectors, rng);
 
     // === Phase 9: persistent NPC generation ===
@@ -662,30 +663,59 @@ class UniverseGenerator {
 
   /// Dynamically generates a random port type string
   /// based on how many commodities are configured.
-  /// Ensures at least one 'S' and one 'B' character.
-  String _randomPortType(math.Random rng) {
-    final count = settings.commodityConfigs.length;
+  /// Ensures at least one 'S' and one 'B' character among legal goods.
+  ///
+  /// Contraband ('X' = not traded here) is restricted to the black market:
+  /// only free/independent ports may deal it, at [blackMarketPortFraction].
+  /// Federal ports and Hardware Emporiums never touch it.
+  static const double blackMarketPortFraction = 0.3;
+
+  /// True when a port of [portClass] may trade contraband on a roll of
+  /// [roll] (0.0–1.0). Only free/independent ports qualify — federal ports
+  /// and Hardware Emporiums never touch black-market goods.
+  static bool isBlackMarketPort(PortClass portClass, double roll) =>
+      (portClass == PortClass.free || portClass == PortClass.independent) &&
+      roll < blackMarketPortFraction;
+
+  String _randomPortType(math.Random rng, PortClass portClass) {
+    final names = settings.commodityConfigs.values.map((c) => c.name).toList();
+    final count = names.length;
     final chars = List<String>.generate(count, (_) => '');
-    // Pick at which indices to place the mandatory S and B.
-    final sIdx = rng.nextInt(count);
-    var bIdx = rng.nextInt(count);
+    final contrabandIdx = names.indexOf('contraband');
+    // Mandatory S and B land on legal goods only.
+    final legal =
+        List<int>.generate(count, (i) => i).where((i) => i != contrabandIdx);
+    final legalList = legal.toList();
+    final sIdx = legalList[rng.nextInt(legalList.length)];
+    var bIdx = legalList[rng.nextInt(legalList.length)];
     while (bIdx == sIdx) {
-      bIdx = rng.nextInt(count);
+      bIdx = legalList[rng.nextInt(legalList.length)];
     }
     for (int i = 0; i < count; i++) {
-      chars[i] = (i == sIdx)
-          ? 'S'
-          : (i == bIdx)
-              ? 'B'
-              : (rng.nextBool() ? 'S' : 'B');
+      if (i == contrabandIdx) {
+        final blackMarket =
+            UniverseGenerator.isBlackMarketPort(portClass, rng.nextDouble());
+        chars[i] = blackMarket ? (rng.nextBool() ? 'S' : 'B') : 'X';
+      } else {
+        chars[i] = (i == sIdx)
+            ? 'S'
+            : (i == bIdx)
+                ? 'B'
+                : (rng.nextBool() ? 'S' : 'B');
+      }
     }
     return chars.join();
   }
 
+  /// Char at [i], tolerating type strings generated for a different
+  /// commodity count (old saves) — missing entries read as 'X' (untraded).
+  String _typeChar(String portType, int i) =>
+      i < portType.length ? portType[i] : 'X';
+
   Port _createPort(Sector sector, math.Random rng,
       {bool forceFederal = false, String? name}) {
     final portClass = forceFederal ? PortClass.federal : _pickPortClass(rng);
-    final portType = _randomPortType(rng);
+    final portType = _randomPortType(rng, portClass);
     final prices = _generatePortPrices(portType, rng);
     final qty = _generatePortQuantities(portType, rng);
     final defenseLevel = _pickDefenseLevel(rng);
@@ -781,7 +811,7 @@ class UniverseGenerator {
     final configs = settings.commodityConfigs.values.toList();
 
     for (int i = 0; i < configs.length; i++) {
-      if (portType[i] == 'B') {
+      if (_typeChar(portType, i) == 'B') {
         final buyPrice = prices.buyPrices[configs[i].name] ?? 0;
         final demand = qty.demand[configs[i].name] ?? 0;
         neededCredits += buyPrice * demand;
@@ -819,7 +849,7 @@ class UniverseGenerator {
     for (int i = 0; i < configs.length; i++) {
       final c = configs[i];
       final split = c.splitPoint;
-      if (portType[i] == 'S') {
+      if (_typeChar(portType, i) == 'S') {
         // Port sells to player: pick from lower half [priceMin, splitPoint)
         final maxSell = split - 0.01;
         if (maxSell <= c.priceMin) {
@@ -829,11 +859,13 @@ class UniverseGenerator {
               (c.priceMin + rng.nextDouble() * (maxSell - c.priceMin))
                   .roundToDouble();
         }
-      } else {
+      } else if (_typeChar(portType, i) == 'B') {
         // Port buys from player: pick from upper half [splitPoint, priceMax]
         buyPrices[c.name] =
             (split + rng.nextDouble() * (c.priceMax - split)).roundToDouble();
       }
+      // 'X' (black-market goods at law-abiding ports, padding on old saves):
+      // no prices either way — the port does not trade this commodity.
     }
 
     return _PortPrices(buyPrices, sellPrices);
@@ -848,14 +880,101 @@ class UniverseGenerator {
     for (int i = 0; i < configs.length; i++) {
       final c = configs[i];
       final qty = c.qtyMin + rng.nextInt(c.qtyMax - c.qtyMin + 1);
-      if (portType[i] == 'S') {
+      if (_typeChar(portType, i) == 'S') {
         supply[c.name] = qty;
-      } else {
+      } else if (_typeChar(portType, i) == 'B') {
         demand[c.name] = qty;
       }
+      // 'X' carries no stock either way.
     }
 
     return _PortQuantities(supply, demand);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 8b – Regional market modifiers (B2)
+  // ---------------------------------------------------------------------------
+
+  /// Faction homeworlds pay a premium for their preferred good; anomaly
+  /// sectors (and their warp neighbors) boom or bust all goods. Computed
+  /// once here and denormalized onto ports so pricing stays a cheap read.
+  /// Pirates hold no homeworlds (see _assignHomeworlds) — their premium is
+  /// the black market itself.
+  static const Map<FactionClass, String> preferredGoods = {
+    FactionClass.duran: 'munitions',
+    FactionClass.vinari: 'crystalline',
+    FactionClass.trader: 'industrial',
+  };
+
+  /// Buy-price premium by homeworld hop distance (0/1/2 hops).
+  static const List<double> homeworldPremiumByHops = [1.30, 1.20, 1.10];
+
+  static const double anomalyBoom = 1.10;
+  static const double anomalyBust = 0.90;
+
+  void _assignRegionals(List<Sector> sectors) {
+    final byId = {for (final s in sectors) s.id: s};
+
+    // Homeworld premiums (BFS rings, max wins on overlap).
+    for (final s in sectors) {
+      final planet = s.planet;
+      final homeworldOf = planet?.homeworldOf;
+      final good = homeworldOf != null ? preferredGoods[homeworldOf] : null;
+      if (planet == null ||
+          !planet.isHomeworld ||
+          homeworldOf == null ||
+          good == null) {
+        continue;
+      }
+      final distances = _bfsDistances(sectors, s.id, 2);
+      for (final entry in distances.entries) {
+        final target = byId[entry.key];
+        final port = target?.port;
+        if (port == null) continue;
+        final premium = homeworldPremiumByHops[entry.value];
+        final current = port.regionalBuyBonus[good] ?? 1.0;
+        if (premium > current) {
+          target!.port = port.copyWith(
+            regionalBuyBonus: {...port.regionalBuyBonus, good: premium},
+          );
+        }
+      }
+    }
+
+    // Anomaly boom/bust: the sector itself plus warp neighbors.
+    for (final s in sectors) {
+      final anomaly = s.anomaly;
+      if (anomaly == null || anomaly.isEmpty) continue;
+      // Deterministic per anomaly name: even hash booms, odd busts.
+      final boom = anomaly.codeUnits.fold(0, (a, b) => a + b).isEven;
+      final mult = boom ? anomalyBoom : anomalyBust;
+      for (final id in [s.id, ...s.warpRoutes]) {
+        final target = byId[id];
+        final port = target?.port;
+        if (port == null) continue;
+        target!.port = port.copyWith(anomalyBuyBonus: mult);
+      }
+    }
+  }
+
+  /// Hop distances from [startId] capped at [maxDepth].
+  Map<int, int> _bfsDistances(List<Sector> sectors, int startId, int maxDepth) {
+    final byId = {for (final s in sectors) s.id: s};
+    final dist = <int, int>{startId: 0};
+    var edge = <int>[startId];
+    for (int depth = 1; depth <= maxDepth; depth++) {
+      final next = <int>[];
+      for (final id in edge) {
+        for (final nid in byId[id]?.warpRoutes ?? const <int>[]) {
+          if (!dist.containsKey(nid)) {
+            dist[nid] = depth;
+            next.add(nid);
+          }
+        }
+      }
+      edge = next;
+    }
+    return dist;
   }
 
   // ---------------------------------------------------------------------------

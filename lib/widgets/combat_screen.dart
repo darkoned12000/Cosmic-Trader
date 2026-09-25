@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
@@ -316,12 +317,36 @@ class _CombatScreenState extends State<CombatScreen>
 
     int loot = 0;
     SalvageReward salvage = const SalvageReward(scrapMetal: 0, scrapTech: 0);
+    var lootedUnits = 0;
     if (victory) {
       loot = (_npc.credits * 0.5).round();
       salvage = SalvageService.rollForNpc(_npc);
+      EconomyMetrics.global.recordLoot(
+        actorFaction: _player.faction.name,
+        credits: loot,
+        isPlayer: true,
+      );
+      // Victim cargo transfers up to free hold space — contraband first,
+      // so killing smugglers pays in black-market goods. Overflow is lost.
+      final lootedCargo = Map<String, int>.from(_player.cargo);
+      var freeHolds = _player.maxCargo - _player.cargoUsed;
+      final victimCargo = Map<String, int>.from(_npc.cargo);
+      final ordered = victimCargo.keys.toList()
+        ..sort((a, b) =>
+            (b == 'contraband' ? 1 : 0) - (a == 'contraband' ? 1 : 0));
+      for (final commodity in ordered) {
+        if (freeHolds <= 0) break;
+        final take = (victimCargo[commodity] ?? 0).clamp(0, freeHolds);
+        if (take <= 0) continue;
+        lootedCargo[commodity] = (lootedCargo[commodity] ?? 0) + take;
+        lootedUnits += take;
+        freeHolds -= take;
+      }
       _player = SalvageService.applyToPlayer(
         _player.withFactionStandingChange(_npc.faction, -5).copyWith(
               credits: _player.credits + loot,
+              cargo: lootedCargo,
+              cargoUsed: _player.cargoUsed + lootedUnits,
               notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
             ),
         salvage,
@@ -337,7 +362,8 @@ class _CombatScreenState extends State<CombatScreen>
       _combatLog.add(
         'Loot recovered: $loot cr, '
         '${salvage.scrapMetal} scrap metal, '
-        '${salvage.scrapTech} scrap tech',
+        '${salvage.scrapTech} scrap tech'
+        '${lootedUnits > 0 ? ', $lootedUnits cargo' : ''}',
       );
     } else if (fled) {
       _player = _player.copyWith(
@@ -349,7 +375,8 @@ class _CombatScreenState extends State<CombatScreen>
       ActionLogProvider.global.combat(
           'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId} — '
           'looted $loot cr, ${salvage.scrapMetal} scrap metal, '
-          '${salvage.scrapTech} scrap tech');
+          '${salvage.scrapTech} scrap tech'
+          '${lootedUnits > 0 ? ', $lootedUnits cargo' : ''}');
     } else if (fled) {
       ActionLogProvider.global.combat(
           'Fled from ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');

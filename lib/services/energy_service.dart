@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 
@@ -47,6 +48,79 @@ class EnergyService {
         1, engineFor(player).efficiencyAtLevel(player.engineEquipmentLevel));
     final raw = (baseWarpCost * safeHops / efficiency).ceil();
     return raw < 1 ? 1 : raw;
+  }
+
+  /// Energy required for an NPC to warp [hops] sectors.
+  ///
+  /// NPCs carry only an engine *level* (no engine type name like players),
+  /// so efficiency is the level itself: a level-1 NPC pays the full
+  /// [baseWarpCost] per hop, matching the player starter rate.
+  static int npcWarpCost(NpcShip npc, {int hops = 1}) {
+    final safeHops = hops < 1 ? 1 : hops;
+    final efficiency = math.max(1, npc.engineEquipmentLevel);
+    final raw = (baseWarpCost * safeHops / efficiency).ceil();
+    return raw < 1 ? 1 : raw;
+  }
+
+  /// True when [npc] can pay for a warp of [hops] sectors right now.
+  static bool npcCanWarp(NpcShip npc, {int hops = 1}) =>
+      npc.hasEnergy(npcWarpCost(npc, hops: hops));
+
+  /// Missing NPC energy units before [NpcShip.maxEnergy] is reached.
+  static int npcMissingEnergy(NpcShip npc) {
+    final missing = npc.maxEnergy - npc.energy;
+    return missing < 0 ? 0 : missing;
+  }
+
+  /// Credits required for [npc] to buy [units] of energy.
+  static int npcRefuelCost(NpcShip npc, {int? units}) {
+    final requested = units ?? npcMissingEnergy(npc);
+    final amount = requested < 0 ? 0 : requested;
+    return amount * refuelCreditsPerUnit;
+  }
+
+  /// Energy recovered per tick for an NPC Solar Array level.
+  static int npcSolarRechargePerTick(NpcShip npc) =>
+      (npc.solarArrayLevel < 0 ? 0 : npc.solarArrayLevel) *
+      solarArrayRegenPerLevelPerTick;
+
+  /// Applies one tick of NPC Solar Array regeneration. Returns the NPC
+  /// unchanged when no array is installed/deployed or the tank is full.
+  static ({NpcShip npc, int unitsAdded}) npcSolarRecharge(NpcShip npc) {
+    final units = npcSolarRechargePerTick(npc);
+    if (units <= 0 || !npc.solarArrayDeployed || npc.energy >= npc.maxEnergy) {
+      return (npc: npc, unitsAdded: 0);
+    }
+    final missing = npcMissingEnergy(npc);
+    final unitsAdded = units > missing ? missing : units;
+    return (npc: npc.refuelEnergy(unitsAdded), unitsAdded: unitsAdded);
+  }
+
+  /// Returns a refueled NPC and the credits spent, clamped by credits and
+  /// remaining tank capacity.
+  static ({NpcShip npc, int creditsSpent, int unitsAdded}) npcRefuel(
+    NpcShip npc, {
+    int? units,
+  }) {
+    final affordableUnits = refuelCreditsPerUnit <= 0
+        ? npcMissingEnergy(npc)
+        : (npc.credits / refuelCreditsPerUnit).floor();
+    final requested = units ?? npcMissingEnergy(npc);
+    final cappedMissing = math.min(requested, npcMissingEnergy(npc));
+    final unitsAdded = math.max(0, math.min(cappedMissing, affordableUnits));
+    final creditsSpent = unitsAdded * refuelCreditsPerUnit;
+    final refueled = npc
+        .refuelEnergy(unitsAdded)
+        .copyWith(credits: npc.credits - creditsSpent);
+    return (npc: refueled, creditsSpent: creditsSpent, unitsAdded: unitsAdded);
+  }
+
+  /// Emergency reserve granted to a stranded NPC (mirrors TowService for
+  /// players): enough to operate once recovered.
+  static int npcEmergencyEnergy(NpcShip npc) {
+    final percentReserve = (npc.maxEnergy * 10 / 100).round();
+    final twoWarps = npcWarpCost(npc) * 2;
+    return math.max(1, math.max(percentReserve, twoWarps));
   }
 
   /// True when a warp of [hops] sectors can be paid for right now.

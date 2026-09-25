@@ -5,8 +5,6 @@ import 'package:cosmic_trader/services/energy_service.dart';
 Player _player({
   int energy = 1000,
   int maxEnergy = 1000,
-  int turns = 1000,
-  int maxTurns = 1000,
   int credits = 10000,
   String engine = 'juryRiggedFusion',
   int engineLevel = 1,
@@ -25,8 +23,6 @@ Player _player({
     cargoSize: 20,
     credits: credits,
     researchPoints: 0,
-    turns: turns,
-    maxTurns: maxTurns,
     energy: energy,
     maxEnergy: maxEnergy,
     engineEquipment: engine,
@@ -38,9 +34,11 @@ Player _player({
 
 void main() {
   test('legacy turns populate energy on old save files', () {
-    final legacyJson = _player(energy: 777, turns: 432, maxTurns: 654).toJson();
+    final legacyJson = _player(energy: 777).toJson();
     legacyJson.remove('energy');
     legacyJson.remove('maxEnergy');
+    legacyJson['turns'] = 432;
+    legacyJson['maxTurns'] = 654;
 
     final restored = Player.fromJson(legacyJson);
     expect(restored.energy, 432);

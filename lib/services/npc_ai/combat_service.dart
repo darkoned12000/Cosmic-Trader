@@ -1,9 +1,10 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/salvage_service.dart';
 
 class CombatResult {
@@ -106,10 +107,13 @@ class CombatService {
     final lootCargo = <String, int>{};
 
     if (defenderDestroyed) {
-      lootCredits = (defender.credits * 0.5).round();
+      // Credits floor: a debt-ridden defender (legacy of the pre-fix
+      // buy-phase clamp bug) pays nothing instead of billing the killer.
+      lootCredits = (defender.credits * 0.5).round().clamp(0, 1 << 30);
       lootCargo.addAll(defender.cargo);
     }
 
+    final lootResult = _mergeLootCargo(attacker, lootCargo);
     final updatedAttacker = attacker.copyWith(
       hull: atkHull,
       shields: atkShields,
@@ -117,6 +121,8 @@ class CombatService {
       kills: attacker.kills + (defenderDestroyed ? 1 : 0),
       totalDamageDealt: attacker.totalDamageDealt + atkDamage,
       totalDamageTaken: attacker.totalDamageTaken + defDamage,
+      cargo: lootResult.cargo,
+      cargoUsed: attacker.cargoUsed + lootResult.unitsTaken,
     );
 
     final updatedDefender = defender.copyWith(
@@ -132,8 +138,13 @@ class CombatService {
     );
 
     if (defenderDestroyed) {
-      debugPrint(
+      GameEventLog.global.combat(
           '[${attacker.pilotName}] Destroyed ${defender.pilotName} — looted $lootCredits cr');
+      EconomyMetrics.global.recordLoot(
+        actorFaction: attacker.faction.name,
+        credits: lootCredits,
+        isPlayer: false,
+      );
     }
 
     return (
@@ -149,6 +160,27 @@ class CombatService {
         lootCargo: lootCargo,
       ),
     );
+  }
+
+  /// Victim cargo merged into the attacker's holds, capped by free space.
+  /// Contraband and other black-market goods transfer like anything else —
+  /// killing smugglers is a supply line.
+  static ({Map<String, int> cargo, int unitsTaken}) _mergeLootCargo(
+      NpcShip attacker, Map<String, int> loot) {
+    var free = attacker.cargoHoldCapacity - attacker.cargoUsed;
+    final merged = Map<String, int>.from(attacker.cargo);
+    var taken = 0;
+    if (free > 0) {
+      for (final entry in loot.entries) {
+        if (free <= 0) break;
+        final take = entry.value.clamp(0, free);
+        if (take <= 0) continue;
+        merged[entry.key] = (merged[entry.key] ?? 0) + take;
+        free -= take;
+        taken += take;
+      }
+    }
+    return (cargo: merged, unitsTaken: taken);
   }
 
   /// Quick estimation: can [attacker] reliably win against [defender]?
@@ -284,8 +316,9 @@ class CombatService {
       scrapTech: npcDestroyed ? 0 : npc.scrapTech,
     );
 
-    debugPrint('[PlayerCombat] Dealt $damageDealt to ${npc.pilotName}, '
-        'took $damageTaken, ${npcDestroyed ? 'destroyed' : 'damaged'}');
+    GameEventLog.global
+        .combat('[PlayerCombat] Dealt $damageDealt to ${npc.pilotName}, '
+            'took $damageTaken, ${npcDestroyed ? 'destroyed' : 'damaged'}');
 
     return PlayerCombatResult(
       damageDealt: damageDealt,
