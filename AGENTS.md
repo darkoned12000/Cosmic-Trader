@@ -147,9 +147,17 @@ lib/
       hud_pill.dart               -- density-aware HudPill (tiny rounded badge)
       data_table_shell.dart       -- density-aware DataTableShell (bordered dense table,
                                      optional zebra striping)
-    hud_strip.dart                -- persistent top HUD (sector name/ID, credits, turns,
+    hud_strip.dart                -- persistent top HUD (sector name/ID, credits, energy,
                                      hull/shield bars), faction ambiance accent, responsive
   services/
+    energy_service.dart           -- B1 turn → energy rules: warp/scan action costs scaled by
+                                     distance + engine efficiency, refuel pricing/clamping,
+                                     Solar Array deploy/retract trickle charge (movement locked
+                                     while deployed)
+    salvage_service.dart         -- scrap drop rules for destroyed NPC ships (class-scaled
+                                     metal/tech), applied by player combat
+    tow_service.dart             -- stranded-ship recovery: nearest Hardware Emporium tow with
+                                     port fallback, distance-scaled credits, emergency reserve
     game_tick_service.dart        -- background timer (30s), batch NPC processing, turn replenishment,
                                      proximity-filtered event logging, NPC attack detection
     audio_service.dart            -- audio playback engine (music/sfx, folder scanning, loop mode,
@@ -179,7 +187,7 @@ lib/
 | `lib/core/tw_layout.dart` | Responsive layout breakpoints |
 | `lib/core/faction_colors.dart` | Single source of truth for the faction palette (`factionColor(FactionClass)` + `FactionPalette`) |
 | `lib/core/npc_name_generator.dart` | Procedural NPC pilot/ship name generation |
-| `lib/data/models/player.dart` | Player + ship stats + equipment + modules + scrap + banking + faction standings + hack history/codex/bans |
+| `lib/data/models/player.dart` | Player + ship stats + equipment + modules + scrap + banking + faction standings + hack history/codex/bans + energy/maxEnergy + solarArrayDeployed (B1 turns replacement; legacy turns kept for old saves) |
 | `lib/data/models/commodity.dart` | CommodityConfig + CommodityRegistry (data-driven economy) |
 | `lib/data/models/sector.dart` | Sector content container + structured port/planet + npcShips counts |
 | `lib/data/models/planet.dart` | Enhanced Planet model (10 types, colonies, levels, defense, images) |
@@ -247,6 +255,9 @@ lib/
 | `lib/widgets/shared/hud_pill.dart` | Shared `HudPill` — tiny rounded badge (port/faction/sabotaged/stat-chip tags) with radius/padding/font/icon overrides |
 | `lib/widgets/shared/data_table_shell.dart` | Shared `DataTableShell` — bordered dense table (header + divider-separated rows) |
 | `lib/services/game_tick_service.dart` | 30s background tick timer |
+| `lib/services/energy_service.dart` | B1 energy economy rules (warp/scan costs by distance + engine efficiency, refuel pricing/clamping) |
+| `lib/services/salvage_service.dart` | Scrap drop rules for destroyed NPC ships (class-scaled metal/tech) used by combat |
+| `lib/services/tow_service.dart` | Emergency Tow recovery — nearest Hardware Emporium tow with port fallback, distance-scaled fee, emergency energy |
 | `lib/services/audio_service.dart` | Audio playback engine (music/sfx, folder scanning, loop mode, equalizer) |
 | `lib/services/npc_ai/npc_ai_service.dart` | NPC AI orchestrator |
 | `lib/services/npc_ai/npc_goal.dart` | NPC goal types |
@@ -370,7 +381,7 @@ Full equipment system with faction-specific items across categories:
 - **Shields**: 12 types (faction-specific, varying shield/regen)
 - **Engines**: 12 types (faction-specific, varying speed/warp/efficiency)
 - **Weapons**: 15 types (laser/pulse/phaser/torpedo/missile × 3 tiers)
-- **Modules**: 7 types (cargo expander, scanner, cloaking, etc.)
+- **Modules**: 8 types (cargo expander, scanner, cloaking, solar array, etc.); Solar Array regenerates `2 * level` energy per game tick via `EnergyService.solarRecharge`
 - **Services**: Repair (hull/shields), drone purchase, rename, respec
 - **Scrap**: scrap metal / scrap tech currency earned (loot, refits) and sold/traded at emporiums
 

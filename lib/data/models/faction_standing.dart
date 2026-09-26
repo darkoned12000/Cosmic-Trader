@@ -38,6 +38,18 @@ class FactionStanding {
     );
   }
 
+  /// Standing of [self] toward [other]: persisted value wins, otherwise the
+  /// lore default matrix, otherwise 0 (strangers are neutral). Used by NPCs
+  /// whose standings live in [NpcMemory.factionStandings] keyed by name.
+  static int resolveFor(
+    FactionClass self,
+    FactionClass? other,
+    Map<String, int> persisted,
+  ) {
+    if (other == null) return 0;
+    return persisted[other.name] ?? defaults[self]?[other] ?? 0;
+  }
+
   static bool isHostile(FactionClass a, FactionClass b, int standing) {
     return standing < -30;
   }

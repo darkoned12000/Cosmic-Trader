@@ -8,6 +8,7 @@ import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/widgets/audio_settings_widget.dart';
+import 'package:cosmic_trader/widgets/automation_console_widget.dart';
 import 'package:cosmic_trader/widgets/system_resources_widget.dart';
 import 'package:cosmic_trader/widgets/font_settings_widget.dart';
 import 'package:cosmic_trader/widgets/video_settings_widget.dart';
@@ -18,11 +19,43 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<GameSettings> onRegenerate;
   final ValueChanged<GameSettings>? onSettingsChanged;
 
+  // ── Automation dev controls (F2, optional — hidden when unset) ──
+  final int? automationTickIntervalSeconds;
+  final bool automationTickPaused;
+  final ValueChanged<int>? onAutomationTickIntervalChanged;
+  final ValueChanged<bool>? onAutomationTickPausedChanged;
+  final int? automationPlayerCredits;
+  final int? automationPlayerScrapMetal;
+  final int? automationPlayerScrapTech;
+  final int? automationPlayerEnergy;
+  final int? automationPlayerMaxEnergy;
+  final VoidCallback? onAutomationGrantCredits;
+  final VoidCallback? onAutomationGrantScrapMetal;
+  final VoidCallback? onAutomationGrantScrapTech;
+  final VoidCallback? onAutomationDrainPlayerEnergy;
+  final VoidCallback? onAutomationDrainNpcEnergy;
+  final VoidCallback? onAutomationDumpDiagnostics;
+
   const SettingsScreen({
     super.key,
     required this.currentSettings,
     required this.onRegenerate,
     this.onSettingsChanged,
+    this.automationTickIntervalSeconds,
+    this.automationTickPaused = false,
+    this.onAutomationTickIntervalChanged,
+    this.onAutomationTickPausedChanged,
+    this.automationPlayerCredits,
+    this.automationPlayerScrapMetal,
+    this.automationPlayerScrapTech,
+    this.automationPlayerEnergy,
+    this.automationPlayerMaxEnergy,
+    this.onAutomationGrantCredits,
+    this.onAutomationGrantScrapMetal,
+    this.onAutomationGrantScrapTech,
+    this.onAutomationDrainPlayerEnergy,
+    this.onAutomationDrainNpcEnergy,
+    this.onAutomationDumpDiagnostics,
   });
 
   @override
@@ -62,7 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _vinariDensityController;
   late TextEditingController _pirateDensityController;
   late Map<String, _CommodityControllers> _commodityControllers;
-  late TextEditingController _initTurnsController;
+  late TextEditingController _initEnergyController;
   late TextEditingController _initCreditsController;
   late TextEditingController _initHoldsController;
   late TextEditingController _initDronesController;
@@ -123,7 +156,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         qtyMax: TextEditingController(text: entry.value.qtyMax.toString()),
       );
     }
-    _initTurnsController = TextEditingController(text: s.initTurns.toString());
+    _initEnergyController =
+        TextEditingController(text: s.initEnergy.toString());
     _initCreditsController =
         TextEditingController(text: s.initCredits.toString());
     _initHoldsController = TextEditingController(text: s.initHolds.toString());
@@ -186,7 +220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     for (final c in _commodityControllers.values) {
       c.dispose();
     }
-    _initTurnsController.dispose();
+    _initEnergyController.dispose();
     _initCreditsController.dispose();
     _initHoldsController.dispose();
     _initDronesController.dispose();
@@ -240,7 +274,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       unlockAllShips: _unlockAllShips,
       anomalyTypes: widget.currentSettings.anomalyTypes,
       commodityConfigs: _buildCommodityConfigs(),
-      initTurns: int.tryParse(_initTurnsController.text) ?? 1000,
+      initEnergy: int.tryParse(_initEnergyController.text) ?? 1000,
       initCredits: int.tryParse(_initCreditsController.text) ?? 1000000,
       initHolds: int.tryParse(_initHoldsController.text) ?? 50,
       initDrones: int.tryParse(_initDronesController.text) ?? 100,
@@ -471,7 +505,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             style: theme.textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
-                        _intField('Turns', _initTurnsController, 1, 99999),
+                        _intField(
+                            'Initial Energy', _initEnergyController, 1, 99999),
                         _intField(
                             'Credits', _initCreditsController, 0, 999999999),
                         _intField('Cargo Holds', _initHoldsController, 1, 999),
@@ -630,6 +665,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // ==================== SYSTEM RESOURCES ===================
           const SystemResourcesWidget(),
+          const SizedBox(height: 12),
+
+          // ==================== AUTOMATION (DEV) ===================
+          AutomationConsoleWidget(
+            tickIntervalSeconds: widget.automationTickIntervalSeconds,
+            tickPaused: widget.automationTickPaused,
+            onTickIntervalChanged: widget.onAutomationTickIntervalChanged,
+            onTickPausedChanged: widget.onAutomationTickPausedChanged,
+            playerCredits: widget.automationPlayerCredits,
+            playerScrapMetal: widget.automationPlayerScrapMetal,
+            playerScrapTech: widget.automationPlayerScrapTech,
+            playerEnergy: widget.automationPlayerEnergy,
+            playerMaxEnergy: widget.automationPlayerMaxEnergy,
+            onGrantCredits: widget.onAutomationGrantCredits,
+            onGrantScrapMetal: widget.onAutomationGrantScrapMetal,
+            onGrantScrapTech: widget.onAutomationGrantScrapTech,
+            onDrainPlayerEnergy: widget.onAutomationDrainPlayerEnergy,
+            onDrainNpcEnergy: widget.onAutomationDrainNpcEnergy,
+            onDumpDiagnostics: widget.onAutomationDumpDiagnostics,
+          ),
           const SizedBox(height: 12),
 
           // ==================== ABOUT ====================

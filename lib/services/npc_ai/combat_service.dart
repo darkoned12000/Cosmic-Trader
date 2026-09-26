@@ -1,9 +1,13 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port_defense_config.dart';
+import 'package:cosmic_trader/services/npc_ai/port_combat_service.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
+import 'package:cosmic_trader/services/salvage_service.dart';
 
 class CombatResult {
   final bool attackerWon;
@@ -30,6 +34,8 @@ class PlayerCombatResult {
   final int damageTaken;
   final bool npcDestroyed;
   final int loot;
+  final int lootScrapMetal;
+  final int lootScrapTech;
   final Player updatedPlayer;
   final NpcShip updatedNpc;
 
@@ -38,6 +44,8 @@ class PlayerCombatResult {
     required this.damageTaken,
     required this.npcDestroyed,
     required this.loot,
+    this.lootScrapMetal = 0,
+    this.lootScrapTech = 0,
     required this.updatedPlayer,
     required this.updatedNpc,
   });
@@ -101,10 +109,15 @@ class CombatService {
     final lootCargo = <String, int>{};
 
     if (defenderDestroyed) {
-      lootCredits = (defender.credits * 0.5).round();
+      // Credits floor: a debt-ridden defender (legacy of the pre-fix
+      // buy-phase clamp bug) pays nothing instead of billing the killer.
+      // Rate is 25%: full-half loot snowballed predators (one live pirate
+      // parlayed kills into 16M) faster than victims could ever recover.
+      lootCredits = (defender.credits * 0.25).round().clamp(0, 1 << 30);
       lootCargo.addAll(defender.cargo);
     }
 
+    final lootResult = _mergeLootCargo(attacker, lootCargo);
     final updatedAttacker = attacker.copyWith(
       hull: atkHull,
       shields: atkShields,
@@ -112,6 +125,8 @@ class CombatService {
       kills: attacker.kills + (defenderDestroyed ? 1 : 0),
       totalDamageDealt: attacker.totalDamageDealt + atkDamage,
       totalDamageTaken: attacker.totalDamageTaken + defDamage,
+      cargo: lootResult.cargo,
+      cargoUsed: attacker.cargoUsed + lootResult.unitsTaken,
     );
 
     final updatedDefender = defender.copyWith(
@@ -127,8 +142,13 @@ class CombatService {
     );
 
     if (defenderDestroyed) {
-      debugPrint(
+      GameEventLog.global.combat(
           '[${attacker.pilotName}] Destroyed ${defender.pilotName} — looted $lootCredits cr');
+      EconomyMetrics.global.recordLoot(
+        actorFaction: attacker.faction.name,
+        credits: lootCredits,
+        isPlayer: false,
+      );
     }
 
     return (
@@ -146,6 +166,27 @@ class CombatService {
     );
   }
 
+  /// Victim cargo merged into the attacker's holds, capped by free space.
+  /// Contraband and other black-market goods transfer like anything else —
+  /// killing smugglers is a supply line.
+  static ({Map<String, int> cargo, int unitsTaken}) _mergeLootCargo(
+      NpcShip attacker, Map<String, int> loot) {
+    var free = attacker.cargoHoldCapacity - attacker.cargoUsed;
+    final merged = Map<String, int>.from(attacker.cargo);
+    var taken = 0;
+    if (free > 0) {
+      for (final entry in loot.entries) {
+        if (free <= 0) break;
+        final take = entry.value.clamp(0, free);
+        if (take <= 0) continue;
+        merged[entry.key] = (merged[entry.key] ?? 0) + take;
+        free -= take;
+        taken += take;
+      }
+    }
+    return (cargo: merged, unitsTaken: taken);
+  }
+
   /// Quick estimation: can [attacker] reliably win against [defender]?
   static bool canWin(NpcShip attacker, NpcShip defender) {
     final atkPower = calculateFirepower(attacker);
@@ -158,11 +199,27 @@ class CombatService {
     return powerRatio > hullRatio * 0.8;
   }
 
-  /// Estimate if NPC can overcome [defenseLevel] port defenses.
+  /// Estimate if NPC can overcome [defenseLevel] port defenses via a
+  /// multi-round siege, using the SAME formulas the siege actually runs:
+  /// NPC power via [PortCombatService.calculateNpcFirepower] (NOT the
+  /// ship-vs-ship formula — weapon tiers scale differently in each),
+  /// incoming damage including counter-attack and EMP bursts when the
+  /// defense level fields those abilities, plus the free finishing round
+  /// once the port drops to capture threshold. Mixing formulas previously
+  /// cleared ships the real siege would kill and rejected ships that
+  /// would win.
   static bool canRaidPort(NpcShip npc, int defenseLevel) {
-    final atkPower = calculateFirepower(npc);
-    final portDefense = (defenseLevel + 1) * 500;
-    return atkPower > portDefense * 1.2;
+    final stats = PortDefenseConfig.defenseStats(defenseLevel);
+    final npcPower = PortCombatService.calculateNpcFirepower(npc);
+    if (npcPower <= 0) return false;
+    final incoming = stats.firepower +
+        (stats.hasCounterAttack ? (stats.firepower * 0.3).round() : 0) +
+        (stats.hasEmpBurst ? (npc.shields * stats.empDrainPct).round() : 0);
+    final perRound = incoming <= 0 ? 1 : incoming;
+    final effective =
+        npc.hull + npc.shields + (npc.hullEquipmentLevel - 1) * 10;
+    final rounds = effective / perRound + 1;
+    return npcPower * rounds > stats.shieldCapacity;
   }
 
   static WeaponType _npcWeaponForSlot(NpcShip ship, String slot) {
@@ -247,14 +304,25 @@ class CombatService {
 
     final npcDestroyed = npcHull <= 0;
     int loot = 0;
+    var lootScrapMetal = 0;
+    var lootScrapTech = 0;
     if (npcDestroyed) {
       loot = (npc.credits * 0.5).round();
+      final salvage = SalvageService.rollForNpc(npc);
+      lootScrapMetal = salvage.scrapMetal;
+      lootScrapTech = salvage.scrapTech;
     }
 
-    final updatedPlayer = player.copyWith(
-      hull: playerHull,
-      shields: playerShields,
-      credits: player.credits + loot,
+    final updatedPlayer = SalvageService.applyToPlayer(
+      player.copyWith(
+        hull: playerHull,
+        shields: playerShields,
+        credits: player.credits + loot,
+      ),
+      SalvageReward(
+        scrapMetal: lootScrapMetal,
+        scrapTech: lootScrapTech,
+      ),
     );
 
     final updatedNpc = npc.copyWith(
@@ -264,16 +332,21 @@ class CombatService {
       credits: npcDestroyed ? 0 : npc.credits,
       cargo: npcDestroyed ? {} : npc.cargo,
       cargoUsed: npcDestroyed ? 0 : npc.cargoUsed,
+      scrapMetal: npcDestroyed ? 0 : npc.scrapMetal,
+      scrapTech: npcDestroyed ? 0 : npc.scrapTech,
     );
 
-    debugPrint('[PlayerCombat] Dealt $damageDealt to ${npc.pilotName}, '
-        'took $damageTaken, ${npcDestroyed ? 'destroyed' : 'damaged'}');
+    GameEventLog.global
+        .combat('[PlayerCombat] Dealt $damageDealt to ${npc.pilotName}, '
+            'took $damageTaken, ${npcDestroyed ? 'destroyed' : 'damaged'}');
 
     return PlayerCombatResult(
       damageDealt: damageDealt,
       damageTaken: damageTaken,
       npcDestroyed: npcDestroyed,
       loot: loot,
+      lootScrapMetal: lootScrapMetal,
+      lootScrapTech: lootScrapTech,
       updatedPlayer: updatedPlayer,
       updatedNpc: updatedNpc,
     );

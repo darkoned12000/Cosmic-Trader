@@ -9,6 +9,8 @@ import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/shared/panel_card.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/tow_service.dart';
 
 class ShipStatusView extends StatefulWidget {
   final Player player;
@@ -291,6 +293,10 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         const SizedBox(height: 16),
         _playerInfoCard(theme, cs),
         const SizedBox(height: 16),
+        _solarArrayCard(cs),
+        const SizedBox(height: 16),
+        _emergencyTowCard(cs),
+        const SizedBox(height: 16),
         _shipResourcesCard(theme, cs),
         const SizedBox(height: 16),
         _hullShieldCard(theme, cs),
@@ -305,6 +311,8 @@ class _ShipStatusViewState extends State<ShipStatusView> {
   Widget _buildTwoColumnGrid(ThemeData theme, ColorScheme cs) {
     final cards = <Widget>[
       _playerInfoCard(theme, cs),
+      _solarArrayCard(cs),
+      _emergencyTowCard(cs),
       _shipResourcesCard(theme, cs),
       _hullShieldCard(theme, cs),
       _shipWeaponsCard(theme, cs),
@@ -385,7 +393,9 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         _detailRow(
             cs, 'Credits', '\$${widget.player.credits.toStringAsFixed(0)}'),
         _detailRow(
-            cs, 'Turns', '${widget.player.turns}/${widget.player.maxTurns}'),
+            cs, 'Energy', '${widget.player.energy}/${widget.player.maxEnergy}'),
+        _detailRow(cs, 'Scrap Metal', '${widget.player.scrapMetal}'),
+        _detailRow(cs, 'Scrap Tech', '${widget.player.scrapTech}'),
         const SizedBox(height: 8),
         Divider(color: cs.surfaceContainerHighest),
         const SizedBox(height: 8),
@@ -399,6 +409,153 @@ class _ShipStatusViewState extends State<ShipStatusView> {
           contentPadding: EdgeInsets.zero,
         ),
       ],
+    );
+  }
+
+  Widget _solarArrayCard(ColorScheme cs) {
+    final level = EnergyService.solarArrayLevel(widget.player);
+    final installed = level > 0;
+    final deployed = widget.player.solarArrayDeployed;
+    final regen = EnergyService.solarRechargePerTick(widget.player);
+
+    return PanelCard(
+      icon: Icons.wb_sunny_rounded,
+      title: 'Solar Array',
+      children: [
+        Row(
+          children: [
+            Icon(
+              deployed ? Icons.lock_rounded : Icons.power_rounded,
+              size: 18,
+              color: installed
+                  ? (deployed ? Colors.amber.shade700 : cs.primary)
+                  : cs.onSurface.withValues(alpha: 0.4),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                installed
+                    ? (deployed ? 'DEPLOYED' : 'RETRACTED')
+                    : 'NOT INSTALLED',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: installed
+                      ? (deployed ? Colors.amber.shade700 : cs.primary)
+                      : cs.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (!installed)
+          Text(
+            'Purchase a Solar Array module from a Hardware Emporium to enable '
+            'slow off-grid recharging.',
+            style: TextStyle(
+              fontSize: 12,
+              color: cs.onSurface.withValues(alpha: 0.6),
+            ),
+          )
+        else ...[
+          _detailRow(cs, 'Module Level', 'Lv.$level'),
+          _detailRow(cs, 'Recharge Rate', '$regen energy / tick'),
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
+            value: deployed,
+            onChanged: (value) {
+              widget.onPlayerUpdate(
+                EnergyService.setSolarArrayDeployed(widget.player, value),
+              );
+            },
+            title: const Text('Deploy Solar Array'),
+            subtitle: Text(
+              deployed
+                  ? 'Ship cannot warp while the array is deployed.'
+                  : 'Retracted — the ship can move freely.',
+            ),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _emergencyTowCard(ColorScheme cs) {
+    final stranded = TowService.needsTow(widget.player);
+    final plan = _sectors.isEmpty
+        ? null
+        : TowService.findTowPlan(_sectors, widget.player.currentSectorId,
+            player: widget.player);
+
+    return PanelCard(
+      icon: Icons.local_shipping_rounded,
+      title: 'Emergency Tow',
+      children: [
+        Text(
+          stranded
+              ? 'Insufficient energy to warp. A tug can tow the ship to the '
+                  'nearest refuel-capable port.'
+              : 'Ship has enough energy to warp normally.',
+          style: TextStyle(
+            fontSize: 12,
+            color: cs.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
+        if (plan != null) ...[
+          const SizedBox(height: 8),
+          _detailRow(cs, 'Destination', plan.targetSectorName),
+          _detailRow(cs, 'Port', plan.targetPortName),
+          _detailRow(
+              cs, 'Distance', '${plan.hops} hop${plan.hops == 1 ? '' : 's'}'),
+          _detailRow(
+            cs,
+            'Can Refuel',
+            plan.isRefuelStation ? 'Yes' : 'Emergency stop only',
+          ),
+          _detailRow(
+            cs,
+            'Tow Fee',
+            '${TowService.towCost(widget.player, plan)} cr',
+          ),
+        ] else ...[
+          const SizedBox(height: 8),
+          Text(
+            'No reachable port found for an emergency tow.',
+            style: TextStyle(fontSize: 12, color: cs.error),
+          ),
+        ],
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: stranded && plan != null ? () => _callTow(plan) : null,
+            icon: const Icon(Icons.local_shipping_rounded, size: 18),
+            label: const Text('CALL EMERGENCY TOW'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _callTow(TowPlan plan) {
+    final result = TowService.tow(widget.player, plan);
+    widget.onPlayerUpdate(result.player);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Towed ${result.hops} hop${result.hops == 1 ? '' : 's'} to '
+          '${result.targetName} — ${result.creditsSpent} cr, emergency energy '
+          'restored',
+          style: const TextStyle(fontFamily: 'monospace'),
+        ),
+        backgroundColor: Colors.deepPurpleAccent,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
     );
   }
 

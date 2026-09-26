@@ -5,6 +5,8 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/faction_rankings_screen.dart';
+import 'package:cosmic_trader/screens/economy_report_screen.dart';
+import 'package:cosmic_trader/screens/bounty_board_screen.dart';
 import 'package:cosmic_trader/screens/knowledge_base_screen.dart';
 import 'package:cosmic_trader/screens/ports_knowledge_base.dart';
 import 'package:cosmic_trader/widgets/banking_widget.dart';
@@ -94,6 +96,16 @@ class _ComputerScreenState extends State<ComputerScreen> {
         );
       case 'port_report':
         return _buildPortReport(theme, cs);
+      case 'economy_report':
+        return EconomyReportScreen(
+          onBack: () => setState(() => _selectedTool = null),
+        );
+      case 'bounty_board':
+        return BountyBoardScreen(
+          player: widget.player,
+          onPlayerUpdate: widget.onPlayerUpdate,
+          onBack: () => setState(() => _selectedTool = null),
+        );
       case 'knowledge_base':
         return KnowledgeBaseScreen(
           onBack: () => setState(() => _selectedTool = null),
@@ -201,6 +213,28 @@ class _ComputerScreenState extends State<ComputerScreen> {
                   leading: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
+                      color: Colors.lightGreen.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.show_chart_rounded,
+                        color: Colors.lightGreen.shade400, size: 22),
+                  ),
+                  title: const Text('Economy Report',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                    'Trade volume, prices, and faction flows',
+                    style: TextStyle(
+                        color: cs.onSurface.withValues(alpha: 0.6),
+                        fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => setState(() => _selectedTool = 'economy_report'),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
                       color: Colors.deepPurple.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -217,6 +251,28 @@ class _ComputerScreenState extends State<ComputerScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => setState(() => _selectedTool = 'knowledge_base'),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.crisis_alert_rounded,
+                        color: Colors.redAccent.shade400, size: 22),
+                  ),
+                  title: const Text('Bounty Board',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                    'Post contracts, claim kills',
+                    style: TextStyle(
+                        color: cs.onSurface.withValues(alpha: 0.6),
+                        fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => setState(() => _selectedTool = 'bounty_board'),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 ListTile(

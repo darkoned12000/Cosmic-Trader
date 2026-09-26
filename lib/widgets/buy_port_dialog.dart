@@ -387,6 +387,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
 
     widget.onPortUpdated(widget.port.copyWith(
       owner: widget.player.name,
+      ownerId: widget.player.id,
       ownerFaction: widget.player.faction,
     ));
 

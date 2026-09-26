@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/universe_generator.dart';
+import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
 import 'file_safe.dart';
 
@@ -119,6 +120,9 @@ class UniverseStorage {
     final generator = UniverseGenerator(actualSettings);
     final sectors = generator.generate();
     await saveUniverse(sectors);
+    // NPC persistence is awaited HERE (not fire-and-forget inside the
+    // generator) so post-generation ticks can never load a partial roster.
+    await NpcStorage().saveAll(generator.generatedNpcs);
     logSectorStats(sectors);
     debugPrint('Universe generated: ${sectors.length} sectors saved.');
     return actualSettings;

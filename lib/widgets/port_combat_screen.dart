@@ -368,6 +368,7 @@ class _PortCombatScreenState extends State<PortCombatScreen>
           _port,
           _player.name,
           _player.faction.name,
+          ownerId: _player.id,
         );
         finalPlayer = _player.copyWith(
           notoriety: (_player.notoriety + 10).clamp(0, 100),

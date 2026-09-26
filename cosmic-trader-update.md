@@ -100,7 +100,9 @@ regenerates over time (or per tick), warp cost scales with distance + the
 **engine efficiency stat (already in the model)**. Do this before economy
 work — it changes session pacing.
 
-### B2. Dynamic economy (biggest single gameplay lever)
+### B2. Dynamic economy (in progress — measurement first)
+
+**Spec (remaining):**
 - Weighted random walk (±2–5%) on prices per tick with mean reversion toward
   the base range.
 - Supply/demand actually moves prices: buying lowers supply *and* nudges the
@@ -113,17 +115,226 @@ work — it changes session pacing.
   tech, Duran military hardware, black-market Contraband — 2 entries each in
   the commodity registry.
 
-### B3. Give FactionStanding teeth (modeled but inert)
-`combat_service` computes standing changes; nothing consumes them. Make
-standing affect: port price multipliers, emporium access, banking interest,
-attack-on-sight by Duran/Vinari NPCs, and FedSpace access (attacking Fed
-targets has consequences — TW2002's Fed interdiction).
+**Status:**
 
-### B4. Bounties & pirate pressure (TW2002 bounty board, adapted)
+1. ✅ **Economy metrics + report** — new `lib/services/economy_metrics.dart`
+   (`EconomyMetrics` singleton: volume, transactions, units,
+   player-vs-NPC split, per-commodity avg prices, per-faction net flows,
+   trades/min; persisted across restarts via economy_metrics.json —
+   restore on launch, save on exit, reset clears; the same payload is the
+   ongoing health feed on a server build). Hooks in NPC trade buy/sell phases and player
+   `PortTradeView` buy/sell (1 unit/tap). New Computer → **Economy Report**
+   screen (`economy_report_screen.dart`: totals, per-commodity avg-vs-base
+   table, per-faction net table, reset action). Covered by
+   `test/economy_metrics_test.dart` (3 tests).
+   - Refined: combat/raid spoils tracked separately (`recordLoot` hooks in
+     NPC-vs-NPC resolution + player victories) with a Spoils total and
+     per-faction Loot column, so fighter income never masquerades as market
+     flow. Faction table also shows live **Holdings (est.)** — NPC cargo at
+     base-mid valuation from `NpcStorage` — so mid-route inventory reads as
+     wealth in flight instead of negative net.
+2. ✅ **Supply-level pricing** — ports now charge scarcity/glut pricing:
+   full shelves 0.75x → bare shelves 1.25x on goods sold
+   (`supplyPriceMultiplier`), full demand book 1.25x → satisfied 0.75x on
+   goods bought (`demandPriceMultiplier`), neutral at half, per-side only
+   (sell depth never leaks into buy prices), composing with the existing
+   cash-ratio multiplier while owner overrides still win outright. Heavy
+   trading on one good compresses its own spread, rotating NPC route
+   selection naturally. Covered by `test/port_supply_pricing_test.dart`
+   (5 tests).
+3. ✅ **Drift + mean reversion** — per-tick ±3% random walk per traded
+   commodity with 15% reversion toward 1.0, clamped [0.7, 1.4], stored in a
+   persisted `priceDrift` map (legacy saves default neutral), applied in the
+   tick port loop before NPC processing, composing under cash/depth layers
+   with overrides still absolute. Quiet ports now move too. Extended
+   `test/port_supply_pricing_test.dart` (bounds, determinism, reversion,
+   round-trip, override precedence).
+4. ✅ **Commodities + black market** — registry grows 3 → 8 goods (food,
+   ore, crystalline, munitions, contraband with a 300–800 risk premium).
+   Contraband is restricted at generation: only free/independent ports deal
+   it (30% of them, `isBlackMarketPort` rule), federal/emporiums never;
+   others get an `'X'` (untraded) slot with explicit skip logic in price/
+   quantity/credit generation plus short-type guards for old saves. Old
+   settings files merge new defaults (player edits preserved). Loot loop
+   closed on both sides: NPC victors take victim cargo capped by free holds
+   (was computed then dropped), and player victories transfer cargo
+   contraband-first with overflow lost. Covered by
+   `test/black_market_test.dart` (4 tests).
+5. ✅ **Regional modifiers** — homeworld premiums (Duran→munitions,
+   Vinari→crystalline, Trader→industrial at 1.30/1.20/1.10 over 0/1/2-hop
+   BFS rings, max wins on overlap; pirates hold no homeworlds) and anomaly
+   boom/bust (1.10/0.90, deterministic per anomaly name, sector + warp
+   neighbors). Computed once in a Phase 8b pass and denormalized onto ports
+   (`regionalBuyBonus`/`anomalyBuyBonus`, buy side only, persisted with
+   neutral legacy defaults) so pricing stays a cheap read. Extended
+   `test/port_supply_pricing_test.dart` (premium/boom-bust/composition/
+   round-trip).
+
+**B2 complete.** Remaining economy work (if wanted) lives beyond the spec:
+tighter/looser bands, contraband enforcement hooks (B3 standing), planet→
+port supply (planet-phase2).
+
+### B3. Give FactionStanding teeth (in progress — access + interest done)
+
+Standing was produced everywhere (trade/combat/hacks) and consumed nowhere.
+Slices: (1) port pricing ✅, (2) emporium access + banking interest ✅,
+(3) attack-on-sight + FedSpace consequences.
+1. ✅ **Standing-discounted pricing** — ±100 standing moves both sides 20%
+   (clamped [0.8, 1.25]): friends buy cheaper and sell richer. New
+   `getEffectiveSellPriceFor`/`BuyPriceFor(commodity, standing:)` (neutral
+   overloads preserved); player trade view prices via
+   `factionStandingWith(port.ownerFaction)`; NPC execution + route
+   selection price via `FactionStanding.resolveFor` (persisted → lore
+   defaults → 0), with `ownerFaction` added to `PortInfo` (scanned +
+   persisted) so selection matches execution. Covered by
+   `test/standing_pricing_test.dart`.
+
+2. ✅ **Emporium access + banking interest** — ports at standing ≤ −50   refuse service: player emporium UI replaced by a refusal card (with the
+   number and how to fix it); NPC pathfinding skips hostile emporiums and
+   arrivals fail cleanly (`refuel_refused`, replanned same tick). Bank rate
+   follows Trade Guild standing, 0.5%–1.5% around the 1% base
+   (`BankingAi.interestRateFor`, shared by player banking and per-tick NPC
+   accrual with 24h periods, first balance starts the clock). Covered in
+   `standing_pricing_test` (refusal threshold, NPC skip + roam, rate math,
+   accrual timing).
+   - Found by test: `_move` steered by dead (failed/complete) goals
+     (refused-refuel ping-pong between two sectors) — movement now only
+     follows travelling goals; `_selectGoal` walks the weighted pool past
+     null instantiations instead of wasting the tick.
+   - **Fuel-crisis fixes (live: zero emporiums, all-NPC refuel_unknown
+     lock):** density left ~29% of universes with no emporium at all —
+     `ensureMinimumEmporiums` guarantees ≥1 (outside FedSpace, books
+     preserved); the unknown-emporium explore fallback no longer fires
+     every tick under 25% energy (it permanently suppressed step-5
+     selection, freezing trade/bank/attack) — committed goals now run
+     dry toward stranded reserves instead. Covered by
+     `test/emporium_guarantee_test.dart`.
+   - Pirate-exile safety: unowned emporiums serve everyone, standing
+     recovers through ordinary trade, and Emergency Tow prefers servable
+     emporiums (hostile pumps skipped, any emporium then any port as
+     fallbacks). Covered in `tow_service_test`.
+   - **NPC port ownership (all factions):** only Duran/pirates could raid,
+     so Duran captured 30 ports to everyone else's 0 — and raid targeting
+     had no power check (pirates sieged unbeatable defenses). Raids now
+     gate on a real siege estimate (`canRaidPort`: survivable rounds ×
+     damage vs shields); rich traders/collectors/seekers buy unowned
+     non-federal ports outright at half net worth (new `buyPort` goal);
+     owners collect revenue and buy defense/storage upgrades (50k reserve
+     kept) every tick. Covered in `npc_goal_lifecycle_test` (purchase,
+     raid gate, collect + upgrade).
+   - **Repopulation (C4 first slice):** pirate predation with no respawns
+     wiped Duran/Vinari to zero live — `RepopulationService` tops factions
+     to 3/3/3/2 floors, one ship per faction per tick, at homeworld sectors
+     (kill loot cut 50%→25% to slow the snowball). Homeworlds spawn only
+     while owned-or-unowned: captured homeworlds log
+     `has no controlled homeworld — no spawn` until recaptured, so
+     extinction is possible and reversible; pirates keep random-sector
+     fallback pending outposts. Covered in `repopulation_service_test`
+     (homeworld spawn, healthy no-op, capture/recapture cycle).
+
+   - **External review batch 4 (Claude: generator remainder):**
+     fedSpaceEnd=1 hard crash guarded; profitability docstring corrected
+     (base-only guarantee, effective layers may invert near-split routes);
+     NPC persistence de-raced (generate() pure, caller awaits save);
+     homeworld collisions excluded + silent-drop logging; display counts
+     reconciled to the real roster (galaxy map showed phantoms);
+     co-spawned hostiles accepted as deliberate; Terra Prime seed
+     documented. Plus the suggested integration suite
+     (`universe_generation_test`: connectivity, homeworlds, emporium
+     minimum, count truth, base-price invariant, 10-tick NPC health).
+
+3. ✅ **Fear + hatred (no always-attack):** notoriety inflates perceived
+   power ×(1 + notoriety/200) on both sides of every fight decision —
+   infamous pilots deter attacks below overwhelming odds and clear
+   sectors as weaker ships flee rather than provoke; personal standing
+   ≤ −50 substitutes for lore hostility but demands a decisive 1.5× edge
+   (grudges don't make NPCs suicidal). Fed enforcement deliberately NOT
+   a police force: crimes feed notoriety → the B4 bounty board, placed in
+   the Computer area. Covered in `test/fear_hate_test.dart` (deterrence,
+   hatred gates, fear flee).
+
+   - **External review batch 6 (Claude: combat/bounty re-read):**
+     ownership keyed by stable id (`Port.ownerId`, set on every buy and
+     capture path incl. player flows) with name fallback for legacy saves —
+     a pilot-name collision can no longer collect or defend another's
+     port; per-tick owner index (`ownedPortIndex`, index path + scan
+     fallback tested) replaces the O(sectors)-per-NPC management scan;
+     rankings match owners by id first. Covered in
+     `npc_goal_lifecycle_test` (id/name precedence, indexed collection).
+   - **External review batch 7 (Claude: combat/bounty/economy/report):**
+     player loot matched to 25% + floor (the larger snowball half);
+     raid gate recalibrated onto the real siege formulas
+     (totalWeaponPowerx50 power, counter/EMP incoming, free finishing
+     round); siege core consolidated (`resolveRound`, one math path for
+     both attacker types) with mode/portDestroyed documented as
+     post-siege labels; metrics record actor-net amounts (fee-inclusive)
+     with normalized faction keys; report reset reloads holdings.
+     Deferred with rationale: EMP-as-strip redesign, variance profile,
+     drone power (C-branch). Covered: existing raid/loot/metrics tests
+     hold under new formulas + casing test.
+
+
+   - **External review batch 3 (Claude: tick/port/generator):** cross-file
+     safe-zone boundary unified (`safeZoneEnd` statics synced from settings
+     instead of two hardcoded 10s); effective-price stack capped [0.25,
+     4.0] on the *multiplier* (plus a caught self-bug: clamping the price
+     turned 10cr goods into 4.0); NPC memory now snapshots full local
+     pricing (depth/drift/regional/anomaly factors) so selection matches
+     execution; regen no-op returns identical (saves I/O); anomaly overlap
+     composes multiplicatively (order-independent) instead of
+     last-write-wins; emporiums carry real desiredCredits; tick attacks all
+     players (proximity union) with logged unknown-sector fallback;
+     3-strike goal reset for erroring NPCs; attack-goal selection reuses
+     the trigger margin (no more cross-map chases for refused fights).
+     Covered in `port_supply_pricing_test` (ceiling semantics) + suite.
+
+### B4. Bounties & pirate pressure (in progress — board live)
+
 - Fed ports post bounties on pirates — and on the player as `notoriety`
   climbs (`notoriety` already exists on Player).
 - Bounty hunters appear (see NPC AI); hunting a marked pilot yields credits +
   standing. Feed kills/bounties into the existing Power Rankings report.
+
+**Status:**
+
+1. ✅ **Bounty Board (Computer tool)** — `bounty.dart` model + `bounties.json`
+   store + `BountyBoard` singleton (post/stack/pay/claim, 20-deep paid
+   history, persisted). Anyone posts: players from the board view (credits
+   deducted, live NPC target picker), NPC survivors auto-post 5k from
+   their bankroll on surviving an attack. NPC kills pay the killer
+   instantly; player kills record victim ids (`Player.recentKills`, capped
+   50) and pay through the board's Claim action. Loaded at shell start so
+   persisted bounties resolve. Covered by `bounty_board_test.dart`.
+   - **External review batch 5 (Claude: bounty files):** claim()
+     verifies kills itself (`verifiedKills` param — UI gate alone could be
+     bypassed to drain stacked bounties); debit-before-post ordering on
+     both call sites with refund fallback; persistence failures logged
+     instead of swallowed; dispose() override removed (lifecycle footgun);
+     dead 60-char check removed. Confirmed already-wired (reviewer
+     couldn't see the files): payKiller in NPC kill resolution,
+     recentKills in player victories. Covered in `bounty_board_test`
+     (verified claim, denial, double-claim).
+
+   - Rankings copy action (full faction/pilot/most-wanted text dump);
+     NPC port price cut to 10% of net worth (floor 25k) — half-net-worth
+     priced every NPC out forever, which is why only raiders ever took
+     ports.
+
+2. ✅ **Fed enforcement + hunters + rankings + completion standing**
+   (B4 spec closeout: kills pay credits AND +5 with posting factions —
+   `posterFaction` persisted, NPC memory + player standings updated on
+   both payout paths).
+
+2. ✅ **Fed enforcement + hunters + rankings** — Federation
+   auto-posts notoriety×100 (min 5k, max 100k, ≥50 notoriety, max 3/tick,
+   skips already-marked) as the answer to federal crime — no police
+   force; greedy hunters (greed ≥ 0.7) take the highest open contract
+   over the weakest victim; Power Rankings gained a Most Wanted top-5
+   feed. Board form now takes custom reasons (≤60 chars) with
+   type-ahead pilot search. Covered by `bounty_board_test` (Fed amounts,
+   greedy preference) + live verification pending.
+
+**B4 complete.**
 
 ### B5. Finish the planet loop (planets.md Phase 2) and tie it to the economy
 - Per-tick automated production (UI already computes rates — just process).
@@ -329,6 +540,62 @@ built differently depending on the answer. Design the storage layer to be
   recovers the same result.
 - Manual override (slider 1.0–2.0, presets) remains the universal fallback
   for any display/WM combo.
+
+### E8. Save-file tamper resistance (backlog — later, not now)
+
+Local machine = deterrence, not prevention: any key shipped with the game
+can be extracted by decompiling, so a determined cheater always wins. The
+goal is stopping casual `npcs.json` credit-edits (covers ~99% of it).
+
+- **Option A — integrity seal (recommended, pairs with the password-hashing
+  work in E3).** Write an HMAC-SHA256 alongside each save with a baked-in
+  key; on load, a mismatched seal means hand-editing → refuse the file
+  (backup fallback or reset with a warning). A few lines per store.
+- **Option B — encrypted blob.** AES-GCM the whole file
+  (`package:cryptography`), key in `flutter_secure_storage` (OS keychain —
+  libsecret on Linux) rather than hardcoded. Genuinely unreadable at rest;
+  needs a storage-layer wrapper + test seam.
+- **Option C — both.** Standard combo, ~1 hour over either alone.
+- Effort: S. If multiplayer ever happens this becomes moot — the server is
+  the authority and local saves are an untrusted cache (E6).
+
+---
+
+## F. Dev automation console (planned next — unblocks NPC verification)
+
+Motivation: an NPC with a 1000-energy tank at ~10/hop needs ~90 ticks to
+reach refuel range — 45+ minutes at the 30s tick. Real-time console
+`grep NPC_ENERGY` works but is slow and unfilterable. A Settings →
+**Automation** section fixes both. All controls live **on the panel as
+toggles/switches** (no key-press shortcuts) so the automation state is
+always visible and reviewable in one place.
+
+- **F1 — Full-action log viewer.** ✅ **Done.** New `lib/services/game_event_log.dart`
+  (`GameEventLog` ChangeNotifier singleton, 2000-entry ring, newest-first,
+  `query(text, categories)` search): all 43 `debugPrint` sites across
+  `npc_ai_service.dart` (36), `combat_service.dart` (2), and
+  `game_tick_service.dart` (5) now log categorized entries (combat / trade /
+  movement / energy / banking / goal / system) with `debugPrint` mirroring
+  preserved, so console `grep NPC_ENERGY` keeps working verbatim. New
+  `lib/widgets/automation_console_widget.dart` — Settings → **Automation
+  (Dev)** card with search box, per-category filter chips, live count, and
+  Clear — wired into `settings_screen.dart`. Covered by
+  `test/game_event_log_test.dart` (4 tests: ordering, 2000-cap eviction,
+  text+category query, clear).
+- **F2 — Tick controls (panel switches).** ✅ **Done.** Settings → Automation
+  card now has a Tick controls row (30s / 5s / 1s preset chips + Pause/Resume
+  toggle, wired to the existing `GameTickService.updateInterval`/`stop`/
+  `start` from `GameShell`), a Player resources row (live
+  credits/metal/tech/energy readout + **+100k cr / +500 metal / +50 tech**
+  grant buttons for emporium/store/upgrade testing), and an Energy drains
+  row (**NPCs → 10 %** persisted via `NpcStorage`, **Player → 0** for tow
+  testing). All dev grants/drains are logged to the event bus as `DEV …`
+  system lines. Callbacks flow `GameShell → SettingsScreen →
+  AutomationConsoleWidget`; the widget hides the section when callbacks are
+  absent. Covered by `test/automation_console_widget_test.dart` (4 widget
+  tests).
+- **F3 — Debug action toggles.** ✅ **Done early** (folded into F2 above —
+  energy drains shipped with the tick controls).
 
 ---
 
@@ -622,3 +889,248 @@ flutter analyze          # → No issues found!
 flutter test             # 12 pass
 dart format lib/ test/   # canonical formatting
 ```
+
+---
+
+### `living-economy` branch — B1: Turn → Energy (✅ complete)
+
+*Closed: `turns`/`maxTurns` deleted from `Player` and `NpcShip`;
+`GameSettings.initTurns` renamed to `initEnergy` (Settings form now reads
+"Initial Energy"). All three keep one-line `fromJson` fallbacks reading the
+legacy keys, so pre-energy saves migrate silently. Zero live `turns`
+references remain. Tests: legacy-migration cases in `energy_service_test`,
+`npc_energy_test`, and `game_settings_test`.*
+*Deferred by decision: universal port refuel (emporiums only, by design) and
+a refuel-point list UI (folds into the future bookmark/notes system —
+exploration stays earned, not given).*
+
+Decisions taken for this branch:
+
+- **No passive regeneration for now.** Energy is restored by **manual refuel
+  purchases at ports**.
+- **Solar array** ship equipment is planned as a later self-recharge option
+  that takes time, so a stranded ship is never permanently stuck.
+- A stranded player should eventually be able to **call for a tow** to the
+  nearest port that can sell fuel.
+
+Status:
+
+1. ✅ Branch created from clean `main`.
+2. ✅ `Player` gained `energy` / `maxEnergy`. Legacy `turns` / `maxTurns` are
+   retained for old save files and are used as the `fromJson` fallback.
+3. ✅ New `lib/services/energy_service.dart` owns the rules:
+   - warp cost scales with distance and is reduced by engine efficiency
+     (`ceil(baseWarpCost * hops / efficiency)`; starter engine = 2 per hop)
+   - planet scan = 4 energy, quick sector scan = 1 energy
+   - refuel = 1 credit per missing energy unit, clamped by credits and tank
+4. ✅ Core player surfaces now read energy: `HudStrip`, `ShipStatusView`,
+   `PortTradeView`, `WarpConsole`, planet scan, and sector interaction scans
+   (including insufficient-energy messages).
+5. ✅ Manual refuel added as a **Refuel Energy** service card in the Hardware
+   Emporium → Services tab.
+7. ✅ **Solar Array ship module** — purchaseable/equippable in the Hardware
+   Emporium → Modules tab (generated by `hardware_data.dart` like every other
+   module; buying installs it into `Player.installedModules`). While equipped,
+   `EnergyService.solarRecharge()` recovers `2 * moduleLevel` energy per game
+   tick, clamped to tank capacity, applied from `GameShell` on every tick
+   completion. This is intentionally a slow backup rather than free infinite
+   fuel — Hardware Emporium refuel remains the fast option.
+8. ✅ **Solar Array deploy/retract toggle** — `Player.solarArrayDeployed` is
+   persisted, toggled from a new Ship Status → **Solar Array** card, and shown
+   in the HUD as an amber lock icon instead of the energy bolt. A deployed
+   array:
+   - recharges `2 * moduleLevel` energy per tick via `EnergyService.solarRecharge`
+   - locks movement: `EnergyService.canMove(player)` blocks warp console moves,
+     tactical-sector warps, and Galaxy Map moves, each surfacing "retract the
+     Solar Array" feedback
+   - retracting restores movement and stops the trickle
+9. ✅ **Emergency Tow system** — new `lib/services/tow_service.dart` prevents
+   the B1 soft-lock: a player with no usable warp energy can call a tow to the
+   nearest reachable **Hardware Emporium**, falling back to the nearest port if
+   no emporium is reachable. Cost is `2,500 cr + 750 cr/hop`, clamped so the
+   tow is still available when nearly broke. Arrival retracts the Solar Array
+   and grants emergency energy so the ship is operable. Added a Ship Status →
+   **Emergency Tow** card, plus a "Call Emergency Tow from Ship view" hint when
+   the Warp Console rejects a jump for insufficient energy. Covered by
+   `test/tow_service_test.dart` (5 tests).
+10. ✅ **NPC energy migration (B1-NPC) — done** (was "later pass"):
+   - `NpcShip` gained `energy` / `maxEnergy` (legacy `turns` fallback in
+     `fromJson`, same pattern as `Player`), plus `solarArrayLevel` /
+     `solarArrayDeployed` with `hasEnergy` / `spendEnergy` / `refuelEnergy`
+     / `canMove` helpers.
+   - `EnergyService` gained NPC overloads: `npcWarpCost` (efficiency =
+     engine level), `npcCanWarp`, `npcMissingEnergy`, `npcRefuelCost`,
+     `npcRefuel`, `npcSolarRecharge`, `npcEmergencyEnergy`.
+   - `NpcAiService.processTurn`: solar trickle-charge on entry, all `turns`
+     gates replaced with energy gates, new `refuelEnergy` goal (nearest
+     Hardware Emporium, outranks everything but flee), Solar Array purchase
+     inside `upgradeEquipment` for cautious/explorer NPCs (75k cr, no
+     scrap), zero-energy `_handleStranded` fallback (deploy array, else
+     emergency reserve from credits/bank), `_move` spends warp energy and
+     respects deployed-array lock.
+   - **Discovery rule (same as players):** refuel/upgrade target only
+     *discovered* emporiums (`knownEmporiumSectors` from
+     `memory.discoveredPorts`); fuel-low NPCs that know none get an explore
+     goal (`refuel_unknown`) and roam until a scan finds one. Stale memories
+     (port destroyed) fail cleanly (`refuel_stale`) and re-plan.
+   - `GameTickService`: energy gates, 60-tick turn-replenish block deleted,
+     tick summary now reports `stranded` count.
+   - **Stall-bug fixes (live: trade=0/combat=0 over hours):** (1)
+     `copyWith(currentGoal: null)` never actually cleared — the `?? this`
+     fallback silently kept the failed goal, blocking all future selection
+     (20 call sites → new `clearGoal: true` flag); (2) patrol goals never
+     completed (absorbing), so `_needsNewGoal` never fired again — patrols
+     now expire after 5 legs (`maxPatrolLegs`) and re-enter selection.
+     Covered by `test/npc_goal_lifecycle_test.dart` (3 tests).
+   - **Tick re-entrancy guard (live phantom volume):** 1s dev ticks
+     overlapped (no guard; BFS-heavy ticks exceed 1s), double-counting
+     metrics while last-write-wins storage kept one run — 1100 buys vs 21
+     sells with ~500 units held. Concurrent ticks now skip + count
+     (`overlapSkips`, surfaced in system log); entry via testable
+     `processTickNow()`. Covered by `test/tick_reentrancy_test.dart`.
+   - **Live debt catch (assert worked):** Sarek's per-tick owned-port buys
+     went negative via the 5% owner surcharge on top of an exactly-fitting
+     cost — affordability now prices the fee in (`unitCost` incl. tax) with
+     a rounding-guard loop, and the tick loop bulkheads per-NPC errors
+     (state kept, error logged, tick completes) instead of aborting the
+     whole tick. Covered by the surcharge regression test.
+   - **External review batch 2 (Claude):** (1) critical buy-phase debt
+     bug — `clamp(1, …)` forced broke NPCs to buy unaffordable units,
+     driving credits negative and poisoning killer loot downstream: buy
+     phase now bails before clamping, sell phase same treatment, evaluator
+     filters routes the bankroll can't start (`credits` param), loot
+     clamped ≥ 0, debug `assert(credits >= 0)` in the model; (2) bank
+     execution validates the destination port (stale-port abort like
+     refuel/trade) — the withdraw-vs-upgrade clobber instance was already
+     closed by the interruption guards; (3) evaluator pathfinding hoisted
+     (m + m² lookups, not m² × c); (4) `lastTradeTime`/`lastBankTime` now
+     stamped on sale/deposit/withdraw. Deferred with rationale: combat
+     simultaneity (design), shouldAttackPlayer/canWin consolidation,
+     drones in power math, weapon-slot map hardening (C-branch/simulation
+     work). Covered in `npc_goal_lifecycle_test` (no-debt buy, evaluator
+     affordability, stale bank abort, withdraw-vs-upgrade, timestamps).
+     — banking/distress/refuel only override interruptible goals
+     (explore/patrol/none), refuel additionally breaks committed legs below
+   - **External review batch 1 (Claude):** (1) goal interruption now
+     guarded — banking/distress/refuel only override interruptible goals
+     (explore/patrol/none), refuel additionally breaks committed legs below
+     the 10% emergency floor; unarmed NPCs skip distress response;
+     (2) sell-first triggers on full holds *and* sub-25% nibs so partial
+     cargo never rides unsold forever; sell-only logs clear holds instead
+     of fake 100% margins; (3) dead `flee`/`bankDeposit` weights stripped
+     from all personality tables (threshold-driven by design, like
+     withdraw/refuel); warlord weights sum to 1.0; (4) failed trade routes
+     cool down 5 min in `NpcMemory.failedRoutes` (persisted) and are
+     skipped by `findBestTradeRoute` via `avoidRoutes`; (5) startup-safe
+     personality coverage test. Verified clean: NPC equipment baselines are
+     level 1 (no zero-price bug); `planning`/`executing` statuses reserved;
+     static distress map + 5-min TTL accepted. Covered in
+   - **Cargo-deadlock fix (live dump: all holds 50/50, 0 trade goals):**
+     trade viability required free hold space, but nothing except a trade
+     goal empties cargo — full holds permanently blocked all future trading
+     (patrol-absorb loop). Viability now accepts full holds carrying goods
+     (credits gate applies to the buy leg only, so broke NPCs can still
+     sell), and `_createSellOnlyGoal` sends them to the best known buyer
+     for on-board cargo (sell-first route, no buy leg). Covered in
+     `npc_goal_lifecycle_test`.
+   - **Outfitting (all factions earn + gear up):** the `upgradeEquipment`
+     goal was a `(deferred)` stub — NPCs ran level-1 gear forever while
+     Duran compounded. It now performs real outfitting per emporium visit:
+     repairs first (2cr/hull, 1cr/shield, fuel reserve kept), then one
+     level purchase — defense-first (shields→hull→engine→weapons) for
+     peaceful factions (aggression ≤ 0.5), weapons-first for aggressors.
+     Levels feed live formulas (firepower, durability, warp cost); shield
+     levels also add +20 maxShields since nothing else read that stat.
+     Costs 15k×level (20k engine), caps 5/5/5/3, 5k cash floor. Upgrade
+     viability gate lowered 100k→25k; pure non-traders gained small trade
+     weights (warlord/protector 0.05, explorer upgrade 0.05) so every
+     faction can earn. Covered in `npc_goal_lifecycle_test` (repair +
+     priority tests).
+   - **Verification:** `test/npc_energy_test.dart` (8 tests); all NPC energy
+     events log with a parseable `NPC_ENERGY event=<name> pilot=... ...`
+     prefix (`solar_recharge`, `refuel_goal`, `refuel_buy`, `refuel_empty`,
+     `array_buy`, `array_deploy`, `emergency_reserve`) — `grep NPC_ENERGY`
+     on console output to confirm live behavior.
+   - **Decision:** universal port refuel UI / port-class pricing is deliberately
+     **not** planned right now — refueling only at scarce Hardware Emporiums
+     keeps travel decisions meaningful.
+
+### `living-economy` branch — B1-NPC: NPC Turn → Energy (research + scope)
+
+**Finding:** players run on energy, but NPCs still run on `turns`.
+`NpcShip.turns` (init 1000 in `npc_ship.dart:307`, replenish 200 every 60
+ticks in `game_tick_service.dart:181-195`) gates *everything*: `processTurn`
+early-returns on `turns <= 0` (`npc_ai_service.dart:63`), each sub-step is
+gated on `turns > 0` (threat/banking/goal-select/move, lines 80/86/94/104/
+115/127), and `_move` spends a flat `turns - 1` per hop (lines 1288/1302)
+regardless of distance or engine. The tick service also skips `turns <= 0`
+NPCs (line 141) and blocks energy-less NPCs from the player-attack check
+(line 217). Scans, combat, and trade currently cost NPCs nothing — turns are
+just a liveness gate. `NpcShip` has `engineEquipmentLevel` but, unlike
+`Player.engineEquipment`, no engine *type* name, so there is no efficiency
+stat to feed a warp-cost formula yet; and NPCs have no `installedModules`
+map at all, so there is nowhere to store a Solar Array.
+
+**Scope to finish the energy switchover (all in `living-economy`, no new branch):**
+
+1. **Model (`npc_ship.dart`) — S.** Add `energy` / `maxEnergy`
+   (default 1000, `fromJson` falls back to legacy `turns` exactly like
+   `player.dart:398-399` does), plus `solarArrayLevel` (int, default 0) and
+   `solarArrayDeployed` (bool, default false). `copyWith` / `toJson` /
+   `create()` updated. Keep `turns` as a deprecated read-only fallback for
+   one release so old `npcs.json` files still load.
+2. **Warp-cost rule — S.** Add an NPC overload next to
+   `EnergyService.warpCost` (e.g. `npcWarpCost(engineLevel, {hops})`).
+   Open question is only what "efficiency" means for NPCs: cheapest correct
+   option is `efficiency = max(1, engineEquipmentLevel)` (starter NPC ≈
+   10/hop, matching the player starter rate of 2/hop only if levels are
+   scaled — calibrate so NPC range ≈ player range). `_move` spends the
+   computed cost instead of `- 1`; multi-hop pathfinding already moves one
+   hop per tick so `hops: 1` suffices. Quick-scan (1) and planet-scan
+   equivalents cost NPCs nothing today — keep it that way, or charge the
+   same 1/4 for symmetry (one-line change once the gate exists).
+3. **Refuel goal — M.** New `NpcGoalType.refuelEnergy` (or reuse
+   `upgradeEquipment` with a `refuel: true` param — new enum is cleaner).
+   Trigger: `energy < nextLegCost + reserve` (reserve ≈ 2 hops), evaluated
+   in `processTurn` step 4 alongside the existing `BankingAi` checks so
+   refuel outranks trade/explore but not flee. Destination: nearest
+   Hardware Emporium via the existing `_createUpgradeGoal` BFS pattern
+   (`npc_ai_service.dart:1249-1253`); execution deducts
+   `1 cr/unit × missing` (same `refuelCreditsPerUnit` as players), clamped
+   by credits. If broke, fall through to `BankingAi.createWithdrawGoal`
+   first (the withdraw path already exists) — no new banking code needed.
+4. **Solar Array for NPCs — M.** No emporium purchase UI is needed (NPCs
+   never open widgets): when an NPC executes `upgradeEquipment` at an
+   emporium with `credits + bankBalance > threshold` (existing 100k gate),
+   give cautious/explorer personalities a weighted chance to buy
+   `solarArrayLevel = 1` (cost ≈ player module price in credits only — NPCs
+   have no scrap economy, so don't charge scrap). Regen `2 * level`/tick
+   applied at the top of `processTurn` when deployed; deployed NPCs skip
+   `_move` (mirrors `EnergyService.canMove`). Keep level capped at 1–2 so
+   the array stays a slow backup, not infinite fuel.
+5. **Stranded fallback — S.** NPC equivalent of `TowService`: if an NPC
+   cannot afford refuel *and* has no array, grant a one-time emergency
+   reserve (same `max(10% tank, 2 warps)` formula as
+   `TowService.emergencyEnergy`) charged against `bankBalance`, else leave
+   it docked/idle until the next tick's regen. No pathfinding/teleport
+   needed — NPCs don't soft-lock a human session, they just wait.
+6. **Tick service (`game_tick_service.dart`) — S.** Replace the
+   `turns <= 0` skip (line 141) with an energy gate, delete the 60-tick
+   `turns: 200` replenish block (lines 181-195, replaced by refuel/array
+   regen), and switch the attack-check gate (line 217) to
+   `energy >= attackCost`. Log wording (`processed/skipped`) stays.
+7. **Seeding + tests — S.** Universe generator seeds `energy/maxEnergy`
+   instead of `turns: 1000`; new `test/npc_energy_test.dart` mirroring
+   `test/energy_service_test.dart` (warp-cost math, refuel clamp, array
+   regen clamp, stranded reserve) plus one `processTurn` test proving a
+   zero-energy NPC does not move and a low-energy NPC picks the refuel
+   goal.
+
+**Effort:** ~2–3 focused sessions (S+S+M+M+S+S+S, each S ≈ 0.5 session).
+No new screens, no storage migration beyond the `turns`→`energy` fallback,
+and no balance pass — NPC ranges just need to *approximate* player ranges
+so traders don't freeze mid-route. After this, `turns` can be deleted from
+both `Player` and `NpcShip` and the game runs fully on energy.
+
+Verify: `flutter analyze` → **No issues found!**, `dart format` clean,
+`flutter test` → **41/41**, including the new `test/energy_service_test.dart`.

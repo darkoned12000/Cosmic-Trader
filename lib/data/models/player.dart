@@ -47,9 +47,19 @@ class Player {
   final int drones;
   final int maxDrones;
 
-  // ── Turns ───────────────────────────────────────────────────
-  final int turns;
-  final int maxTurns;
+  // ── Energy (B1 fuel; pre-B1 saves migrate via fromJson legacy keys) ──
+  /// Current ship energy — actions such as warping, scanning, and port
+  /// interactions spend energy; it is restored by refueling at ports.
+  final int energy;
+
+  /// Maximum ship energy capacity.
+  final int maxEnergy;
+
+  /// True when the Solar Array is deployed.
+  ///
+  /// A deployed array trickle-charges energy each tick but locks the ship in
+  /// place — it must be retracted before warping.
+  final bool solarArrayDeployed;
 
   // ── Economy ─────────────────────────────────────────────────
   final int credits;
@@ -101,6 +111,11 @@ class Player {
   /// Higher values make NPCs more aggressive and hostile.
   final double notoriety;
 
+  // ── Bounty kills ────────────────────────────────────────────
+  /// Victim ids this player has destroyed (capped). The Bounty Board pays
+  /// claims against these ids through its Claim action.
+  final List<String> recentKills;
+
   Player({
     this.id = '',
     this.username = '',
@@ -128,8 +143,9 @@ class Player {
     this.cargo = const {},
     this.drones = 0,
     this.maxDrones = 0,
-    this.turns = 1000,
-    this.maxTurns = 1000,
+    this.energy = 1000,
+    this.maxEnergy = 1000,
+    this.solarArrayDeployed = false,
     required this.credits,
     required this.researchPoints,
     this.bankBalance = 0,
@@ -148,7 +164,17 @@ class Player {
     this.lastHackProfile,
     this.lastHackReward,
     this.notoriety = 0.0,
+    this.recentKills = const [],
   });
+
+  /// Records a kill for bounty claims (newest first, capped at 50).
+  Player withKill(String victimId) {
+    final kills = [victimId, ...recentKills];
+    while (kills.length > 50) {
+      kills.removeLast();
+    }
+    return copyWith(recentKills: kills);
+  }
 
   bool ownsPort(String portName) => ownedPorts.contains(portName);
 
@@ -202,8 +228,9 @@ class Player {
     Map<String, int>? cargo,
     int? drones,
     int? maxDrones,
-    int? turns,
-    int? maxTurns,
+    int? energy,
+    int? maxEnergy,
+    bool? solarArrayDeployed,
     int? credits,
     double? researchPoints,
     int? bankBalance,
@@ -222,6 +249,7 @@ class Player {
     String? lastHackProfile,
     String? lastHackReward,
     double? notoriety,
+    List<String>? recentKills,
   }) {
     return Player(
       id: id ?? this.id,
@@ -250,8 +278,9 @@ class Player {
       cargo: cargo ?? this.cargo,
       drones: drones ?? this.drones,
       maxDrones: maxDrones ?? this.maxDrones,
-      turns: turns ?? this.turns,
-      maxTurns: maxTurns ?? this.maxTurns,
+      energy: energy ?? this.energy,
+      maxEnergy: maxEnergy ?? this.maxEnergy,
+      solarArrayDeployed: solarArrayDeployed ?? this.solarArrayDeployed,
       credits: credits ?? this.credits,
       researchPoints: researchPoints ?? this.researchPoints,
       bankBalance: bankBalance ?? this.bankBalance,
@@ -270,6 +299,7 @@ class Player {
       lastHackProfile: lastHackProfile ?? this.lastHackProfile,
       lastHackReward: lastHackReward ?? this.lastHackReward,
       notoriety: notoriety ?? this.notoriety,
+      recentKills: recentKills ?? this.recentKills,
     );
   }
 
@@ -301,8 +331,9 @@ class Player {
       'cargo': cargo,
       'drones': drones,
       'maxDrones': maxDrones,
-      'turns': turns,
-      'maxTurns': maxTurns,
+      'energy': energy,
+      'maxEnergy': maxEnergy,
+      'solarArrayDeployed': solarArrayDeployed,
       'credits': credits,
       'researchPoints': researchPoints,
       'bankBalance': bankBalance,
@@ -321,6 +352,7 @@ class Player {
       'lastHackProfile': lastHackProfile,
       'lastHackReward': lastHackReward,
       'notoriety': notoriety,
+      'recentKills': recentKills,
     };
   }
 
@@ -363,8 +395,10 @@ class Player {
           (json['cargo'] as Map<String, dynamic>?)?.cast<String, int>() ?? {},
       drones: json['drones'] as int? ?? 0,
       maxDrones: json['maxDrones'] as int? ?? 0,
-      turns: json['turns'] as int? ?? 1000,
-      maxTurns: json['maxTurns'] as int? ?? 1000,
+      // Pre-energy save migration: legacy 'turns' keys seed the tank.
+      energy: json['energy'] as int? ?? json['turns'] as int? ?? 1000,
+      maxEnergy: json['maxEnergy'] as int? ?? json['maxTurns'] as int? ?? 1000,
+      solarArrayDeployed: json['solarArrayDeployed'] as bool? ?? false,
       credits: json['credits'] as int? ?? 1000,
       researchPoints: (json['researchPoints'] as num?)?.toDouble() ?? 0.0,
       bankBalance: json['bankBalance'] as int? ?? 0,
@@ -396,11 +430,30 @@ class Player {
       lastHackProfile: json['lastHackProfile'] as String?,
       lastHackReward: json['lastHackReward'] as String?,
       notoriety: (json['notoriety'] as num?)?.toDouble() ?? 0.0,
+      recentKills: (json['recentKills'] as List?)?.cast<String>() ?? const [],
     );
   }
 
-  /// Check if the player has turns remaining to warp.
-  bool get canWarp => turns > 0;
+  /// Check if the player has energy remaining to warp.
+  bool get canWarp => energy > 0;
+
+  /// True when the ship is free to move (a deployed Solar Array locks it).
+  bool get canMove => !solarArrayDeployed;
+
+  /// True when [cost] energy can be spent right now.
+  bool hasEnergy(int cost) => energy >= cost;
+
+  /// Returns a copy with [cost] energy deducted, clamped at zero.
+  Player spendEnergy(int cost) {
+    final next = energy - cost;
+    return copyWith(energy: next < 0 ? 0 : next);
+  }
+
+  /// Returns a copy with [amount] energy restored, clamped to [maxEnergy].
+  Player refuelEnergy(int amount) {
+    final next = energy + amount;
+    return copyWith(energy: next > maxEnergy ? maxEnergy : next);
+  }
 
   /// Check if the ship is critically damaged.
   bool get criticalHull => hull <= 25;

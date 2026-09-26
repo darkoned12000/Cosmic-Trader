@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/tow_service.dart';
 
 typedef OnWarpCallback = Future<void> Function(int sectorId);
 
@@ -194,9 +196,25 @@ class _WarpConsoleState extends State<WarpConsole> {
       }
     }
 
-    if (widget.player.turns <= 0) {
+    if (!EnergyService.canMove(widget.player)) {
       setState(() {
-        _errorMessage = 'Insufficient turns';
+        _errorMessage = 'Solar Array deployed — retract before warping';
+      });
+      return;
+    }
+
+    final warpCost = EnergyService.warpCost(widget.player);
+    if (!widget.player.hasEnergy(warpCost)) {
+      final canTow = TowService.findTowPlan(
+            widget.allSectors,
+            widget.currentSector.id,
+            player: widget.player,
+          ) !=
+          null;
+      setState(() {
+        _errorMessage = canTow
+            ? 'Insufficient energy — $warpCost required. Call Emergency Tow from Ship view.'
+            : 'Insufficient energy — $warpCost required';
       });
       return;
     }
@@ -580,7 +598,7 @@ class _WarpConsoleState extends State<WarpConsole> {
                       const SizedBox(width: 8),
                       Flexible(
                         child: Text(
-                          'TURNS REMAINING: ',
+                          'ENERGY: ',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
@@ -590,7 +608,7 @@ class _WarpConsoleState extends State<WarpConsole> {
                         ),
                       ),
                       Text(
-                        '${widget.player.turns}/${widget.player.maxTurns}',
+                        '${widget.player.energy}/${widget.player.maxEnergy}',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: cs.primary,

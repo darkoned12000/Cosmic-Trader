@@ -7,9 +7,11 @@ import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/services/salvage_service.dart';
 
 class CombatScreen extends StatefulWidget {
   final Player player;
@@ -314,15 +316,60 @@ class _CombatScreenState extends State<CombatScreen>
     setState(() => _combatOver = true);
 
     int loot = 0;
+    SalvageReward salvage = const SalvageReward(scrapMetal: 0, scrapTech: 0);
+    var lootedUnits = 0;
     if (victory) {
-      loot = (_npc.credits * 0.5).round();
-      _player = _player.withFactionStandingChange(_npc.faction, -5).copyWith(
-            credits: _player.credits + loot,
-            notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
-          );
-      _npc =
-          _npc.copyWith(credits: 0, cargo: {}, cargoUsed: 0, isDestroyed: true);
-      _combatLog.add('Loot recovered: $loot cr');
+      // Matches the NPC-vs-NPC rate exactly (25%, floored at 0): the old
+      // 50% player rate was the larger half of the snowball exploit, and
+      // negative victim credits must never bill the killer.
+      loot = (_npc.credits * 0.25).round().clamp(0, 1 << 30);
+      salvage = SalvageService.rollForNpc(_npc);
+      EconomyMetrics.global.recordLoot(
+        actorFaction: _player.faction.name,
+        credits: loot,
+        isPlayer: true,
+      );
+      // Victim cargo transfers up to free hold space — contraband first,
+      // so killing smugglers pays in black-market goods. Overflow is lost.
+      final lootedCargo = Map<String, int>.from(_player.cargo);
+      var freeHolds = _player.maxCargo - _player.cargoUsed;
+      final victimCargo = Map<String, int>.from(_npc.cargo);
+      final ordered = victimCargo.keys.toList()
+        ..sort((a, b) =>
+            (b == 'contraband' ? 1 : 0) - (a == 'contraband' ? 1 : 0));
+      for (final commodity in ordered) {
+        if (freeHolds <= 0) break;
+        final take = (victimCargo[commodity] ?? 0).clamp(0, freeHolds);
+        if (take <= 0) continue;
+        lootedCargo[commodity] = (lootedCargo[commodity] ?? 0) + take;
+        lootedUnits += take;
+        freeHolds -= take;
+      }
+      _player = SalvageService.applyToPlayer(
+        _player.withFactionStandingChange(_npc.faction, -5).copyWith(
+              credits: _player.credits + loot,
+              cargo: lootedCargo,
+              cargoUsed: _player.cargoUsed + lootedUnits,
+              notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
+            ),
+        salvage,
+      );
+      // Kill recorded for Bounty Board claims (payout happens via Claim).
+      _player = _player.withKill(_npc.id);
+      _npc = _npc.copyWith(
+        credits: 0,
+        cargo: {},
+        cargoUsed: 0,
+        scrapMetal: 0,
+        scrapTech: 0,
+        isDestroyed: true,
+      );
+      _combatLog.add(
+        'Loot recovered: $loot cr, '
+        '${salvage.scrapMetal} scrap metal, '
+        '${salvage.scrapTech} scrap tech'
+        '${lootedUnits > 0 ? ', $lootedUnits cargo' : ''}',
+      );
     } else if (fled) {
       _player = _player.copyWith(
         notoriety: math.min(100.0, _player.notoriety + 1).toDouble(),
@@ -331,7 +378,10 @@ class _CombatScreenState extends State<CombatScreen>
 
     if (victory) {
       ActionLogProvider.global.combat(
-          'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId} — looted $loot cr');
+          'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId} — '
+          'looted $loot cr, ${salvage.scrapMetal} scrap metal, '
+          '${salvage.scrapTech} scrap tech'
+          '${lootedUnits > 0 ? ', $lootedUnits cargo' : ''}');
     } else if (fled) {
       ActionLogProvider.global.combat(
           'Fled from ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');

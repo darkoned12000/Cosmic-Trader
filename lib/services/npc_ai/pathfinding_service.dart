@@ -9,9 +9,15 @@ class _PathNode {
 class PathfindingService {
   /// BFS shortest path from [startId] to [targetId].
   /// Returns list of sector IDs forming the path (inclusive), or null if
-  /// unreachable.
+  /// unreachable. Looks sectors up by id (not list position) so sparse or
+  /// unordered lists work.
   static List<int>? findPath(List<Sector> sectors, int startId, int targetId) {
     if (startId == targetId) return [startId];
+
+    final byId = {for (final s in sectors) s.id: s};
+    if (!byId.containsKey(startId) || !byId.containsKey(targetId)) {
+      return null;
+    }
 
     final visited = <int>{startId};
     final queue = <_PathNode>[
@@ -20,7 +26,8 @@ class PathfindingService {
 
     while (queue.isNotEmpty) {
       final current = queue.removeAt(0);
-      final s = sectors[current.sectorId - 1];
+      final s = byId[current.sectorId];
+      if (s == null) continue;
 
       for (final nId in s.warpRoutes) {
         if (nId == targetId) {
@@ -45,12 +52,15 @@ class PathfindingService {
   /// Find nearest sector matching a predicate, starting from [startId].
   static int? findNearestWhere(
       List<Sector> sectors, int startId, bool Function(Sector) predicate) {
+    final byId = {for (final s in sectors) s.id: s};
+    if (!byId.containsKey(startId)) return null;
     final visited = <int>{startId};
     final queue = [startId];
 
     while (queue.isNotEmpty) {
       final current = queue.removeAt(0);
-      final s = sectors[current - 1];
+      final s = byId[current];
+      if (s == null) continue;
 
       if (predicate(s) && s.id != startId) return s.id;
 

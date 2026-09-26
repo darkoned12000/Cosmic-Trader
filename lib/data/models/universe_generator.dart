@@ -7,7 +7,6 @@ import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
-import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/services/npc_ai/pathfinding_service.dart';
 
 /// Generates a connected universe of sectors using the classic
@@ -31,6 +30,12 @@ class UniverseGenerator {
   static const int _maxWarpCount = 7;
 
   UniverseGenerator(this.settings);
+
+  /// NPC roster from the last generate() call. generate() itself stays
+  /// synchronous and pure (no I/O): the caller awaits persistence
+  /// explicitly, so the first tick can never race an unawaited save and
+  /// load an empty roster.
+  List<NpcShip> generatedNpcs = [];
 
   // ---------------------------------------------------------------------------
   // Public API
@@ -69,15 +74,18 @@ class UniverseGenerator {
     // === Phase 7: port generation ===
     _assignPorts(sectors, rng);
 
-    // === Phase 7b: Hardware Emporiums (~5% of ports) ===
+    // === Phase 7b: Hardware Emporiums (~5% of ports, min 1) ===
     _assignHardwareEmporiums(sectors, rng);
+    ensureMinimumEmporiums(sectors, minimumEmporiums, rng);
 
     // === Phase 8: planets, NPCs, aliens ===
     _assignPlanets(sectors, rng);
+    _assignRegionals(sectors);
     _assignNpcsAndAliens(sectors, rng);
 
     // === Phase 9: persistent NPC generation ===
     _generateNpcs(sectors, npcs, rng);
+    generatedNpcs = List.unmodifiable(npcs);
 
     return sectors;
   }
@@ -108,6 +116,8 @@ class UniverseGenerator {
   void _placeTerraPrime(List<Sector> sectors) {
     final s1 = sectors[0];
     s1.hasPort = true;
+    // Fixed seed is deliberate: Terra Prime is byte-identical across
+    // universes (stable starting port), independent of the universe seed.
     s1.port = _createPort(s1, math.Random(42),
         forceFederal: true, name: 'Terra Prime');
   }
@@ -144,8 +154,10 @@ class UniverseGenerator {
 
     // Sectors 1-7: each connects to 2-3 other FedSpace sectors (NOT fully
     // connected), leaving room for external connections from the general warp
-    // phase.
+    // phase. A single-sector hub (fedSpaceEnd <= 1) has nothing to
+    // interconnect — and nextInt(0) below would throw.
     final hubEnd = math.min(7, fedEnd);
+    if (hubEnd <= 1) return;
     for (int i = 1; i <= hubEnd; i++) {
       final a = sectors[i - 1];
       final others = List<int>.generate(hubEnd, (idx) => idx + 1)
@@ -622,6 +634,7 @@ class UniverseGenerator {
       if (rng.nextDouble() >= settings.hardwareEmporiumDensity) continue;
 
       final heOwner = _pickPortOwner(s, rng);
+      final heCredits = 100000 + rng.nextDouble() * 900000;
       s.port = Port(
         name: _hardwareEmporiumName(s.id, rng),
         portClass: PortClass.hardwareEmporium,
@@ -631,7 +644,8 @@ class UniverseGenerator {
         supply: const {},
         demand: const {},
         defenseLevel: _pickDefenseLevel(rng),
-        portCredits: 100000 + rng.nextDouble() * 900000,
+        portCredits: heCredits,
+        desiredCredits: heCredits,
         owner: heOwner,
         ownerFaction:
             _pickOwnerFaction(heOwner, PortClass.hardwareEmporium, rng),
@@ -662,30 +676,129 @@ class UniverseGenerator {
 
   /// Dynamically generates a random port type string
   /// based on how many commodities are configured.
-  /// Ensures at least one 'S' and one 'B' character.
-  String _randomPortType(math.Random rng) {
-    final count = settings.commodityConfigs.length;
+  /// Ensures at least one 'S' and one 'B' character among legal goods.
+  ///
+  /// Contraband ('X' = not traded here) is restricted to the black market:
+  /// only free/independent ports may deal it, at [blackMarketPortFraction].
+  /// Federal ports and Hardware Emporiums never touch it.
+  static const double blackMarketPortFraction = 0.3;
+
+  /// True when a port of [portClass] may trade contraband on a roll of
+  /// [roll] (0.0–1.0). Only free/independent ports qualify — federal ports
+  /// and Hardware Emporiums never touch black-market goods.
+  static bool isBlackMarketPort(PortClass portClass, double roll) =>
+      (portClass == PortClass.free || portClass == PortClass.independent) &&
+      roll < blackMarketPortFraction;
+
+  /// Minimum Hardware Emporiums per universe. The density roll leaves ~29%
+  /// of 50-sector universes with ZERO emporiums — no refuel possible, so
+  /// every NPC collapses into stranded-reserve loops and goal selection
+  /// stalls (refuel_unknown hijack, below). Density scales large universes;
+  /// this is the backstop.
+  static const int minimumEmporiums = 1;
+
+  /// Converts random eligible ports until at least [minimum] emporiums
+  /// exist. Static for tests (generate() itself hits storage).
+  static void ensureMinimumEmporiums(
+    List<Sector> sectors,
+    int minimum,
+    math.Random rng,
+  ) {
+    var count = 0;
+    for (final s in sectors) {
+      if (s.port?.isHardwareEmporium == true) count++;
+    }
+    if (count >= minimum) return;
+    final candidates = [
+      for (final s in sectors)
+        if (s.hasPort &&
+            s.port != null &&
+            !s.port!.isHardwareEmporium &&
+            s.id > 9) // keep FedSpace clean
+          s,
+    ];
+    candidates.shuffle(rng);
+    for (final s in candidates) {
+      if (count >= minimum) break;
+      final old = s.port!;
+      s.port = Port(
+        name: '${_staticEmporiumName(s.id)} Hardware Emporium',
+        portClass: PortClass.hardwareEmporium,
+        portType: null,
+        buyPrices: const {},
+        sellPrices: const {},
+        supply: const {},
+        demand: const {},
+        defenseLevel: old.defenseLevel,
+        portCredits: old.portCredits,
+        desiredCredits: old.desiredCredits,
+        owner: old.owner,
+        ownerFaction: old.ownerFaction,
+      );
+      count++;
+    }
+  }
+
+  static String _staticEmporiumName(int sectorId) {
+    const names = [
+      'Aegis',
+      'Forge',
+      'Anvil',
+      'Vertex',
+      'Aether',
+      'Helix',
+      'Nexus',
+      'Orion',
+      'Pulsar',
+      'Quantum',
+      'Solaris',
+      'Titan',
+      'Void',
+      'Warptech',
+      'Xenith',
+    ];
+    return names[sectorId % names.length];
+  }
+
+  String _randomPortType(math.Random rng, PortClass portClass) {
+    final names = settings.commodityConfigs.values.map((c) => c.name).toList();
+    final count = names.length;
     final chars = List<String>.generate(count, (_) => '');
-    // Pick at which indices to place the mandatory S and B.
-    final sIdx = rng.nextInt(count);
-    var bIdx = rng.nextInt(count);
+    final contrabandIdx = names.indexOf('contraband');
+    // Mandatory S and B land on legal goods only.
+    final legal =
+        List<int>.generate(count, (i) => i).where((i) => i != contrabandIdx);
+    final legalList = legal.toList();
+    final sIdx = legalList[rng.nextInt(legalList.length)];
+    var bIdx = legalList[rng.nextInt(legalList.length)];
     while (bIdx == sIdx) {
-      bIdx = rng.nextInt(count);
+      bIdx = legalList[rng.nextInt(legalList.length)];
     }
     for (int i = 0; i < count; i++) {
-      chars[i] = (i == sIdx)
-          ? 'S'
-          : (i == bIdx)
-              ? 'B'
-              : (rng.nextBool() ? 'S' : 'B');
+      if (i == contrabandIdx) {
+        final blackMarket =
+            UniverseGenerator.isBlackMarketPort(portClass, rng.nextDouble());
+        chars[i] = blackMarket ? (rng.nextBool() ? 'S' : 'B') : 'X';
+      } else {
+        chars[i] = (i == sIdx)
+            ? 'S'
+            : (i == bIdx)
+                ? 'B'
+                : (rng.nextBool() ? 'S' : 'B');
+      }
     }
     return chars.join();
   }
 
+  /// Char at [i], tolerating type strings generated for a different
+  /// commodity count (old saves) — missing entries read as 'X' (untraded).
+  String _typeChar(String portType, int i) =>
+      i < portType.length ? portType[i] : 'X';
+
   Port _createPort(Sector sector, math.Random rng,
       {bool forceFederal = false, String? name}) {
     final portClass = forceFederal ? PortClass.federal : _pickPortClass(rng);
-    final portType = _randomPortType(rng);
+    final portType = _randomPortType(rng, portClass);
     final prices = _generatePortPrices(portType, rng);
     final qty = _generatePortQuantities(portType, rng);
     final defenseLevel = _pickDefenseLevel(rng);
@@ -781,7 +894,7 @@ class UniverseGenerator {
     final configs = settings.commodityConfigs.values.toList();
 
     for (int i = 0; i < configs.length; i++) {
-      if (portType[i] == 'B') {
+      if (_typeChar(portType, i) == 'B') {
         final buyPrice = prices.buyPrices[configs[i].name] ?? 0;
         final demand = qty.demand[configs[i].name] ?? 0;
         neededCredits += buyPrice * demand;
@@ -807,9 +920,13 @@ class UniverseGenerator {
   /// Buy prices (port buys → player sells) occupy the upper half:
   /// [splitPoint, priceMax].
   ///
-  /// This guarantees that no matter which two ports a player trades
-  /// between, the sell price they pay is always lower than the buy
-  /// price they receive — every trade is profitable.
+  /// This guarantees base prices are always profitable across any two
+  /// ports — BUT only at base. Every real transaction prices through the
+  /// effective stack (cash × depth × drift × regional × standing, capped
+  /// [0.25, 4.0]), which can invert near-split routes into real losses.
+  /// Those losses are logged, self-correcting (depleted books push prices
+  /// back), and part of the market — not a bug. Do not read this comment
+  /// as "every trade is profitable".
   _PortPrices _generatePortPrices(String portType, math.Random rng) {
     final configs = settings.commodityConfigs.values.toList();
 
@@ -819,7 +936,7 @@ class UniverseGenerator {
     for (int i = 0; i < configs.length; i++) {
       final c = configs[i];
       final split = c.splitPoint;
-      if (portType[i] == 'S') {
+      if (_typeChar(portType, i) == 'S') {
         // Port sells to player: pick from lower half [priceMin, splitPoint)
         final maxSell = split - 0.01;
         if (maxSell <= c.priceMin) {
@@ -829,11 +946,13 @@ class UniverseGenerator {
               (c.priceMin + rng.nextDouble() * (maxSell - c.priceMin))
                   .roundToDouble();
         }
-      } else {
+      } else if (_typeChar(portType, i) == 'B') {
         // Port buys from player: pick from upper half [splitPoint, priceMax]
         buyPrices[c.name] =
             (split + rng.nextDouble() * (c.priceMax - split)).roundToDouble();
       }
+      // 'X' (black-market goods at law-abiding ports, padding on old saves):
+      // no prices either way — the port does not trade this commodity.
     }
 
     return _PortPrices(buyPrices, sellPrices);
@@ -848,14 +967,105 @@ class UniverseGenerator {
     for (int i = 0; i < configs.length; i++) {
       final c = configs[i];
       final qty = c.qtyMin + rng.nextInt(c.qtyMax - c.qtyMin + 1);
-      if (portType[i] == 'S') {
+      if (_typeChar(portType, i) == 'S') {
         supply[c.name] = qty;
-      } else {
+      } else if (_typeChar(portType, i) == 'B') {
         demand[c.name] = qty;
       }
+      // 'X' carries no stock either way.
     }
 
     return _PortQuantities(supply, demand);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 8b – Regional market modifiers (B2)
+  // ---------------------------------------------------------------------------
+
+  /// Faction homeworlds pay a premium for their preferred good; anomaly
+  /// sectors (and their warp neighbors) boom or bust all goods. Computed
+  /// once here and denormalized onto ports so pricing stays a cheap read.
+  /// Pirates hold no homeworlds (see _assignHomeworlds) — their premium is
+  /// the black market itself.
+  static const Map<FactionClass, String> preferredGoods = {
+    FactionClass.duran: 'munitions',
+    FactionClass.vinari: 'crystalline',
+    FactionClass.trader: 'industrial',
+  };
+
+  /// Buy-price premium by homeworld hop distance (0/1/2 hops).
+  static const List<double> homeworldPremiumByHops = [1.30, 1.20, 1.10];
+
+  static const double anomalyBoom = 1.10;
+  static const double anomalyBust = 0.90;
+
+  void _assignRegionals(List<Sector> sectors) {
+    final byId = {for (final s in sectors) s.id: s};
+
+    // Homeworld premiums (BFS rings, max wins on overlap).
+    for (final s in sectors) {
+      final planet = s.planet;
+      final homeworldOf = planet?.homeworldOf;
+      final good = homeworldOf != null ? preferredGoods[homeworldOf] : null;
+      if (planet == null ||
+          !planet.isHomeworld ||
+          homeworldOf == null ||
+          good == null) {
+        continue;
+      }
+      final distances = _bfsDistances(sectors, s.id, 2);
+      for (final entry in distances.entries) {
+        final target = byId[entry.key];
+        final port = target?.port;
+        if (port == null) continue;
+        final premium = homeworldPremiumByHops[entry.value];
+        final current = port.regionalBuyBonus[good] ?? 1.0;
+        if (premium > current) {
+          target!.port = port.copyWith(
+            regionalBuyBonus: {...port.regionalBuyBonus, good: premium},
+          );
+        }
+      }
+    }
+
+    // Anomaly boom/bust: the sector itself plus warp neighbors.
+    // Overlapping fields compose multiplicatively (order-independent),
+    // clamped to a sane band — never silent last-write-wins.
+    for (final s in sectors) {
+      final anomaly = s.anomaly;
+      if (anomaly == null || anomaly.isEmpty) continue;
+      // Deterministic per anomaly name: even hash booms, odd busts.
+      final boom = anomaly.codeUnits.fold(0, (a, b) => a + b).isEven;
+      final mult = boom ? anomalyBoom : anomalyBust;
+      for (final id in [s.id, ...s.warpRoutes]) {
+        final target = byId[id];
+        final port = target?.port;
+        if (port == null) continue;
+        target!.port = port.copyWith(
+          anomalyBuyBonus: (port.anomalyBuyBonus * mult).clamp(0.8, 1.25),
+        );
+      }
+    }
+  }
+
+  /// Hop distances from [startId] capped at [maxDepth].
+  Map<int, int> _bfsDistances(List<Sector> sectors, int startId, int maxDepth) {
+    final byId = {for (final s in sectors) s.id: s};
+    final dist = <int, int>{startId: 0};
+    var edge = <int>[startId];
+    for (int depth = 1; depth <= maxDepth; depth++) {
+      final next = <int>[];
+      for (final id in edge) {
+        for (final nid in byId[id]?.warpRoutes ?? const <int>[]) {
+          if (!dist.containsKey(nid)) {
+            dist[nid] = depth;
+            next.add(nid);
+          }
+        }
+      }
+      edge = next;
+    }
+    return dist;
   }
 
   // ---------------------------------------------------------------------------
@@ -899,6 +1109,7 @@ class UniverseGenerator {
       for (final s in sectors) {
         if (s.id <= settings.fedSpaceEnd) continue;
         if (!s.hasPlanet || s.planet == null) continue;
+        if (s.planet!.isHomeworld) continue; // claimed by an earlier faction
         if (preferredTypes.contains(s.planet!.planetType)) {
           candidates.add(s);
         }
@@ -907,13 +1118,23 @@ class UniverseGenerator {
       final pool = candidates.isNotEmpty
           ? candidates
           : sectors
-              .where((s) => s.hasPlanet && s.id > settings.fedSpaceEnd)
+              .where((s) =>
+                  s.hasPlanet &&
+                  s.id > settings.fedSpaceEnd &&
+                  !(s.planet?.isHomeworld ?? false))
               .toList();
       if (pool.isEmpty) {
         // Create a planet in a random non-FedSpace sector
         final nonFed =
             sectors.where((s) => s.id > settings.fedSpaceEnd).toList();
-        if (nonFed.isEmpty) continue;
+        if (nonFed.isEmpty) {
+          // Entire universe is FedSpace (tiny dev/test config): no
+          // homeworld possible. Loud, since regionals depend on this.
+          debugPrint('No homeworld sector available for ${faction.name} '
+              '(fedSpaceEnd ${settings.fedSpaceEnd} covers '
+              '${sectors.length} sectors)');
+          continue;
+        }
         final sector = nonFed[rng.nextInt(nonFed.length)];
         if (!sector.hasPlanet) {
           sector.hasPlanet = true;
@@ -1113,7 +1334,34 @@ class UniverseGenerator {
           'Placed $factionCount ${factionEntry.key.name} NPCs across ${sectorsUsed.length} sectors');
     }
 
-    NpcStorage().saveAll(npcs);
+    // Reconcile the display counts with ground truth: the xCount fields
+    // were rolled independently above and the galaxy map reads them, so
+    // recount from the real roster instead of showing phantom ships.
+    final byId = {for (final s in sectors) s.id: s};
+    for (final s in sectors) {
+      s.traderCount = 0;
+      s.duranCount = 0;
+      s.vinariCount = 0;
+      s.pirateCount = 0;
+    }
+    for (final npc in npcs) {
+      final s = byId[npc.currentSectorId];
+      if (s == null) continue;
+      switch (npc.faction) {
+        case FactionClass.trader:
+          s.traderCount++;
+          break;
+        case FactionClass.duran:
+          s.duranCount++;
+          break;
+        case FactionClass.vinari:
+          s.vinariCount++;
+          break;
+        case FactionClass.pirate:
+          s.pirateCount++;
+          break;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

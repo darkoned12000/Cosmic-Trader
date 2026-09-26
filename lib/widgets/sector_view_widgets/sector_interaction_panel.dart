@@ -12,6 +12,7 @@ import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.da
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/npc_trade_dialog.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 
 const _factionIcons = {
   FactionClass.trader: Icons.shopping_cart_rounded,
@@ -192,7 +193,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       if (planet == null) return;
 
       if (!planet.scanned) {
-        if (widget.player.turns <= 0) {
+        if (!EnergyService.canQuickScan(widget.player)) {
           if (!mounted) return;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -200,7 +201,9 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
               context: context,
               builder: (ctx) => AlertDialog(
                 title: const Text('Scan Failed'),
-                content: const Text('Not enough turns remaining.'),
+                content: Text(
+                  'Not enough energy remaining (${EnergyService.quickScanCost} required).',
+                ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.of(ctx).pop(),
@@ -212,9 +215,9 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
           });
           return;
         }
-        widget.onPlayerUpdate(widget.player.copyWith(
-          turns: widget.player.turns - 1,
-        ));
+        widget.onPlayerUpdate(
+          widget.player.spendEnergy(EnergyService.quickScanCost),
+        );
         planet.scanned = true;
         await UniverseStorage.instance.saveSectors([widget.currentSector]);
         ActionLogProvider.global.info(

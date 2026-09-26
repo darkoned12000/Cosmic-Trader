@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 
-const double _interestRate = 0.01;
 const Duration _interestPeriod = Duration(hours: 24);
 
 enum _BankStage { menu, deposit, withdraw }
@@ -17,6 +19,12 @@ class BankingWidget extends StatefulWidget {
     required this.player,
     required this.onPlayerUpdate,
   });
+
+  /// Daily bank rate for [player]: base 1%, scaled by Trade Guild
+  /// (trader-faction) standing — beloved clients earn up to 1.2%,
+  /// blacklisted ones as little as 0.5%. Shared with NPC accrual.
+  static double rateFor(Player player) =>
+      BankingAi.interestRateFor(player.faction, player.factionStandings);
 
   @override
   State<BankingWidget> createState() => _BankingWidgetState();
@@ -83,7 +91,10 @@ class _BankingWidgetState extends State<BankingWidget> {
     if (elapsed < _interestPeriod) return 0;
 
     final days = elapsed.inMicroseconds / _interestPeriod.inMicroseconds;
-    return (widget.player.bankBalance * _interestRate * days).floor();
+    return (widget.player.bankBalance *
+            BankingWidget.rateFor(widget.player) *
+            days)
+        .floor();
   }
 
   void _applyInterest() {
@@ -93,6 +104,12 @@ class _BankingWidgetState extends State<BankingWidget> {
         bankBalance: widget.player.bankBalance + interest,
         lastInterestTime: DateTime.now(),
       ));
+      GameEventLog.global.banking(
+        'Interest +$interest cr @ '
+        '${(BankingWidget.rateFor(widget.player) * 100).toStringAsFixed(1)}% '
+        '(Trade Guild standing '
+        '${widget.player.factionStandingWith(FactionClass.trader)})',
+      );
     }
   }
 
@@ -125,7 +142,8 @@ class _BankingWidgetState extends State<BankingWidget> {
             const SizedBox(height: 12),
             Text(
               'Secure your credits across the galaxy.\n'
-              'Earn ${(_interestRate * 100).toStringAsFixed(0)}% interest every 24h.',
+              'Earn ${(BankingWidget.rateFor(player) * 100).toStringAsFixed(1)}% interest every 24h '
+              '(Trade Guild standing).',
               style: TextStyle(
                   fontSize: 13, color: cs.onSurface.withValues(alpha: 0.6)),
             ),
@@ -171,7 +189,7 @@ class _BankingWidgetState extends State<BankingWidget> {
                     ?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             _infoRow(cs, Icons.trending_up_rounded, 'Your Daily Interest',
-                '${(player.bankBalance * _interestRate).floor()} cr'),
+                '${(player.bankBalance * BankingWidget.rateFor(player)).floor()} cr'),
             _infoRow(cs, Icons.people_rounded, 'Bank Account Holders',
                 '$_accountHolders'),
             _infoRow(cs, Icons.account_balance_rounded, 'Total Bank Deposits',

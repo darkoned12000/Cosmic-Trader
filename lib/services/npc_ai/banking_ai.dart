@@ -1,9 +1,48 @@
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 import 'package:cosmic_trader/services/npc_ai/trade_evaluator.dart';
 
 class BankingAi {
+  /// Base daily rate; the Trade Guild scales it by standing.
+  static const double baseDailyRate = 0.01;
+
+  /// Daily bank rate for [faction] with [standings] toward the Guild —
+  /// beloved clients earn up to 1.2%, blacklisted ones as little as 0.5%.
+  /// Shared by player banking and NPC accrual so both sides play by it.
+  static double interestRateFor(
+    FactionClass faction,
+    Map<String, int> standings,
+  ) {
+    final standing =
+        FactionStanding.resolveFor(faction, FactionClass.trader, standings);
+    return (baseDailyRate * (1 + standing * 0.002)).clamp(0.005, 0.015);
+  }
+
+  /// Interest owed since [lastInterestTime], or null when no period has
+  /// elapsed yet (first balance starts the clock with no retro payout).
+  /// Pure math — the tick loop applies the result.
+  static ({int interest, DateTime stamp})? accrueInterest({
+    required int bankBalance,
+    required DateTime? lastInterestTime,
+    required double rate,
+    required DateTime now,
+  }) {
+    if (bankBalance <= 0) return null;
+    if (lastInterestTime == null) {
+      return (interest: 0, stamp: now);
+    }
+    final elapsed = now.difference(lastInterestTime);
+    if (elapsed < const Duration(hours: 24)) return null;
+    final days =
+        elapsed.inMicroseconds / const Duration(hours: 24).inMicroseconds;
+    final interest = (bankBalance * rate * days).floor();
+    if (interest <= 0) return null;
+    return (interest: interest, stamp: now);
+  }
+
   /// Check if NPC should deposit on-ship credits at a port.
   static bool shouldDeposit(NpcShip npc) {
     if (npc.credits <= 0) return false;

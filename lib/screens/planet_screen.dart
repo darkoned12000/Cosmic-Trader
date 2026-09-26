@@ -5,6 +5,7 @@ import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/widgets/shared/stat_bar.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 
 class PlanetScreen extends StatefulWidget {
   final Player player;
@@ -61,10 +62,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
     final planet = sector.planet!;
     if (planet.scanned) return;
 
-    // Deduct a turn for manual scan
-    var updatedPlayer = widget.player.copyWith(
-      turns: widget.player.turns - 1,
-    );
+    // Spend energy for the manual scan.
+    if (!EnergyService.canScanPlanet(widget.player)) return;
+    var updatedPlayer = widget.player.spendEnergy(EnergyService.planetScanCost);
     final ownerFaction = planet.owner;
     if (ownerFaction != null) {
       updatedPlayer = updatedPlayer.withFactionStandingChange(ownerFaction, 1);
@@ -169,15 +169,18 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 ),
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: widget.player.turns > 0 ? _scanPlanet : null,
+                  onPressed: EnergyService.canScanPlanet(widget.player)
+                      ? _scanPlanet
+                      : null,
                   icon: const Icon(Icons.science_rounded),
-                  label: Text('Scan Planet (1 turn)'),
+                  label: Text(
+                      'Scan Planet (${EnergyService.planetScanCost} energy)'),
                 ),
-                if (widget.player.turns <= 0)
+                if (!EnergyService.canScanPlanet(widget.player))
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      'Not enough turns',
+                      'Not enough energy',
                       style: TextStyle(
                         color: cs.error,
                         fontSize: 12,

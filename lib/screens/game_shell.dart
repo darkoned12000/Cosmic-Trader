@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cosmic_trader/core/app_exit.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
@@ -19,7 +21,13 @@ import 'package:cosmic_trader/screens/sector_view.dart';
 import 'package:cosmic_trader/screens/settings_screen.dart';
 import 'package:cosmic_trader/screens/ship_status.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/equalizer_widget.dart';
 import 'package:cosmic_trader/widgets/hud_strip.dart';
@@ -62,7 +70,12 @@ class _GameShellState extends State<GameShell> {
     _loadSettings();
     _loadNpcs();
     _loadHudSectors();
-    _tickService.onTickComplete = (_) => _reloadNpcs();
+    BountyBoard.global.ensureLoaded();
+    EconomyMetrics.global.restore();
+    _tickService.onTickComplete = (_) {
+      _reloadNpcs();
+      _applySolarRecharge();
+    };
     _tickService.onTickError = (error) {
       debugPrint('[GameShell] Tick error: $error');
     };
@@ -77,6 +90,8 @@ class _GameShellState extends State<GameShell> {
     // Mark the tick service with the FedSpace boundary after settings load
     _loadSettings().then((_) {
       _tickService.fedSpaceEnd = _settings.fedSpaceEnd;
+      NpcAiService.safeZoneEnd = _settings.fedSpaceEnd;
+      Port.safeZoneEnd = _settings.fedSpaceEnd;
     });
   }
 
@@ -109,6 +124,16 @@ class _GameShellState extends State<GameShell> {
       final loaded = await NpcStorage().loadAll();
       if (mounted) setState(() => _npcs = loaded);
     } catch (_) {}
+  }
+
+  /// Solar Array modules trickle-charge the active player each tick.
+  ///
+  /// This intentionally does nothing unless the module is installed and the
+  /// tank has room, so it stays a slow backup rather than free infinite fuel.
+  void _applySolarRecharge() {
+    final result = EnergyService.solarRecharge(_player);
+    if (result.unitsAdded <= 0) return;
+    _updatePlayer(result.player);
   }
 
   void _handleNpcAttack(NpcAttackEvent event) {
@@ -172,8 +197,8 @@ class _GameShellState extends State<GameShell> {
         if (settings.resetPlayersOnRegen) {
           _player = _player.copyWith(
             currentSectorId: 1,
-            turns: settings.initTurns,
-            maxTurns: settings.initTurns,
+            energy: settings.initEnergy,
+            maxEnergy: settings.initEnergy,
             credits: settings.initCredits,
             maxCargo: settings.initHolds,
             cargoSize: settings.initHolds,
@@ -273,6 +298,122 @@ class _GameShellState extends State<GameShell> {
     }
   }
 
+  // ── Automation dev controls (F2) ──────────────────────────────
+
+  bool _tickPaused = false;
+
+  void _setAutomationTickInterval(int seconds) {
+    if (_tickPaused) {
+      _tickPaused = false;
+      _tickService.start();
+    }
+    _tickService.updateInterval(Duration(seconds: seconds));
+    GameEventLog.global.system('DEV tick interval → ${seconds}s');
+    if (mounted) setState(() {});
+  }
+
+  void _setAutomationTickPaused(bool paused) {
+    _tickPaused = paused;
+    if (paused) {
+      _tickService.stop();
+    } else {
+      _tickService.start();
+    }
+    GameEventLog.global
+        .system(paused ? 'DEV ticks paused' : 'DEV ticks resumed');
+    if (mounted) setState(() {});
+  }
+
+  void _grantAutomationCredits() {
+    _updatePlayer(_player.copyWith(credits: _player.credits + 100000));
+    GameEventLog.global.system('DEV granted player +100000 cr');
+  }
+
+  void _grantAutomationScrapMetal() {
+    _updatePlayer(_player.copyWith(scrapMetal: _player.scrapMetal + 500));
+    GameEventLog.global.system('DEV granted player +500 scrap metal');
+  }
+
+  void _grantAutomationScrapTech() {
+    _updatePlayer(_player.copyWith(scrapTech: _player.scrapTech + 50));
+    GameEventLog.global.system('DEV granted player +50 scrap tech');
+  }
+
+  void _drainAutomationPlayerEnergy() {
+    _updatePlayer(_player.copyWith(energy: 0));
+    GameEventLog.global.system('DEV drained player energy → 0');
+  }
+
+  Future<void> _drainAutomationNpcEnergy() async {
+    final drained = _npcs
+        .map((n) => n.copyWith(energy: (n.maxEnergy * 0.10).ceil()))
+        .toList();
+    if (mounted) setState(() => _npcs = drained);
+    await NpcStorage().saveAll(drained);
+    GameEventLog.global
+        .system('DEV drained ${drained.length} NPCs → 10% energy');
+  }
+
+  /// One-click trading diagnostic: snapshots every NPC's goal/energy/
+  /// credits/memory and every port's books into the event log and the
+  /// clipboard. Built to answer "why did trading stop after a restart?"
+  /// with ground truth instead of guesses.
+  Future<void> _dumpTradeDiagnostics() async {
+    try {
+      final sectors = await UniverseStorage.instance.loadUniverse();
+      final lines = <String>['=== Trade diagnostics ==='];
+
+      var tradeGoals = 0;
+      for (final n in _npcs) {
+        if (n.isDestroyed) continue;
+        final g = n.currentGoal;
+        if (g?.type == NpcGoalType.tradeRoute) tradeGoals++;
+        lines.add(
+          'NPC ${n.pilotName} sector=${n.currentSectorId} '
+          'goal=${g?.type} status=${g?.status} '
+          'phase=${g?.params['phase']} target=${g?.targetSectorId} '
+          'energy=${n.energy}/${n.maxEnergy} credits=${n.credits} '
+          'bank=${n.bankBalance} ports=${n.memory.discoveredPorts.length} '
+          'cargo=${n.cargoUsed}/${n.cargoHoldCapacity} '
+          'personality=${n.personality.name}',
+        );
+      }
+      lines.add('NPCs with active tradeRoute goals: $tradeGoals');
+
+      var emptySupply = 0;
+      var emptyDemand = 0;
+      var brokePorts = 0;
+      for (final s in sectors) {
+        final port = s.port;
+        if (port == null) continue;
+        final supplyTotal = port.supply.values.fold(0, (a, b) => a + b);
+        final demandTotal = port.demand.values.fold(0, (a, b) => a + b);
+        if (supplyTotal <= 0) emptySupply++;
+        if (demandTotal <= 0) emptyDemand++;
+        if (port.portCredits < 1000) brokePorts++;
+        lines.add(
+          'PORT sector=${s.id} ${port.name} supply=$supplyTotal '
+          'demand=$demandTotal credits=${port.portCredits.toStringAsFixed(0)}',
+        );
+      }
+      lines.add(
+        'Ports: empty-supply=$emptySupply empty-demand=$emptyDemand '
+        'broke(<1000cr)=$brokePorts',
+      );
+
+      final text = lines.join('\n');
+      GameEventLog.global.system(text);
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Trade diagnostics copied')),
+        );
+      }
+    } catch (e) {
+      GameEventLog.global.system('DEV diagnostics failed: $e');
+    }
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -285,6 +426,10 @@ class _GameShellState extends State<GameShell> {
   }
 
   void _onSectorSelected(int sectorId) {
+    if (!EnergyService.canMove(_player)) {
+      _showError('Retract the Solar Array before moving.');
+      return;
+    }
     if (_player.currentSectorId != sectorId) {
       setState(() {
         _player = _player.copyWith(currentSectorId: sectorId);
@@ -333,6 +478,7 @@ class _GameShellState extends State<GameShell> {
         PlayerStorage.instance.savePlayer(_player),
         NpcStorage().saveAll(_npcs),
         SettingsStorage.instance.save(_settings),
+        EconomyMetrics.global.persist(),
       ]).timeout(const Duration(seconds: 10));
     } catch (e) {
       debugPrint('[GameShell] Final save on exit failed: $e');
@@ -464,6 +610,24 @@ class _GameShellState extends State<GameShell> {
                       currentSettings: _settings,
                       onRegenerate: _handleRegenerateUniverse,
                       onSettingsChanged: _handleSettingsChanged,
+                      automationTickIntervalSeconds:
+                          _tickService.tickInterval.inSeconds,
+                      automationTickPaused: _tickPaused,
+                      onAutomationTickIntervalChanged:
+                          _setAutomationTickInterval,
+                      onAutomationTickPausedChanged: _setAutomationTickPaused,
+                      automationPlayerCredits: _player.credits,
+                      automationPlayerScrapMetal: _player.scrapMetal,
+                      automationPlayerScrapTech: _player.scrapTech,
+                      automationPlayerEnergy: _player.energy,
+                      automationPlayerMaxEnergy: _player.maxEnergy,
+                      onAutomationGrantCredits: _grantAutomationCredits,
+                      onAutomationGrantScrapMetal: _grantAutomationScrapMetal,
+                      onAutomationGrantScrapTech: _grantAutomationScrapTech,
+                      onAutomationDrainPlayerEnergy:
+                          _drainAutomationPlayerEnergy,
+                      onAutomationDrainNpcEnergy: _drainAutomationNpcEnergy,
+                      onAutomationDumpDiagnostics: _dumpTradeDiagnostics,
                     ),
                   ],
                 ),
@@ -711,6 +875,28 @@ class _GameShellState extends State<GameShell> {
                             currentSettings: _settings,
                             onRegenerate: _handleRegenerateUniverse,
                             onSettingsChanged: _handleSettingsChanged,
+                            automationTickIntervalSeconds:
+                                _tickService.tickInterval.inSeconds,
+                            automationTickPaused: _tickPaused,
+                            onAutomationTickIntervalChanged:
+                                _setAutomationTickInterval,
+                            onAutomationTickPausedChanged:
+                                _setAutomationTickPaused,
+                            automationPlayerCredits: _player.credits,
+                            automationPlayerScrapMetal: _player.scrapMetal,
+                            automationPlayerScrapTech: _player.scrapTech,
+                            automationPlayerEnergy: _player.energy,
+                            automationPlayerMaxEnergy: _player.maxEnergy,
+                            onAutomationGrantCredits: _grantAutomationCredits,
+                            onAutomationGrantScrapMetal:
+                                _grantAutomationScrapMetal,
+                            onAutomationGrantScrapTech:
+                                _grantAutomationScrapTech,
+                            onAutomationDrainPlayerEnergy:
+                                _drainAutomationPlayerEnergy,
+                            onAutomationDrainNpcEnergy:
+                                _drainAutomationNpcEnergy,
+                            onAutomationDumpDiagnostics: _dumpTradeDiagnostics,
                           ),
                         ],
                       ),

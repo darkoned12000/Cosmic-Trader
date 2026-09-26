@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -7,6 +8,7 @@ import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/core/faction_colors.dart' as fcol;
 import 'package:cosmic_trader/widgets/shared/hud_pill.dart';
 
@@ -43,6 +45,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
       final players = await PlayerStorage.instance.loadPlayers();
       final sectors = await UniverseStorage.instance.loadUniverse();
       final npcs = await NpcStorage().loadAll();
+      await BountyBoard.global.ensureLoaded();
       if (!mounted) return;
       setState(() {
         _players = players;
@@ -97,14 +100,17 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
     for (final sector in _sectors) {
       if (sector.port != null && sector.port!.isOwned) {
         final ownerName = sector.port!.owner!;
-        final humanMatches = _players
-            .where((p) => p.username.toLowerCase() == ownerName.toLowerCase());
+        final ownerId = sector.port!.ownerId;
+        final humanMatches = _players.where((p) =>
+            (ownerId != null && p.id == ownerId) ||
+            (ownerId == null &&
+                p.username.toLowerCase() == ownerName.toLowerCase()));
         if (humanMatches.isNotEmpty) {
           final s = stats[humanMatches.first.faction];
           if (s != null) s.portsControlled++;
         } else {
-          final npcMatches = _npcs.where(
-              (n) => n.pilotName.toLowerCase() == ownerName.toLowerCase());
+          final npcMatches =
+              _npcs.where((n) => sector.port!.isOwnedById(n.id, n.pilotName));
           if (npcMatches.isNotEmpty) {
             final s = stats[npcMatches.first.faction];
             if (s != null) s.portsControlled++;
@@ -203,6 +209,16 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildSummaryHeader(theme, cs, sorted),
+          const SizedBox(height: 12),
+          Center(
+            child: OutlinedButton.icon(
+              onPressed: () => _copyReport(context, sorted),
+              icon: const Icon(Icons.copy_rounded, size: 16),
+              label: const Text('Copy report', style: TextStyle(fontSize: 12)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildMostWantedSection(theme, cs),
           const SizedBox(height: 24),
           _buildTopPilotsSection(theme, cs),
           const SizedBox(height: 24),
@@ -275,6 +291,116 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Copies the full rankings (factions + top pilots + most wanted) as
+  /// plain text for sharing/debugging — same shape as shown on screen.
+  void _copyReport(BuildContext context, List<FactionStats> sorted) {
+    final lines = <String>['=== Faction Power Rankings ==='];
+    for (final s in sorted) {
+      lines.add(
+        '${s.faction.name}: ships ${s.shipCount}, wealth '
+        '${s.totalCredits + s.totalBankCredits} cr '
+        '(cash ${s.totalCredits} / bank ${s.totalBankCredits}), '
+        'ports ${s.portsControlled}, kills ${s.kills}, '
+        'deaths ${s.deaths}, score ${s.powerScore.toStringAsFixed(0)}',
+      );
+    }
+    lines.add('');
+    lines.add('--- Top pilots ---');
+    for (final e in _topEntities) {
+      lines.add(
+        '${e.name} (${e.faction.name}): score '
+        '${e.powerScore.toStringAsFixed(0)}, ${e.credits} cr, '
+        '${e.portsOwned} ports, ${e.kills} kills'
+        '${e.isNpc ? '' : ' [player]'}',
+      );
+    }
+    lines.add('');
+    lines.add('--- Most Wanted ---');
+    final wanted = BountyBoard.global.active.toList()
+      ..sort((a, b) => b.amount.compareTo(a.amount));
+    if (wanted.isEmpty) {
+      lines.add('(no open contracts)');
+    }
+    for (final b in wanted.take(10)) {
+      lines.add('${b.targetName} (${b.targetFaction}): ${b.amount} cr '
+          'by ${b.posterName}');
+    }
+    Clipboard.setData(ClipboardData(text: lines.join('\n')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Rankings copied')),
+    );
+  }
+
+  /// Most-wanted feed from the Bounty Board: top active contracts by
+  /// amount. Read-only view over the shared board singleton.
+  Widget _buildMostWantedSection(ThemeData theme, ColorScheme cs) {
+    final board = BountyBoard.global;
+    final wanted = board.active.toList()
+      ..sort((a, b) => b.amount.compareTo(a.amount));
+    final shown = wanted.take(5).toList();
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Most Wanted',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Top open contracts from the Bounty Board',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (shown.isEmpty)
+              Text(
+                'No open contracts. The galaxy behaves — for now.',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                  color: cs.onSurface.withValues(alpha: 0.5),
+                ),
+              )
+            else
+              ...shown.map((b) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(Icons.crisis_alert_rounded,
+                            size: 16, color: Colors.redAccent.shade400),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${b.targetName} (${b.targetFaction})',
+                            style: const TextStyle(fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          '${b.amount} cr',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
           ],
         ),
       ),

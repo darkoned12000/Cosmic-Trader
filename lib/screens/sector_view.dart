@@ -11,6 +11,7 @@ import 'package:cosmic_trader/widgets/sector_view_widgets/ship_status_summary.da
 import 'package:cosmic_trader/widgets/sector_view_widgets/communications_panel.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/tactical_map.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/warp_console.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 
 class SectorView extends StatefulWidget {
   final Player player;
@@ -112,10 +113,22 @@ class _SectorViewState extends State<SectorView> {
   Future<void> _warpTo(int targetSectorId) async {
     final target = _allSectors.firstWhere((s) => s.id == targetSectorId);
 
-    final updatedPlayer = widget.player.copyWith(
-      currentSectorId: targetSectorId,
-      turns: widget.player.turns - 1,
-    );
+    if (!EnergyService.canMove(widget.player)) {
+      ActionLogProvider.global
+          .error('Solar Array deployed — retract it before warping');
+      return;
+    }
+
+    final warpCost = EnergyService.warpCost(widget.player);
+    if (!widget.player.hasEnergy(warpCost)) {
+      ActionLogProvider.global
+          .error('Insufficient energy to warp ($warpCost required)');
+      return;
+    }
+
+    final updatedPlayer = widget.player
+        .spendEnergy(warpCost)
+        .copyWith(currentSectorId: targetSectorId);
 
     final sectorName = _currentSector?.name ?? 'Unknown';
     ActionLogProvider.global
