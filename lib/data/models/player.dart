@@ -111,6 +111,11 @@ class Player {
   /// Higher values make NPCs more aggressive and hostile.
   final double notoriety;
 
+  // ── Bounty kills ────────────────────────────────────────────
+  /// Victim ids this player has destroyed (capped). The Bounty Board pays
+  /// claims against these ids through its Claim action.
+  final List<String> recentKills;
+
   Player({
     this.id = '',
     this.username = '',
@@ -159,7 +164,17 @@ class Player {
     this.lastHackProfile,
     this.lastHackReward,
     this.notoriety = 0.0,
+    this.recentKills = const [],
   });
+
+  /// Records a kill for bounty claims (newest first, capped at 50).
+  Player withKill(String victimId) {
+    final kills = [victimId, ...recentKills];
+    while (kills.length > 50) {
+      kills.removeLast();
+    }
+    return copyWith(recentKills: kills);
+  }
 
   bool ownsPort(String portName) => ownedPorts.contains(portName);
 
@@ -234,6 +249,7 @@ class Player {
     String? lastHackProfile,
     String? lastHackReward,
     double? notoriety,
+    List<String>? recentKills,
   }) {
     return Player(
       id: id ?? this.id,
@@ -283,6 +299,7 @@ class Player {
       lastHackProfile: lastHackProfile ?? this.lastHackProfile,
       lastHackReward: lastHackReward ?? this.lastHackReward,
       notoriety: notoriety ?? this.notoriety,
+      recentKills: recentKills ?? this.recentKills,
     );
   }
 
@@ -335,6 +352,7 @@ class Player {
       'lastHackProfile': lastHackProfile,
       'lastHackReward': lastHackReward,
       'notoriety': notoriety,
+      'recentKills': recentKills,
     };
   }
 
@@ -412,6 +430,7 @@ class Player {
       lastHackProfile: json['lastHackProfile'] as String?,
       lastHackReward: json['lastHackReward'] as String?,
       notoriety: (json['notoriety'] as num?)?.toDouble() ?? 0.0,
+      recentKills: (json['recentKills'] as List?)?.cast<String>() ?? const [],
     );
   }
 

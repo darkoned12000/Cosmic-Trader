@@ -68,17 +68,37 @@ class TowService {
 
   /// Finds the nearest usable tow destination.
   ///
-  /// Hardware Emporiums are preferred because they can refuel. If none are
-  /// reachable, falls back to the nearest port so the ship is still recovered
-  /// instead of being stuck forever.
-  static TowPlan? findTowPlan(List<Sector> sectors, int currentSectorId) {
+  /// Hardware Emporiums are preferred because they can refuel. When [player]
+  /// is given, servable emporiums (standing above the refusal threshold,
+  /// or unowned) are preferred so a hated pilot isn't towed to a closed
+  /// door — with any emporium, then any port, as fallbacks. A pirate can
+  /// always be served *somewhere*: unowned emporiums serve everyone, and
+  /// standing recovers through trade, so reputation is never a soft-lock.
+  static TowPlan? findTowPlan(
+    List<Sector> sectors,
+    int currentSectorId, {
+    Player? player,
+  }) {
     if (sectors.isEmpty) return null;
 
+    bool serves(Sector s) {
+      final port = s.port;
+      if (port == null || !port.isHardwareEmporium) return false;
+      final owner = port.ownerFaction;
+      if (owner == null || player == null) return true;
+      return !port.deniesServiceTo(player.factionStandingWith(owner));
+    }
+
     final refuelSectorId = PathfindingService.findNearestWhere(
-      sectors,
-      currentSectorId,
-      (s) => s.hasPort && s.port != null && s.port!.isHardwareEmporium,
-    );
+          sectors,
+          currentSectorId,
+          serves,
+        ) ??
+        PathfindingService.findNearestWhere(
+          sectors,
+          currentSectorId,
+          (s) => s.hasPort && s.port != null && s.port!.isHardwareEmporium,
+        );
 
     final fallbackSectorId = PathfindingService.findNearestWhere(
       sectors,

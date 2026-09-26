@@ -130,7 +130,10 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Reset session metrics',
-            onPressed: () => EconomyMetrics.global.reset(),
+            onPressed: () {
+              EconomyMetrics.global.reset();
+              _loadHoldings();
+            },
           ),
         ],
       ),

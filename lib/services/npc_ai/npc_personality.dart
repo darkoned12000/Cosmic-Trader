@@ -41,6 +41,7 @@ class PersonalityConfig {
       goalWeights: {
         NpcGoalType.tradeRoute: 0.60,
         NpcGoalType.explore: 0.15,
+        NpcGoalType.buyPort: 0.10,
         NpcGoalType.patrol: 0.05,
       },
       aggression: 0.1,
@@ -64,6 +65,7 @@ class PersonalityConfig {
     NpcPersonality.traderSmuggler: PersonalityConfig(
       goalWeights: {
         NpcGoalType.tradeRoute: 0.50,
+        NpcGoalType.buyPort: 0.10,
         NpcGoalType.patrol: 0.05,
       },
       aggression: 0.2,
@@ -107,6 +109,7 @@ class PersonalityConfig {
         NpcGoalType.raidPort: 0.35,
         NpcGoalType.attack: 0.25,
         NpcGoalType.tradeRoute: 0.20,
+        NpcGoalType.buyPort: 0.10,
         NpcGoalType.explore: 0.05,
       },
       aggression: 0.7,
@@ -149,6 +152,7 @@ class PersonalityConfig {
         NpcGoalType.explore: 0.55,
         NpcGoalType.patrol: 0.20,
         NpcGoalType.tradeRoute: 0.15,
+        NpcGoalType.buyPort: 0.05,
       },
       aggression: 0.1,
       greed: 0.3,

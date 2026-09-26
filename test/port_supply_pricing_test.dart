@@ -168,4 +168,24 @@ void main() {
     expect(legacy.regionalBuyBonus, isEmpty);
     expect(legacy.anomalyBuyBonus, 1.0);
   });
+
+  test('ceiling clamps the multiplier, never the price', () {
+    // Every layer maxed: cash 2.0 (flush) × demand 1.25 × drift 1.4 ×
+    // regional 1.3 × anomaly 1.1 × standing 1.25 ≈ 6.25 → clamped 4.0.
+    // Base 50 → 200, NOT 4.0 (the clamp bounds the multiplier).
+    final port = _port(
+      demand: {'minerals': 100},
+      maxDemand: {'minerals': 100},
+    ).copyWith(
+      portCredits: 3000,
+      desiredCredits: 1000,
+      priceDrift: {'minerals': 1.4},
+      regionalBuyBonus: {'minerals': 1.3},
+      anomalyBuyBonus: 1.1,
+    );
+    expect(
+      port.getEffectiveBuyPriceFor('minerals', standing: 100),
+      closeTo(200.0, 1e-9),
+    );
+  });
 }

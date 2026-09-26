@@ -33,6 +33,13 @@ class PortCombatResult {
 }
 
 /// Handles port combat resolution.
+///
+/// NOTE on [mode] ("capture"/"destroy"): it is intentionally NOT read by
+/// the resolution math — a siege round plays identically either way. The
+/// caller applies the distinction after the fact (capture vs destroy the
+/// port on surrender). Likewise [PortCombatResult.portDestroyed] is always
+/// false out of here: destruction is the caller's decision, not the
+/// round's. Both are post-siege labels, kept on the result for callers.
 class PortCombatService {
   static final math.Random _rng = math.Random();
 
@@ -50,16 +57,27 @@ class PortCombatService {
     return npc.totalWeaponPower * 50;
   }
 
-  /// Resolve one round of port combat (player attacking).
-  static PortCombatResult resolvePortAttack(
-    Player attacker,
-    Port port,
-    String mode,
-  ) {
+  /// Shared siege-round core. Both attacker flavors run this exact math
+  /// (previously duplicated per type — balance changes apply once here).
+  /// Returns raw round numbers; callers wrap them into Player/NpcShip.
+  static ({
+    int damageToPort,
+    int baseDamageToAttacker,
+    int bonusDamageToAttacker,
+    int remainingPortShields,
+    int attackerShields,
+    int attackerHull,
+    bool surrendered,
+    bool attackerDefeated,
+    String outcome,
+  }) resolveRound({
+    required int attackerPower,
+    required int attackerShields,
+    required int attackerHull,
+    required int attackerMaxHull,
+    required Port port,
+  }) {
     final portStats = PortDefenseConfig.defenseStats(port.defenseLevel);
-
-    // Attacker fires
-    final attackerPower = calculateAttackerFirepower(attacker);
     final portFirepower = calculatePortFirepower(port);
 
     final damageToPort = (attackerPower * (0.8 + _rng.nextDouble() * 0.4))
@@ -70,85 +88,102 @@ class PortCombatService {
             .round()
             .clamp(1, 99999);
 
-    // Apply damage to port shields
     int remainingPortShields = port.currentShields - damageToPort;
     if (remainingPortShields < 0) remainingPortShields = 0;
 
-    // Check port special abilities
     int bonusDamageToAttacker = 0;
     if (portStats.hasCounterAttack) {
       bonusDamageToAttacker = (portFirepower * 0.3).round();
     }
     int empDrainDamage = 0;
     if (portStats.hasEmpBurst) {
-      empDrainDamage = (attacker.shields * portStats.empDrainPct).round();
+      empDrainDamage = (attackerShields * portStats.empDrainPct).round();
     }
 
     int totalDamageToAttacker =
         baseDamageToAttacker + bonusDamageToAttacker + empDrainDamage;
 
-    // Check if port can still defend (shields > 5%)
     final canDefend = remainingPortShields > port.captureThreshold;
     if (!canDefend) {
       totalDamageToAttacker = 0;
     }
 
-    // Apply damage to attacker (shields first, then hull)
-    var attackerShields = attacker.shields;
-    var attackerHull = attacker.hull;
-
+    var shieldsLeft = attackerShields;
+    var hullLeft = attackerHull;
     if (totalDamageToAttacker > 0) {
-      if (attackerShields > 0) {
-        if (totalDamageToAttacker <= attackerShields) {
-          attackerShields -= totalDamageToAttacker;
+      if (shieldsLeft > 0) {
+        if (totalDamageToAttacker <= shieldsLeft) {
+          shieldsLeft -= totalDamageToAttacker;
           totalDamageToAttacker = 0;
         } else {
-          totalDamageToAttacker -= attackerShields;
-          attackerShields = 0;
+          totalDamageToAttacker -= shieldsLeft;
+          shieldsLeft = 0;
         }
       }
       if (totalDamageToAttacker > 0) {
-        attackerHull =
-            (attackerHull - totalDamageToAttacker).clamp(0, attacker.maxHull);
+        hullLeft = (hullLeft - totalDamageToAttacker).clamp(0, attackerMaxHull);
       }
     }
 
-    // Determine outcome
     String outcome;
-    bool portSurrendered = false;
-    bool portDestroyed = false;
-    bool attackerDefeated = false;
-
-    if (attackerHull <= 0) {
+    var surrendered = false;
+    var attackerDefeated = false;
+    if (hullLeft <= 0) {
       outcome = "attackerDefeated";
       attackerDefeated = true;
     } else if (remainingPortShields <= port.captureThreshold) {
       outcome = "surrender";
-      portSurrendered = true;
+      surrendered = true;
     } else {
       outcome = "continue";
     }
 
-    // Update port
-    final updatedPort = port.copyWith(
-      currentShields: remainingPortShields,
+    return (
+      damageToPort: damageToPort,
+      baseDamageToAttacker: baseDamageToAttacker,
+      bonusDamageToAttacker: bonusDamageToAttacker,
+      remainingPortShields: remainingPortShields,
+      attackerShields: shieldsLeft,
+      attackerHull: hullLeft,
+      surrendered: surrendered,
+      attackerDefeated: attackerDefeated,
+      outcome: outcome,
+    );
+  }
+
+  /// Resolve one round of port combat (player attacking).
+  static PortCombatResult resolvePortAttack(
+    Player attacker,
+    Port port,
+    String mode,
+  ) {
+    final round = resolveRound(
+      attackerPower: calculateAttackerFirepower(attacker),
+      attackerShields: attacker.shields,
+      attackerHull: attacker.hull,
+      attackerMaxHull: attacker.maxHull,
+      port: port,
     );
 
-    // Update player
+    final updatedPort = port.copyWith(
+      currentShields: round.remainingPortShields,
+    );
+
     final updatedPlayer = attacker.copyWith(
-      shields: attackerShields,
-      hull: attackerHull,
+      shields: round.attackerShields,
+      hull: round.attackerHull,
     );
 
     return PortCombatResult(
-      portSurrendered: portSurrendered,
-      portDestroyed: portDestroyed,
-      attackerDefeated: attackerDefeated,
-      damageToPort: damageToPort,
-      damageToAttacker: baseDamageToAttacker + bonusDamageToAttacker,
+      portSurrendered: round.surrendered,
+      portDestroyed: false,
+      attackerDefeated: round.attackerDefeated,
+      damageToPort: round.damageToPort,
+      damageToAttacker:
+          round.baseDamageToAttacker + round.bonusDamageToAttacker,
       updatedPort: updatedPort,
       updatedPlayer: updatedPlayer,
-      outcome: outcome,
+      outcome: round.outcome,
     );
   }
 
@@ -158,97 +193,48 @@ class PortCombatService {
     Port port,
     String mode,
   ) {
-    final portStats = PortDefenseConfig.defenseStats(port.defenseLevel);
-
-    final npcPower = calculateNpcFirepower(npc);
-    final portFirepower = calculatePortFirepower(port);
-
-    final damageToPort =
-        (npcPower * (0.8 + _rng.nextDouble() * 0.4)).round().clamp(1, 99999);
-    final baseDamageToNpc = (portFirepower * (0.8 + _rng.nextDouble() * 0.4))
-        .round()
-        .clamp(1, 99999);
-
-    int remainingPortShields = port.currentShields - damageToPort;
-    if (remainingPortShields < 0) remainingPortShields = 0;
-
-    int bonusDamageToNpc = 0;
-    if (portStats.hasCounterAttack) {
-      bonusDamageToNpc = (portFirepower * 0.3).round();
-    }
-    int empDrainDamage = 0;
-    if (portStats.hasEmpBurst) {
-      empDrainDamage = (npc.shields * portStats.empDrainPct).round();
-    }
-
-    int totalDamageToNpc = baseDamageToNpc + bonusDamageToNpc + empDrainDamage;
-
-    final canDefend = remainingPortShields > port.captureThreshold;
-    if (!canDefend) {
-      totalDamageToNpc = 0;
-    }
-
-    var npcShields = npc.shields;
-    var npcHull = npc.hull;
-
-    if (totalDamageToNpc > 0) {
-      if (npcShields > 0) {
-        if (totalDamageToNpc <= npcShields) {
-          npcShields -= totalDamageToNpc;
-          totalDamageToNpc = 0;
-        } else {
-          totalDamageToNpc -= npcShields;
-          npcShields = 0;
-        }
-      }
-      if (totalDamageToNpc > 0) {
-        npcHull = (npcHull - totalDamageToNpc).clamp(0, npc.maxHull);
-      }
-    }
-
-    String outcome;
-    bool portSurrendered = false;
-    bool npcDefeated = false;
-
-    if (npcHull <= 0) {
-      outcome = "attackerDefeated";
-      npcDefeated = true;
-    } else if (remainingPortShields <= port.captureThreshold) {
-      outcome = "surrender";
-      portSurrendered = true;
-    } else {
-      outcome = "continue";
-    }
+    final round = resolveRound(
+      attackerPower: calculateNpcFirepower(npc),
+      attackerShields: npc.shields,
+      attackerHull: npc.hull,
+      attackerMaxHull: npc.maxHull,
+      port: port,
+    );
 
     final updatedPort = port.copyWith(
-      currentShields: remainingPortShields,
+      currentShields: round.remainingPortShields,
     );
 
     final updatedNpc = npc.copyWith(
-      shields: npcShields,
-      hull: npcHull,
+      shields: round.attackerShields,
+      hull: round.attackerHull,
     );
 
     return PortCombatResult(
-      portSurrendered: portSurrendered,
+      portSurrendered: round.surrendered,
       portDestroyed: false,
-      attackerDefeated: npcDefeated,
-      damageToPort: damageToPort,
-      damageToAttacker: baseDamageToNpc + bonusDamageToNpc,
+      attackerDefeated: round.attackerDefeated,
+      damageToPort: round.damageToPort,
+      damageToAttacker:
+          round.baseDamageToAttacker + round.bonusDamageToAttacker,
       updatedPort: updatedPort,
       updatedNpc: updatedNpc,
-      outcome: outcome,
+      outcome: round.outcome,
     );
   }
 
-  /// Capture a port (transfer ownership).
+  /// Capture a port (transfer ownership). [newOwnerId] is the display
+  /// name (legacy); pass [ownerId] (stable NPC/player id) for matching —
+  /// display names can collide across seeded generators.
   static Port capturePort(
     Port port,
     String newOwnerId,
-    String? newOwnerFaction,
-  ) {
+    String? newOwnerFaction, {
+    String? ownerId,
+  }) {
     return port.copyWith(
       owner: newOwnerId,
+      ownerId: ownerId,
       ownerFaction:
           newOwnerFaction != null ? _parseFactionClass(newOwnerFaction) : null,
       isUnderAttack: false,

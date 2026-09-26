@@ -18,6 +18,11 @@ class Port {
   final double portCredits;
   final String? owner;
 
+  /// Stable owner identity (NPC id or player id). Names collide across
+  /// seeded generators, so all ownership matching keys off this first
+  /// and falls back to the display name only for legacy saves.
+  final String? ownerId;
+
   /// The faction affiliation of the port owner (null if unowned or federal).
   final FactionClass? ownerFaction;
 
@@ -79,11 +84,9 @@ class Port {
 
   /// Anomaly market modifier (B2 regionals, all goods, buy side).
   /// Boom 1.10 / bust 0.90 in or adjacent to an anomaly sector, else 1.0.
+  /// Whole-economy effect by design (unlike per-good homeworld premiums).
+  /// Overlapping anomaly fields compose multiplicatively at generation.
   final double anomalyBuyBonus;
-
-  /// Anomaly market modifier on all goods this port buys (B2 regionals):
-  /// boom 1.10 / bust 0.90 for ports in or adjacent to an anomaly sector,
-  /// 1.0 elsewhere. Set at generation.
 
   /// Timestamp until which a successful sabotage has weakened this port's
   /// combat defenses. Null means no active sabotage.
@@ -103,6 +106,7 @@ class Port {
     this.portCredits = 0.0,
     this.desiredCredits = 0.0,
     this.owner,
+    this.ownerId,
     this.ownerFaction,
     this.lastRegenTime = 0,
     this.storageLevel = 0,
@@ -125,6 +129,14 @@ class Port {
 
   bool get isOwned => owner != null && owner!.isNotEmpty;
 
+  /// Ownership match for an NPC id + display name pair. Keys off [ownerId]
+  /// when present; pre-ownerId saves fall back to the display name.
+  bool isOwnedById(String id, String name) {
+    if (!isOwned) return false;
+    if (ownerId != null) return ownerId == id;
+    return owner == name;
+  }
+
   bool get isHardwareEmporium => portClass == PortClass.hardwareEmporium;
 
   bool get isSecurityCompromised =>
@@ -146,9 +158,11 @@ class Port {
   /// Can port still defend? (shields > 5% and not destroyed)
   bool get canDefend => currentShields > captureThreshold && !isDestroyed;
 
-  /// Whether the port is in a safe zone (sectors 1-10).
+  /// Whether the port is in a safe zone. Boundary mirrors
+  /// [GameSettings.fedSpaceEnd] (synced by the shell); defaults to 10.
   /// Safe zones cannot be attacked by players or NPCs.
-  static bool isInSafeZone(int sectorId) => sectorId <= 10;
+  static int safeZoneEnd = 10;
+  static bool isInSafeZone(int sectorId) => sectorId <= safeZoneEnd;
 
   double getBuyPrice(String commodity) => buyPrices[commodity] ?? 0;
   double getSellPrice(String commodity) => sellPrices[commodity] ?? 0;
@@ -271,6 +285,14 @@ class Port {
   double getEffectiveBuyPrice(String commodity) =>
       getEffectiveBuyPriceFor(commodity);
 
+  /// Standing at or below which a port refuses service (B3): no refuel,
+  /// no emporium trade, hostile banking. Unowned ports serve everyone
+  /// (check ownerFaction before calling).
+  static const int hostileServiceThreshold = -50;
+
+  /// True when [standing] gets this port's doors slammed shut.
+  bool deniesServiceTo(int standing) => standing <= hostileServiceThreshold;
+
   /// Buy-side price with faction standing applied (B3): +100 standing →
   /// 20% cheaper, −100 → 20% markup. Clamped to [0.8, 1.25].
   /// This is the price a buyer PAYS the port.
@@ -283,28 +305,41 @@ class Port {
   static double standingSellMultiplier(int standing) =>
       (1 + standing * 0.002).clamp(0.8, 1.25);
 
+  /// Hard ceiling/floor on the composed effective-price multiplier (B2).
+  /// Six multiplicative layers can otherwise stack to ~6.25× or crash to
+  /// ~0.23× — far outside arbitrage bounds. Individual layers keep their
+  /// ranges; the product clamps here.
+  static const double minEffectiveMultiplier = 0.25;
+  static const double maxEffectiveMultiplier = 4.0;
+
   double getEffectiveSellPriceFor(String commodity, {int standing = 0}) {
+    final base = getSellPrice(commodity);
+    if (base <= 0) return 0;
     if (pricingOverride?.containsKey(commodity) == true) {
-      return getSellPrice(commodity) * getEffectivePriceMultiplier(commodity);
+      return base * getEffectivePriceMultiplier(commodity);
     }
-    return getSellPrice(commodity) *
-        getEffectivePriceMultiplier(commodity) *
-        supplyPriceMultiplier(commodity) *
-        driftFor(commodity) *
-        standingBuyMultiplier(standing);
+    final mult = (getEffectivePriceMultiplier(commodity) *
+            supplyPriceMultiplier(commodity) *
+            driftFor(commodity) *
+            standingBuyMultiplier(standing))
+        .clamp(minEffectiveMultiplier, maxEffectiveMultiplier);
+    return base * mult;
   }
 
   double getEffectiveBuyPriceFor(String commodity, {int standing = 0}) {
+    final base = getBuyPrice(commodity);
+    if (base <= 0) return 0;
     if (pricingOverride?.containsKey(commodity) == true) {
-      return getBuyPrice(commodity) * getEffectivePriceMultiplier(commodity);
+      return base * getEffectivePriceMultiplier(commodity);
     }
-    return getBuyPrice(commodity) *
-        getEffectivePriceMultiplier(commodity) *
-        demandPriceMultiplier(commodity) *
-        driftFor(commodity) *
-        (regionalBuyBonus[commodity] ?? 1.0) *
-        anomalyBuyBonus *
-        standingSellMultiplier(standing);
+    final mult = (getEffectivePriceMultiplier(commodity) *
+            demandPriceMultiplier(commodity) *
+            driftFor(commodity) *
+            (regionalBuyBonus[commodity] ?? 1.0) *
+            anomalyBuyBonus *
+            standingSellMultiplier(standing))
+        .clamp(minEffectiveMultiplier, maxEffectiveMultiplier);
+    return base * mult;
   }
 
   /// Regenerate supply/demand toward maxSupply/maxDemand over a 24-hour
@@ -344,7 +379,9 @@ class Port {
       }
     }
 
-    if (!changed && fraction < 1.0) return this;
+    // No-op regen returns the identical instance so the tick dirty-check
+    // (regenerated != sector.port) doesn't flag unchanged sectors for save.
+    if (!changed) return this;
 
     return copyWith(
       supply: newSupply,
@@ -367,6 +404,7 @@ class Port {
     double? portCredits,
     double? desiredCredits,
     String? owner,
+    String? ownerId,
     FactionClass? ownerFaction,
     int? lastRegenTime,
     bool clearOwnerFaction = false,
@@ -401,6 +439,7 @@ class Port {
       portCredits: portCredits ?? this.portCredits,
       desiredCredits: desiredCredits ?? this.desiredCredits,
       owner: clearOwner ? null : (owner ?? this.owner),
+      ownerId: clearOwner ? null : (ownerId ?? this.ownerId),
       ownerFaction:
           clearOwnerFaction ? null : (ownerFaction ?? this.ownerFaction),
       lastRegenTime: lastRegenTime ?? this.lastRegenTime,
@@ -440,6 +479,7 @@ class Port {
       'desiredCredits': desiredCredits,
       'lastRegenTime': lastRegenTime,
       'owner': owner,
+      'ownerId': ownerId,
       'ownerFaction': ownerFaction?.name,
       'storageLevel': storageLevel,
       'accumulatedRevenue': accumulatedRevenue,
@@ -483,6 +523,7 @@ class Port {
           0.0,
       lastRegenTime: (json['lastRegenTime'] as int?) ?? 0,
       owner: json['owner'] as String?,
+      ownerId: json['ownerId'] as String?,
       ownerFaction: _parseFactionClass(json['ownerFaction'] as String?),
       storageLevel: (json['storageLevel'] as int?) ?? 0,
       accumulatedRevenue:

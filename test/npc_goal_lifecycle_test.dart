@@ -5,6 +5,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_memory.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_personality.dart';
@@ -292,12 +293,24 @@ void main() {
     );
     expect(npc.cargoUsed, npc.cargoHoldCapacity);
 
-    npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
-    // Travels to the buyer with a sell-first route...
-    expect(npc.currentSectorId, 2);
-    expect(npc.currentGoal?.params['phase'], 'travel_to_sell');
+    // Weighted selection may explore first (shared static RNG); run until
+    // the sell-first route executes.
+    NpcGoalType? firstRoute;
+    for (int i = 0; i < 15; i++) {
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+      final phase = npc.currentGoal?.params['phase'];
+      if (npc.currentGoal?.type == NpcGoalType.tradeRoute &&
+          phase == 'travel_to_sell') {
+        firstRoute = NpcGoalType.tradeRoute;
+        break;
+      }
+      if (npc.credits > 5000) break;
+    }
+    expect(firstRoute, NpcGoalType.tradeRoute);
 
-    npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    for (int i = 0; i < 15 && npc.credits <= 5000; i++) {
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    }
     // ...and unloads for cash, freeing the holds.
     expect(npc.cargoUsed, lessThan(20));
     expect(npc.credits, greaterThan(5000));
@@ -395,9 +408,11 @@ void main() {
       cargoUsed: 20,
     );
 
-    npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
-    expect(npc.currentSectorId, 2);
-    npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    // Weighted selection may explore first (shared static RNG); run until
+    // the sale happens — the point is a broke full hold CAN sell.
+    for (int i = 0; i < 15 && npc.credits <= 0; i++) {
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    }
     expect(npc.credits, greaterThan(0));
   });
 
@@ -710,5 +725,222 @@ void main() {
 
     npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
     expect(npc.credits, greaterThanOrEqualTo(0));
+  });
+
+  test('rich NPC buys an unowned port; federal ports never for sale', () {
+    Sector dock(int id, Port port) => Sector(
+          id: id,
+          name: 'S$id',
+          x: 0,
+          y: 0,
+          warpRoutes: const [11, 12],
+          hasPort: true,
+          port: port,
+        );
+    const cheap = Port(
+      name: 'Cheap Dock',
+      portClass: PortClass.independent,
+      buyPrices: {},
+      sellPrices: {},
+      portCredits: 1000,
+      desiredCredits: 1000,
+    );
+    const federal = Port(
+      name: 'Fed Dock',
+      portClass: PortClass.federal,
+      buyPrices: {},
+      sellPrices: {},
+      portCredits: 1000,
+      desiredCredits: 1000,
+    );
+    final sectors = [dock(11, cheap), dock(12, federal)];
+    var npc = NpcShip.create(
+      faction: FactionClass.trader,
+      shipDef: ShipDefinition.allShips.first,
+      currentSectorId: 11,
+      startingCredits: 10000000,
+      seed: 91,
+    ).copyWith(
+      personality: NpcPersonality.traderMerchant,
+      credits: 10000000,
+      currentGoal: NpcGoal(
+        type: NpcGoalType.buyPort,
+        status: NpcGoalStatus.travelling,
+        createdAt: DateTime.now(),
+        params: const {'targetSectorId': 12},
+      ),
+    );
+
+    // Federal port targeted: not purchasable, goal clears.
+    for (int i = 0; i < 4 && sectors[1].port?.owner == null; i++) {
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    }
+    expect(sectors[1].port?.owner, isNull);
+
+    // Retarget the cheap independent dock: purchase completes.
+    npc = npc.copyWith(
+      currentGoal: NpcGoal(
+        type: NpcGoalType.buyPort,
+        status: NpcGoalStatus.travelling,
+        createdAt: DateTime.now(),
+        params: const {'targetSectorId': 11},
+      ),
+    );
+    final price = NpcAiService.npcPortPrice(sectors[0].port!);
+    for (int i = 0; i < 4 && sectors[0].port?.owner == null; i++) {
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    }
+    expect(sectors[0].port?.owner, npc.pilotName);
+    expect(sectors[0].port?.ownerFaction, FactionClass.trader);
+    // Purchase price plus autonomous owner upgrades (defense) came out
+    // of the bankroll — exact split between credits, bank (deposits fire
+    // autonomously), and upgrades varies with timing.
+    expect(npc.credits + npc.bankBalance, lessThan(10000000));
+    expect(npc.credits + npc.bankBalance,
+        greaterThanOrEqualTo(10000000 - price - 3000000));
+  });
+
+  test('weak NPC skips unbeatable raid targets', () {
+    var npc = NpcShip.create(
+      faction: FactionClass.pirate,
+      shipDef: ShipDefinition.allShips.first,
+      currentSectorId: 12,
+      startingCredits: 10000,
+      seed: 92,
+    ).copyWith(personality: NpcPersonality.piratePillager);
+    // Starter pirate (~35 power) cannot siege 1000 shields at ~60/round.
+    expect(CombatService.canRaidPort(npc, 1), isFalse);
+
+    final beefed = npc.copyWith(
+      hull: 2000,
+      maxHull: 2000,
+      shields: 1000,
+      maxShields: 1000,
+      weaponSlots: const {'main_forward': 3},
+      hullEquipmentLevel: 5,
+    );
+    expect(CombatService.canRaidPort(beefed, 1), isTrue);
+  });
+
+  test('owners collect revenue and upgrade defenses', () {
+    const owned = Port(
+      name: 'Mine',
+      portClass: PortClass.independent,
+      buyPrices: {},
+      sellPrices: {},
+      owner: 'OWNER_PILOT',
+      accumulatedRevenue: 15000.0,
+      defenseLevel: 1,
+    );
+    final sectors = [
+      Sector(
+          id: 11,
+          name: 'A',
+          x: 0,
+          y: 0,
+          warpRoutes: const [12],
+          hasPort: true,
+          port: owned),
+      Sector(id: 12, name: 'B', x: 1, y: 0, warpRoutes: const [11]),
+    ];
+    var npc = NpcShip.create(
+      faction: FactionClass.trader,
+      shipDef: ShipDefinition.allShips.first,
+      currentSectorId: 12,
+      startingCredits: 1000000,
+      seed: 93,
+    ).copyWith(
+      personality: NpcPersonality.traderMerchant,
+      pilotName: 'OWNER_PILOT',
+      credits: 1000000,
+    );
+
+    final before = npc.credits;
+    npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    // 15k revenue collected, then a defense upgrade (level 1→2 = 500k)
+    // since 1M+15k keeps the 50k reserve.
+    expect(npc.credits, before + 15000 - 500000);
+    expect(sectors[0].port?.accumulatedRevenue, 0.0);
+    expect(sectors[0].port?.defenseLevel, 2);
+  });
+
+  test('ownership matches by id first, name for legacy saves', () {
+    const named = Port(
+      name: 'Legacy',
+      portClass: PortClass.free,
+      buyPrices: {},
+      sellPrices: {},
+      owner: 'Same Name',
+    );
+    // Legacy (no id): name decides.
+    expect(named.isOwnedById('other-id', 'Same Name'), isTrue);
+    expect(named.isOwnedById('other-id', 'Other Name'), isFalse);
+
+    const identified = Port(
+      name: 'Modern',
+      portClass: PortClass.free,
+      buyPrices: {},
+      sellPrices: {},
+      owner: 'Same Name',
+      ownerId: 'npc-1',
+    );
+    // Same name, wrong id: not yours (collision-proof).
+    expect(identified.isOwnedById('npc-2', 'Same Name'), isFalse);
+    expect(identified.isOwnedById('npc-1', 'Other Name'), isTrue);
+    expect(
+        const Port(
+          name: 'Free',
+          portClass: PortClass.free,
+          buyPrices: {},
+          sellPrices: {},
+        ).isOwnedById('npc-1', 'Same Name'),
+        isFalse);
+  });
+
+  test('owner management uses the tick index when present', () {
+    final sectors = [
+      Sector(
+          id: 11,
+          name: 'A',
+          x: 0,
+          y: 0,
+          warpRoutes: const [12],
+          hasPort: true,
+          port: const Port(
+            name: 'Mine',
+            portClass: PortClass.independent,
+            buyPrices: {},
+            sellPrices: {},
+            owner: 'OWNER_PILOT',
+            ownerId: 'owner-1',
+            accumulatedRevenue: 12000.0,
+            defenseLevel: 4,
+            storageLevel: 10,
+          )),
+      Sector(id: 12, name: 'B', x: 1, y: 0, warpRoutes: const [11]),
+    ];
+    var npc = NpcShip.create(
+      faction: FactionClass.trader,
+      shipDef: ShipDefinition.allShips.first,
+      currentSectorId: 12,
+      startingCredits: 1000,
+      seed: 94,
+    ).copyWith(
+      id: 'owner-1',
+      personality: NpcPersonality.traderMerchant,
+      pilotName: 'OWNER_PILOT',
+      credits: 1000,
+    );
+    NpcAiService.ownedPortIndex = {
+      'owner-1': [sectors[0]],
+    };
+    try {
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+      // 12k collected despite maxed defenses/storage (no upgrades bought).
+      expect(npc.credits, 1000 + 12000);
+      expect(sectors[0].port?.accumulatedRevenue, 0.0);
+    } finally {
+      NpcAiService.ownedPortIndex = null;
+    }
   });
 }

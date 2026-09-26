@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port_defense_config.dart';
+import 'package:cosmic_trader/services/npc_ai/port_combat_service.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
@@ -109,7 +111,9 @@ class CombatService {
     if (defenderDestroyed) {
       // Credits floor: a debt-ridden defender (legacy of the pre-fix
       // buy-phase clamp bug) pays nothing instead of billing the killer.
-      lootCredits = (defender.credits * 0.5).round().clamp(0, 1 << 30);
+      // Rate is 25%: full-half loot snowballed predators (one live pirate
+      // parlayed kills into 16M) faster than victims could ever recover.
+      lootCredits = (defender.credits * 0.25).round().clamp(0, 1 << 30);
       lootCargo.addAll(defender.cargo);
     }
 
@@ -195,11 +199,27 @@ class CombatService {
     return powerRatio > hullRatio * 0.8;
   }
 
-  /// Estimate if NPC can overcome [defenseLevel] port defenses.
+  /// Estimate if NPC can overcome [defenseLevel] port defenses via a
+  /// multi-round siege, using the SAME formulas the siege actually runs:
+  /// NPC power via [PortCombatService.calculateNpcFirepower] (NOT the
+  /// ship-vs-ship formula — weapon tiers scale differently in each),
+  /// incoming damage including counter-attack and EMP bursts when the
+  /// defense level fields those abilities, plus the free finishing round
+  /// once the port drops to capture threshold. Mixing formulas previously
+  /// cleared ships the real siege would kill and rejected ships that
+  /// would win.
   static bool canRaidPort(NpcShip npc, int defenseLevel) {
-    final atkPower = calculateFirepower(npc);
-    final portDefense = (defenseLevel + 1) * 500;
-    return atkPower > portDefense * 1.2;
+    final stats = PortDefenseConfig.defenseStats(defenseLevel);
+    final npcPower = PortCombatService.calculateNpcFirepower(npc);
+    if (npcPower <= 0) return false;
+    final incoming = stats.firepower +
+        (stats.hasCounterAttack ? (stats.firepower * 0.3).round() : 0) +
+        (stats.hasEmpBurst ? (npc.shields * stats.empDrainPct).round() : 0);
+    final perRound = incoming <= 0 ? 1 : incoming;
+    final effective =
+        npc.hull + npc.shields + (npc.hullEquipmentLevel - 1) * 10;
+    final rounds = effective / perRound + 1;
+    return npcPower * rounds > stats.shieldCapacity;
   }
 
   static WeaponType _npcWeaponForSlot(NpcShip ship, String slot) {

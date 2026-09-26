@@ -12,6 +12,13 @@ class PortInfo {
   final String? owner;
   final FactionClass? ownerFaction;
 
+  /// Scanned local multipliers (supply depth for sells, demand depth +
+  /// drift + regionals + anomaly for buys), snapshotted at scan time so
+  /// route selection prices the same stack as live execution. Missing keys
+  /// read 1.0 (older saves).
+  final Map<String, double> sellFactors;
+  final Map<String, double> buyFactors;
+
   const PortInfo({
     required this.name,
     required this.portClass,
@@ -22,6 +29,8 @@ class PortInfo {
     this.desiredCredits = 0,
     this.owner,
     this.ownerFaction,
+    this.sellFactors = const {},
+    this.buyFactors = const {},
   });
 
   double get cashRatio {
@@ -31,15 +40,25 @@ class PortInfo {
 
   double get priceMultiplier => 0.5 + 0.5 * cashRatio;
 
-  double getEffectiveSellPrice(String commodity, {int standing = 0}) =>
-      (sellPrices[commodity] ?? 0) *
-      priceMultiplier *
-      Port.standingBuyMultiplier(standing);
+  double getEffectiveSellPrice(String commodity, {int standing = 0}) {
+    final base = sellPrices[commodity] ?? 0;
+    if (base <= 0) return 0;
+    final mult = (priceMultiplier *
+            (sellFactors[commodity] ?? 1.0) *
+            Port.standingBuyMultiplier(standing))
+        .clamp(Port.minEffectiveMultiplier, Port.maxEffectiveMultiplier);
+    return base * mult;
+  }
 
-  double getEffectiveBuyPrice(String commodity, {int standing = 0}) =>
-      (buyPrices[commodity] ?? 0) *
-      priceMultiplier *
-      Port.standingSellMultiplier(standing);
+  double getEffectiveBuyPrice(String commodity, {int standing = 0}) {
+    final base = buyPrices[commodity] ?? 0;
+    if (base <= 0) return 0;
+    final mult = (priceMultiplier *
+            (buyFactors[commodity] ?? 1.0) *
+            Port.standingSellMultiplier(standing))
+        .clamp(Port.minEffectiveMultiplier, Port.maxEffectiveMultiplier);
+    return base * mult;
+  }
 
   Map<String, dynamic> toJson() {
     return {
@@ -52,6 +71,8 @@ class PortInfo {
       'desiredCredits': desiredCredits,
       'owner': owner,
       'ownerFaction': ownerFaction?.name,
+      'sellFactors': sellFactors,
+      'buyFactors': buyFactors,
     };
   }
 
@@ -79,6 +100,14 @@ class PortInfo {
       desiredCredits: (json['desiredCredits'] as num?)?.toDouble() ?? 0.0,
       owner: json['owner'] as String?,
       ownerFaction: _parseFactionClass(json['ownerFaction'] as String?),
+      sellFactors: (json['sellFactors'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toDouble()),
+          ) ??
+          {},
+      buyFactors: (json['buyFactors'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toDouble()),
+          ) ??
+          {},
     );
   }
 

@@ -487,7 +487,8 @@ class _ShipStatusViewState extends State<ShipStatusView> {
     final stranded = TowService.needsTow(widget.player);
     final plan = _sectors.isEmpty
         ? null
-        : TowService.findTowPlan(_sectors, widget.player.currentSectorId);
+        : TowService.findTowPlan(_sectors, widget.player.currentSectorId,
+            player: widget.player);
 
     return PanelCard(
       icon: Icons.local_shipping_rounded,

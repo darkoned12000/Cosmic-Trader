@@ -118,9 +118,11 @@ work — it changes session pacing.
 **Status:**
 
 1. ✅ **Economy metrics + report** — new `lib/services/economy_metrics.dart`
-   (session-scoped `EconomyMetrics` singleton: volume, transactions, units,
+   (`EconomyMetrics` singleton: volume, transactions, units,
    player-vs-NPC split, per-commodity avg prices, per-faction net flows,
-   trades/min). Hooks in NPC trade buy/sell phases and player
+   trades/min; persisted across restarts via economy_metrics.json —
+   restore on launch, save on exit, reset clears; the same payload is the
+   ongoing health feed on a server build). Hooks in NPC trade buy/sell phases and player
    `PortTradeView` buy/sell (1 unit/tap). New Computer → **Economy Report**
    screen (`economy_report_screen.dart`: totals, per-commodity avg-vs-base
    table, per-faction net table, reset action). Covered by
@@ -172,12 +174,11 @@ work — it changes session pacing.
 tighter/looser bands, contraband enforcement hooks (B3 standing), planet→
 port supply (planet-phase2).
 
-### B3. Give FactionStanding teeth (in progress — pricing first)
+### B3. Give FactionStanding teeth (in progress — access + interest done)
 
 Standing was produced everywhere (trade/combat/hacks) and consumed nowhere.
-Slices: (1) port pricing ✅, (2) emporium access + banking interest,
+Slices: (1) port pricing ✅, (2) emporium access + banking interest ✅,
 (3) attack-on-sight + FedSpace consequences.
-
 1. ✅ **Standing-discounted pricing** — ±100 standing moves both sides 20%
    (clamped [0.8, 1.25]): friends buy cheaper and sell richer. New
    `getEffectiveSellPriceFor`/`BuyPriceFor(commodity, standing:)` (neutral
@@ -186,17 +187,154 @@ Slices: (1) port pricing ✅, (2) emporium access + banking interest,
    selection price via `FactionStanding.resolveFor` (persisted → lore
    defaults → 0), with `ownerFaction` added to `PortInfo` (scanned +
    persisted) so selection matches execution. Covered by
-   `test/standing_pricing_test.dart` (5 tests).
-`combat_service` computes standing changes; nothing consumes them. Make
-standing affect: port price multipliers, emporium access, banking interest,
-attack-on-sight by Duran/Vinari NPCs, and FedSpace access (attacking Fed
-targets has consequences — TW2002's Fed interdiction).
+   `test/standing_pricing_test.dart`.
 
-### B4. Bounties & pirate pressure (TW2002 bounty board, adapted)
+2. ✅ **Emporium access + banking interest** — ports at standing ≤ −50   refuse service: player emporium UI replaced by a refusal card (with the
+   number and how to fix it); NPC pathfinding skips hostile emporiums and
+   arrivals fail cleanly (`refuel_refused`, replanned same tick). Bank rate
+   follows Trade Guild standing, 0.5%–1.5% around the 1% base
+   (`BankingAi.interestRateFor`, shared by player banking and per-tick NPC
+   accrual with 24h periods, first balance starts the clock). Covered in
+   `standing_pricing_test` (refusal threshold, NPC skip + roam, rate math,
+   accrual timing).
+   - Found by test: `_move` steered by dead (failed/complete) goals
+     (refused-refuel ping-pong between two sectors) — movement now only
+     follows travelling goals; `_selectGoal` walks the weighted pool past
+     null instantiations instead of wasting the tick.
+   - **Fuel-crisis fixes (live: zero emporiums, all-NPC refuel_unknown
+     lock):** density left ~29% of universes with no emporium at all —
+     `ensureMinimumEmporiums` guarantees ≥1 (outside FedSpace, books
+     preserved); the unknown-emporium explore fallback no longer fires
+     every tick under 25% energy (it permanently suppressed step-5
+     selection, freezing trade/bank/attack) — committed goals now run
+     dry toward stranded reserves instead. Covered by
+     `test/emporium_guarantee_test.dart`.
+   - Pirate-exile safety: unowned emporiums serve everyone, standing
+     recovers through ordinary trade, and Emergency Tow prefers servable
+     emporiums (hostile pumps skipped, any emporium then any port as
+     fallbacks). Covered in `tow_service_test`.
+   - **NPC port ownership (all factions):** only Duran/pirates could raid,
+     so Duran captured 30 ports to everyone else's 0 — and raid targeting
+     had no power check (pirates sieged unbeatable defenses). Raids now
+     gate on a real siege estimate (`canRaidPort`: survivable rounds ×
+     damage vs shields); rich traders/collectors/seekers buy unowned
+     non-federal ports outright at half net worth (new `buyPort` goal);
+     owners collect revenue and buy defense/storage upgrades (50k reserve
+     kept) every tick. Covered in `npc_goal_lifecycle_test` (purchase,
+     raid gate, collect + upgrade).
+   - **Repopulation (C4 first slice):** pirate predation with no respawns
+     wiped Duran/Vinari to zero live — `RepopulationService` tops factions
+     to 3/3/3/2 floors, one ship per faction per tick, at homeworld sectors
+     (kill loot cut 50%→25% to slow the snowball). Homeworlds spawn only
+     while owned-or-unowned: captured homeworlds log
+     `has no controlled homeworld — no spawn` until recaptured, so
+     extinction is possible and reversible; pirates keep random-sector
+     fallback pending outposts. Covered in `repopulation_service_test`
+     (homeworld spawn, healthy no-op, capture/recapture cycle).
+
+   - **External review batch 4 (Claude: generator remainder):**
+     fedSpaceEnd=1 hard crash guarded; profitability docstring corrected
+     (base-only guarantee, effective layers may invert near-split routes);
+     NPC persistence de-raced (generate() pure, caller awaits save);
+     homeworld collisions excluded + silent-drop logging; display counts
+     reconciled to the real roster (galaxy map showed phantoms);
+     co-spawned hostiles accepted as deliberate; Terra Prime seed
+     documented. Plus the suggested integration suite
+     (`universe_generation_test`: connectivity, homeworlds, emporium
+     minimum, count truth, base-price invariant, 10-tick NPC health).
+
+3. ✅ **Fear + hatred (no always-attack):** notoriety inflates perceived
+   power ×(1 + notoriety/200) on both sides of every fight decision —
+   infamous pilots deter attacks below overwhelming odds and clear
+   sectors as weaker ships flee rather than provoke; personal standing
+   ≤ −50 substitutes for lore hostility but demands a decisive 1.5× edge
+   (grudges don't make NPCs suicidal). Fed enforcement deliberately NOT
+   a police force: crimes feed notoriety → the B4 bounty board, placed in
+   the Computer area. Covered in `test/fear_hate_test.dart` (deterrence,
+   hatred gates, fear flee).
+
+   - **External review batch 6 (Claude: combat/bounty re-read):**
+     ownership keyed by stable id (`Port.ownerId`, set on every buy and
+     capture path incl. player flows) with name fallback for legacy saves —
+     a pilot-name collision can no longer collect or defend another's
+     port; per-tick owner index (`ownedPortIndex`, index path + scan
+     fallback tested) replaces the O(sectors)-per-NPC management scan;
+     rankings match owners by id first. Covered in
+     `npc_goal_lifecycle_test` (id/name precedence, indexed collection).
+   - **External review batch 7 (Claude: combat/bounty/economy/report):**
+     player loot matched to 25% + floor (the larger snowball half);
+     raid gate recalibrated onto the real siege formulas
+     (totalWeaponPowerx50 power, counter/EMP incoming, free finishing
+     round); siege core consolidated (`resolveRound`, one math path for
+     both attacker types) with mode/portDestroyed documented as
+     post-siege labels; metrics record actor-net amounts (fee-inclusive)
+     with normalized faction keys; report reset reloads holdings.
+     Deferred with rationale: EMP-as-strip redesign, variance profile,
+     drone power (C-branch). Covered: existing raid/loot/metrics tests
+     hold under new formulas + casing test.
+
+
+   - **External review batch 3 (Claude: tick/port/generator):** cross-file
+     safe-zone boundary unified (`safeZoneEnd` statics synced from settings
+     instead of two hardcoded 10s); effective-price stack capped [0.25,
+     4.0] on the *multiplier* (plus a caught self-bug: clamping the price
+     turned 10cr goods into 4.0); NPC memory now snapshots full local
+     pricing (depth/drift/regional/anomaly factors) so selection matches
+     execution; regen no-op returns identical (saves I/O); anomaly overlap
+     composes multiplicatively (order-independent) instead of
+     last-write-wins; emporiums carry real desiredCredits; tick attacks all
+     players (proximity union) with logged unknown-sector fallback;
+     3-strike goal reset for erroring NPCs; attack-goal selection reuses
+     the trigger margin (no more cross-map chases for refused fights).
+     Covered in `port_supply_pricing_test` (ceiling semantics) + suite.
+
+### B4. Bounties & pirate pressure (in progress — board live)
+
 - Fed ports post bounties on pirates — and on the player as `notoriety`
   climbs (`notoriety` already exists on Player).
 - Bounty hunters appear (see NPC AI); hunting a marked pilot yields credits +
   standing. Feed kills/bounties into the existing Power Rankings report.
+
+**Status:**
+
+1. ✅ **Bounty Board (Computer tool)** — `bounty.dart` model + `bounties.json`
+   store + `BountyBoard` singleton (post/stack/pay/claim, 20-deep paid
+   history, persisted). Anyone posts: players from the board view (credits
+   deducted, live NPC target picker), NPC survivors auto-post 5k from
+   their bankroll on surviving an attack. NPC kills pay the killer
+   instantly; player kills record victim ids (`Player.recentKills`, capped
+   50) and pay through the board's Claim action. Loaded at shell start so
+   persisted bounties resolve. Covered by `bounty_board_test.dart`.
+   - **External review batch 5 (Claude: bounty files):** claim()
+     verifies kills itself (`verifiedKills` param — UI gate alone could be
+     bypassed to drain stacked bounties); debit-before-post ordering on
+     both call sites with refund fallback; persistence failures logged
+     instead of swallowed; dispose() override removed (lifecycle footgun);
+     dead 60-char check removed. Confirmed already-wired (reviewer
+     couldn't see the files): payKiller in NPC kill resolution,
+     recentKills in player victories. Covered in `bounty_board_test`
+     (verified claim, denial, double-claim).
+
+   - Rankings copy action (full faction/pilot/most-wanted text dump);
+     NPC port price cut to 10% of net worth (floor 25k) — half-net-worth
+     priced every NPC out forever, which is why only raiders ever took
+     ports.
+
+2. ✅ **Fed enforcement + hunters + rankings + completion standing**
+   (B4 spec closeout: kills pay credits AND +5 with posting factions —
+   `posterFaction` persisted, NPC memory + player standings updated on
+   both payout paths).
+
+2. ✅ **Fed enforcement + hunters + rankings** — Federation
+   auto-posts notoriety×100 (min 5k, max 100k, ≥50 notoriety, max 3/tick,
+   skips already-marked) as the answer to federal crime — no police
+   force; greedy hunters (greed ≥ 0.7) take the highest open contract
+   over the weakest victim; Power Rankings gained a Most Wanted top-5
+   feed. Board form now takes custom reasons (≤60 chars) with
+   type-ahead pilot search. Covered by `bounty_board_test` (Fed amounts,
+   greedy preference) + live verification pending.
+
+**B4 complete.**
 
 ### B5. Finish the planet loop (planets.md Phase 2) and tie it to the economy
 - Per-tick automated production (UI already computes rates — just process).

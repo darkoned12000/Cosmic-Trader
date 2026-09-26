@@ -153,7 +153,7 @@ class PortTradeView extends StatelessWidget {
     EconomyMetrics.global.recordTrade(
       commodity: commodity,
       units: amount,
-      credits: transactionValue,
+      credits: transactionValue + ownerFee,
       actorFaction: player.faction.name,
       isPlayer: true,
       isBuy: true,
@@ -200,7 +200,7 @@ class PortTradeView extends StatelessWidget {
     EconomyMetrics.global.recordTrade(
       commodity: commodity,
       units: amount,
-      credits: transactionValue,
+      credits: transactionValue - ownerFee,
       actorFaction: player.faction.name,
       isPlayer: true,
       isBuy: false,

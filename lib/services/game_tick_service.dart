@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
@@ -8,8 +10,11 @@ import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/services/repopulation_service.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
 /// Describes an NPC-initated attack on a player during a tick.
@@ -27,6 +32,16 @@ class NpcAttackEvent {
 
 class GameTickService {
   static final Set<String> _lockedNpcIds = {};
+
+  /// Consecutive per-NPC tick errors (reset on success). At 3 strikes the
+  /// goal is force-cleared so one corrupted goal can't freeze an NPC.
+  static final Map<String, int> _errorCounts = {};
+
+  @visibleForTesting
+  static int errorCountForTest(String npcId) => _errorCounts[npcId] ?? 0;
+
+  @visibleForTesting
+  static void resetErrorsForTest() => _errorCounts.clear();
 
   /// Shared RNG for per-tick price drift (B2). Random walk, not seeded —
   /// live markets shouldn't replay identically.
@@ -101,9 +116,9 @@ class GameTickService {
   Future<void> processTickNow() async {
     if (_tickInProgress) {
       overlapSkips++;
-      GameEventLog.global.system(
-          '[TickService] Tick skipped — previous still running '
-          '($overlapSkips overlaps so far)');
+      GameEventLog.global
+          .system('[TickService] Tick skipped — previous still running '
+              '($overlapSkips overlaps so far)');
       return;
     }
     _tickInProgress = true;
@@ -155,10 +170,16 @@ class GameTickService {
         }
       });
 
-      // Build proximity set: sector IDs within 2 hops of the player
-      final playerSector =
-          players.isNotEmpty ? players.first.currentSectorId : 0;
-      final closeSectors = _reachableWithin(playerSector, sectors, 2);
+      // Build proximity sets: sector IDs within 2 hops of ANY player
+      // (single-player today, but the model already holds List<Player>).
+      final closeSectors = <int>{};
+      for (final p in players) {
+        closeSectors.addAll(_reachableWithin(p.currentSectorId, sectors, 2));
+      }
+
+      // Owner index for the tick: O(sectors) once instead of per NPC.
+      // _manageOwnedPorts reads it; null (tests) falls back to scanning.
+      NpcAiService.ownedPortIndex = _buildOwnerIndex(sectors);
 
       // Find NPCs with energy remaining and process them
       int processed = 0;
@@ -177,6 +198,9 @@ class GameTickService {
             continue;
           }
           if (npc.energy <= 0) {
+            // Pre-tick reading: processTurn may resolve this same tick via
+            // the emergency-reserve path, so the counter can overcount
+            // relative to end-of-tick reality. Log-scale only.
             stranded++;
           }
           if (isNpcLocked(npc.id)) {
@@ -187,13 +211,24 @@ class GameTickService {
           final before = npc;
           try {
             npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
+            _errorCounts.remove(npc.id);
           } catch (e) {
             // One bad NPC (bad data, failed assert) must never abort the
-            // whole tick — keep its pre-tick state and move on. The error
-            // is logged so it gets fixed instead of looping silently.
+            // whole tick — keep its pre-tick state and move on. After 3
+            // consecutive failures the goal is force-cleared so one
+            // corrupted goal can't freeze an NPC for the session.
             errored++;
+            final strikes = (_errorCounts[npc.id] ?? 0) + 1;
+            _errorCounts[npc.id] = strikes;
             GameEventLog.global
                 .system('[TickService] NPC error (${npc.pilotName}): $e');
+            if (strikes >= 3) {
+              _errorCounts.remove(npc.id);
+              npcs[i] = npc.copyWith(clearGoal: true);
+              GameEventLog.global
+                  .system('[TickService] ${npc.pilotName}: goal reset after '
+                      '$strikes errors');
+            }
             continue;
           }
           final after = npcs[i];
@@ -232,6 +267,98 @@ class GameTickService {
       // (see NpcAiService._handleStranded). Zero-energy NPCs are still
       // processed so they can recover.
 
+      // Homeworld repopulation: without it, predation empties the galaxy
+      // permanently (live: pirates wiped Duran/Vinari to zero in 20 min).
+      DevProfiler.instance.trace('tick_repopulate', () {
+        final spawned = RepopulationService.repopulate(sectors, npcs);
+        if (spawned.isNotEmpty) {
+          npcs.addAll(spawned);
+          log.system(
+              '${spawned.length} replacement ship(s) launched from homeworlds');
+        }
+      });
+
+      // Federation auto-posting (B4 enforcement): notorious pilots get
+      // Federation bounties without anyone lifting a finger. This is the
+      // Fed response to federal crimes — no police force, just money on
+      // heads that any hunter can claim.
+      DevProfiler.instance.trace('tick_fed_bounties', () {
+        var posted = 0;
+        void consider({
+          required String id,
+          required String name,
+          required String faction,
+          required bool isPlayer,
+          required double notoriety,
+        }) {
+          if (posted >= 3) return;
+          final amount = BountyBoard.fedAmount(notoriety);
+          if (amount <= 0) return;
+          if (BountyBoard.global.totalFor(id) > 0) return;
+          BountyBoard.global.post(
+            targetId: id,
+            targetName: name,
+            targetFaction: faction,
+            targetIsPlayer: isPlayer,
+            amount: amount,
+            posterId: 'FEDERATION',
+            posterName: 'Federation Marshal',
+            reason: 'notoriety ${notoriety.toStringAsFixed(0)}',
+          );
+          posted++;
+        }
+
+        for (final player in players) {
+          consider(
+            id: player.id,
+            name: player.name,
+            faction: player.faction.name,
+            isPlayer: true,
+            notoriety: player.notoriety,
+          );
+        }
+        for (final npc in npcs) {
+          if (npc.isDestroyed) continue;
+          consider(
+            id: npc.id,
+            name: npc.pilotName,
+            faction: npc.faction.name,
+            isPlayer: false,
+            notoriety: npc.notoriety,
+          );
+        }
+      });
+
+      // NPC bank interest (Guild-rate parity with players).
+      DevProfiler.instance.trace('tick_npc_interest', () {
+        final now = DateTime.now();
+        for (int i = 0; i < npcs.length; i++) {
+          final npc = npcs[i];
+          if (npc.isDestroyed || npc.bankBalance <= 0) continue;
+          final rate = BankingAi.interestRateFor(
+            npc.faction,
+            npc.memory.factionStandings,
+          );
+          final accrual = BankingAi.accrueInterest(
+            bankBalance: npc.bankBalance,
+            lastInterestTime: npc.lastInterestTime,
+            rate: rate,
+            now: now,
+          );
+          if (accrual == null) continue;
+          npcs[i] = npc.copyWith(
+            bankBalance: npc.bankBalance + accrual.interest,
+            lastInterestTime: accrual.stamp,
+          );
+          if (accrual.interest > 0) {
+            GameEventLog.global.banking(
+              '[${npc.pilotName}] Banking: +${accrual.interest} cr interest '
+              '(${(rate * 100).toStringAsFixed(1)}%)',
+            );
+          }
+        }
+      });
+
       // Save all updated NPCs (destroyed ones retained for stats/history)
       await DevProfiler.instance
           .traceAsync('tick_save_npcs', () => NpcStorage().saveAll(npcs));
@@ -242,15 +369,16 @@ class GameTickService {
             () => UniverseStorage.instance.saveUniverse(sectors));
       }
 
-      // ── Check for NPC attacks on the player ──
+      // ── Check for NPC attacks on players (all of them, not just first) ──
       NpcAttackEvent? attackEvent;
       if (!playerDocked && players.isNotEmpty && onNpcAttacksPlayer != null) {
         DevProfiler.instance.trace('tick_attack_check', () {
-          final player = players.first;
-          final playerSectorId = player.currentSectorId;
+          for (final player in players) {
+            if (attackEvent != null) break; // One attack at a time
+            final playerSectorId = player.currentSectorId;
 
-          // No combat in FedSpace
-          if (fedSpaceEnd <= 0 || playerSectorId > fedSpaceEnd) {
+            // No combat in FedSpace
+            if (fedSpaceEnd > 0 && playerSectorId <= fedSpaceEnd) continue;
             for (final npc in npcs) {
               if (npc.isDestroyed || npc.energy <= 0) continue;
               if (isNpcLocked(npc.id)) continue;
@@ -258,11 +386,23 @@ class GameTickService {
               if (!NpcAiService.shouldAttackPlayer(npc, player)) continue;
 
               lockNpc(npc.id);
-              final sector = sectors.firstWhere(
-                (s) => s.id == playerSectorId,
-                orElse: () =>
-                    Sector(id: 0, name: '', x: 0, y: 0, warpRoutes: const []),
-              );
+              Sector? sector;
+              for (final s in sectors) {
+                if (s.id == playerSectorId) {
+                  sector = s;
+                  break;
+                }
+              }
+              if (sector == null) {
+                // Data inconsistency: attacker and victim agree on a
+                // sector the universe doesn't have. Log loudly instead of
+                // fabricating an empty dummy (a combats screen built on
+                // fake warp routes would silently break fleeing).
+                GameEventLog.global.system(
+                    '[TickService] Attack in unknown sector '
+                    '#$playerSectorId (${npc.pilotName} vs ${player.name})');
+                continue;
+              }
               attackEvent = NpcAttackEvent(
                 npc: npc,
                 player: player,
@@ -270,7 +410,7 @@ class GameTickService {
               );
               log.combat(
                   '${npc.pilotName} (${npc.shipName}) is attacking you in sector #$playerSectorId!');
-              break; // One attack at a time
+              break;
             }
           }
         });
@@ -296,6 +436,25 @@ class GameTickService {
       GameEventLog.global.system('[TickService] Error: $e');
       onTickError?.call(e);
     }
+  }
+
+  /// Owner key (stable id, display-name fallback) → owned sectors.
+  /// Built once per tick so owner management isn't O(sectors) per NPC.
+  static Map<String, List<Sector>> _buildOwnerIndex(List<Sector> sectors) {
+    final index = <String, List<Sector>>{};
+    for (final s in sectors) {
+      final port = s.port;
+      if (port == null || !port.isOwned) continue;
+      final id = port.ownerId;
+      if (id != null && id.isNotEmpty) {
+        (index[id] ??= []).add(s);
+      }
+      final name = port.owner;
+      if (name != null && name.isNotEmpty) {
+        (index[name] ??= []).add(s);
+      }
+    }
+    return index;
   }
 
   /// Returns set of sector IDs within [maxHops] warps of [fromId].

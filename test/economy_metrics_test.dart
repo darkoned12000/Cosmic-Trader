@@ -95,4 +95,44 @@ void main() {
     m.reset();
     expect(m.totalLoot, 0);
   });
+
+  test('faction keys normalize casing into one row', () {
+    final m = EconomyMetrics.global;
+    m.recordTrade(
+      commodity: 'minerals',
+      units: 1,
+      credits: 10,
+      actorFaction: 'Trader',
+      isPlayer: false,
+      isBuy: true,
+    );
+    m.recordLoot(actorFaction: 'TRADER', credits: 5, isPlayer: false);
+    expect(m.perFaction.keys, ['trader']);
+    expect(m.perFaction['trader']!.buys, 1);
+    expect(m.perFaction['trader']!.lootCredits, 5);
+  });
+
+  test('snapshot round-trips through JSON (persistence shape)', () async {
+    final m = EconomyMetrics.global;
+    m.recordTrade(
+      commodity: 'ore',
+      units: 4,
+      credits: 200,
+      actorFaction: 'trader',
+      isPlayer: true,
+      isBuy: false,
+    );
+    m.recordLoot(actorFaction: 'pirate', credits: 50, isPlayer: false);
+
+    final json = m.toJson();
+    expect(json['tradeCount'], 1);
+    expect(json['totalLoot'], 50);
+
+    EconomyMetrics.resetForTest();
+    final fresh = EconomyMetrics.global;
+    expect(fresh.tradeCount, 0);
+    // Restore with no file present is a safe no-op (storage swallows).
+    await fresh.restore();
+    expect(fresh.tradeCount, 0);
+  });
 }

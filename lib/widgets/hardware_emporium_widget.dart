@@ -8,6 +8,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
 
 class HardwareEmporiumWidget extends StatefulWidget {
   final Player player;
@@ -42,6 +43,16 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
   void initState() {
     super.initState();
     _tabController = TabController(length: _tabLabels.length, vsync: this);
+    final ownerFaction = widget.port.ownerFaction;
+    final standing = ownerFaction == null
+        ? 0
+        : widget.player.factionStandingWith(ownerFaction);
+    if (ownerFaction != null && widget.port.deniesServiceTo(standing)) {
+      GameEventLog.global.system(
+        'Emporium ${widget.port.name} refused ${widget.player.name} '
+        '(standing $standing)',
+      );
+    }
   }
 
   @override
@@ -52,12 +63,49 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
 
   void _updatePlayer(Player p) => widget.onPlayerUpdate(p);
 
+  /// Refusal card shown when the owner's faction won't serve the player.
+  Widget _buildRefused(ColorScheme cs, int standing) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.block_rounded, size: 40, color: Colors.redAccent),
+            const SizedBox(height: 12),
+            const Text(
+              'Service refused',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This emporium will not serve you while your standing '
+              'is $standing (needs above ${Port.hostileServiceThreshold}). '
+              'Trade, hail, or stop shooting at their faction first.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: cs.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final faction = widget.player.faction;
     final factionData = Faction.forClass(faction);
     final p = widget.player;
+
+    final ownerFaction = widget.port.ownerFaction;
+    final standing =
+        ownerFaction == null ? 0 : p.factionStandingWith(ownerFaction);
+    final refused =
+        ownerFaction != null && widget.port.deniesServiceTo(standing);
 
     return Card(
       elevation: 0,
@@ -68,27 +116,29 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
         children: [
           _buildHeader(cs, factionData, p),
           Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _ServicesTab(player: p, onPlayerUpdate: _updatePlayer),
-                _WeaponsTab(player: p, onPlayerUpdate: _updatePlayer),
-                _EquipmentTab(
-                    player: p,
-                    onPlayerUpdate: _updatePlayer,
-                    category: HardwareCategory.hull),
-                _EquipmentTab(
-                    player: p,
-                    onPlayerUpdate: _updatePlayer,
-                    category: HardwareCategory.shield),
-                _EquipmentTab(
-                    player: p,
-                    onPlayerUpdate: _updatePlayer,
-                    category: HardwareCategory.engine),
-                _ModulesTab(player: p, onPlayerUpdate: _updatePlayer),
-                _ScrapTab(player: p, onPlayerUpdate: _updatePlayer),
-              ],
-            ),
+            child: refused
+                ? _buildRefused(cs, standing)
+                : TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _ServicesTab(player: p, onPlayerUpdate: _updatePlayer),
+                      _WeaponsTab(player: p, onPlayerUpdate: _updatePlayer),
+                      _EquipmentTab(
+                          player: p,
+                          onPlayerUpdate: _updatePlayer,
+                          category: HardwareCategory.hull),
+                      _EquipmentTab(
+                          player: p,
+                          onPlayerUpdate: _updatePlayer,
+                          category: HardwareCategory.shield),
+                      _EquipmentTab(
+                          player: p,
+                          onPlayerUpdate: _updatePlayer,
+                          category: HardwareCategory.engine),
+                      _ModulesTab(player: p, onPlayerUpdate: _updatePlayer),
+                      _ScrapTab(player: p, onPlayerUpdate: _updatePlayer),
+                    ],
+                  ),
           ),
         ],
       ),

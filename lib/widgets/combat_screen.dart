@@ -319,7 +319,10 @@ class _CombatScreenState extends State<CombatScreen>
     SalvageReward salvage = const SalvageReward(scrapMetal: 0, scrapTech: 0);
     var lootedUnits = 0;
     if (victory) {
-      loot = (_npc.credits * 0.5).round();
+      // Matches the NPC-vs-NPC rate exactly (25%, floored at 0): the old
+      // 50% player rate was the larger half of the snowball exploit, and
+      // negative victim credits must never bill the killer.
+      loot = (_npc.credits * 0.25).round().clamp(0, 1 << 30);
       salvage = SalvageService.rollForNpc(_npc);
       EconomyMetrics.global.recordLoot(
         actorFaction: _player.faction.name,
@@ -351,6 +354,8 @@ class _CombatScreenState extends State<CombatScreen>
             ),
         salvage,
       );
+      // Kill recorded for Bounty Board claims (payout happens via Claim).
+      _player = _player.withKill(_npc.id);
       _npc = _npc.copyWith(
         credits: 0,
         cargo: {},

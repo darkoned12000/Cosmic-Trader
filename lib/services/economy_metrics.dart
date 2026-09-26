@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'package:cosmic_trader/data/storage/economy_metrics_storage.dart';
+
 /// Per-commodity trade totals for the B2 economy report.
 class CommodityTradeStats {
   int buyUnits = 0;
@@ -70,6 +72,10 @@ class EconomyMetrics extends ChangeNotifier {
     required bool isBuy,
   }) {
     if (units <= 0) return;
+    // Actor-side truth: callers pass what the trader actually paid or
+    // received (net of owner fees), so net/gross reconcile with wallets.
+    // Faction keys normalize to lowercase enum names.
+    final faction = actorFaction.toLowerCase();
     tradeCount++;
     totalUnits += units;
     totalCredits += credits;
@@ -88,7 +94,7 @@ class EconomyMetrics extends ChangeNotifier {
       c.sellCredits += credits;
     }
 
-    final f = perFaction.putIfAbsent(actorFaction, FactionTradeStats.new);
+    final f = perFaction.putIfAbsent(faction, FactionTradeStats.new);
     if (isBuy) {
       f.buys++;
       f.buyCredits += credits;
@@ -108,8 +114,9 @@ class EconomyMetrics extends ChangeNotifier {
   }) {
     if (credits <= 0) return;
     totalLoot += credits;
-    perFaction.putIfAbsent(actorFaction, FactionTradeStats.new).lootCredits +=
-        credits;
+    perFaction
+        .putIfAbsent(actorFaction.toLowerCase(), FactionTradeStats.new)
+        .lootCredits += credits;
     notifyListeners();
   }
 
@@ -132,8 +139,76 @@ class EconomyMetrics extends ChangeNotifier {
     perCommodity.clear();
     perFaction.clear();
     sessionStart = DateTime.now();
+    EconomyMetricsStorage.instance.clear();
     notifyListeners();
   }
+
+  /// Snapshot for persistence (exit) and restore (launch). On a server
+  /// this same payload is the ongoing economy-health feed.
+  Map<String, dynamic> toJson() => {
+        'tradeCount': tradeCount,
+        'totalUnits': totalUnits,
+        'totalCredits': totalCredits,
+        'playerTrades': playerTrades,
+        'npcTrades': npcTrades,
+        'totalLoot': totalLoot,
+        'sessionStart': sessionStart.toIso8601String(),
+        'perCommodity': perCommodity.map(
+          (k, v) => MapEntry(k, {
+            'buyUnits': v.buyUnits,
+            'buyCredits': v.buyCredits,
+            'sellUnits': v.sellUnits,
+            'sellCredits': v.sellCredits,
+          }),
+        ),
+        'perFaction': perFaction.map(
+          (k, v) => MapEntry(k, {
+            'buys': v.buys,
+            'sells': v.sells,
+            'buyCredits': v.buyCredits,
+            'sellCredits': v.sellCredits,
+            'lootCredits': v.lootCredits,
+          }),
+        ),
+      };
+
+  /// Restores a snapshot; call once at startup before any recording.
+  Future<void> restore() async {
+    final json = await EconomyMetricsStorage.instance.load();
+    if (json == null) return;
+    tradeCount = (json['tradeCount'] as num?)?.toInt() ?? 0;
+    totalUnits = (json['totalUnits'] as num?)?.toInt() ?? 0;
+    totalCredits = (json['totalCredits'] as num?)?.toInt() ?? 0;
+    playerTrades = (json['playerTrades'] as num?)?.toInt() ?? 0;
+    npcTrades = (json['npcTrades'] as num?)?.toInt() ?? 0;
+    totalLoot = (json['totalLoot'] as num?)?.toInt() ?? 0;
+    final start = json['sessionStart'] as String?;
+    sessionStart = start != null ? DateTime.parse(start) : DateTime.now();
+    perCommodity.clear();
+    ((json['perCommodity'] as Map?) ?? {}).forEach((k, v) {
+      final m = (v as Map).cast<String, dynamic>();
+      final s = CommodityTradeStats()
+        ..buyUnits = (m['buyUnits'] as num?)?.toInt() ?? 0
+        ..buyCredits = (m['buyCredits'] as num?)?.toInt() ?? 0
+        ..sellUnits = (m['sellUnits'] as num?)?.toInt() ?? 0
+        ..sellCredits = (m['sellCredits'] as num?)?.toInt() ?? 0;
+      perCommodity[k as String] = s;
+    });
+    perFaction.clear();
+    ((json['perFaction'] as Map?) ?? {}).forEach((k, v) {
+      final m = (v as Map).cast<String, dynamic>();
+      final s = FactionTradeStats()
+        ..buys = (m['buys'] as num?)?.toInt() ?? 0
+        ..sells = (m['sells'] as num?)?.toInt() ?? 0
+        ..buyCredits = (m['buyCredits'] as num?)?.toInt() ?? 0
+        ..sellCredits = (m['sellCredits'] as num?)?.toInt() ?? 0
+        ..lootCredits = (m['lootCredits'] as num?)?.toInt() ?? 0;
+      perFaction[k as String] = s;
+    });
+    notifyListeners();
+  }
+
+  Future<void> persist() => EconomyMetricsStorage.instance.save(toJson());
 
   @visibleForTesting
   static void resetForTest() {

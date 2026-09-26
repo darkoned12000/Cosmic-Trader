@@ -9,6 +9,7 @@ enum NpcGoalType {
   upgradeEquipment,
   raidPort,
   refuelEnergy,
+  buyPort,
 }
 
 enum NpcGoalStatus {

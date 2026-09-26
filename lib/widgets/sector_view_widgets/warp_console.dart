@@ -208,6 +208,7 @@ class _WarpConsoleState extends State<WarpConsole> {
       final canTow = TowService.findTowPlan(
             widget.allSectors,
             widget.currentSector.id,
+            player: widget.player,
           ) !=
           null;
       setState(() {

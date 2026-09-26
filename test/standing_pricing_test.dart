@@ -1,10 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_memory.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_personality.dart';
 import 'package:cosmic_trader/services/npc_ai/trade_evaluator.dart';
+import 'package:cosmic_trader/widgets/banking_widget.dart';
 
 Port _port() => const Port(
       name: 'P',
@@ -117,5 +125,172 @@ void main() {
       Map<String, dynamic>.from(info.toJson()),
     );
     expect(restored.ownerFaction, FactionClass.pirate);
+  });
+
+  test('service refusal trips at -50 standing', () {
+    const port = Port(
+      name: 'P',
+      portClass: PortClass.free,
+      buyPrices: {},
+      sellPrices: {},
+      ownerFaction: FactionClass.trader,
+    );
+    expect(port.deniesServiceTo(-50), isTrue);
+    expect(port.deniesServiceTo(-100), isTrue);
+    expect(port.deniesServiceTo(-49), isFalse);
+    expect(port.deniesServiceTo(30), isFalse);
+  });
+
+  test('bank rate follows Trade Guild standing', () {
+    // BankingWidget.effectiveRateFor is widget-static; replicate via
+    // factionStandingWith on players with known standings.
+    Player playerWith(int traderStanding) {
+      // Start from trader-faction defaults (trader→trader = 30) then shift.
+      final base = Player(
+        name: 'T',
+        currentSectorId: 1,
+        hull: 1,
+        maxHull: 1,
+        shields: 1,
+        maxShields: 1,
+        cargoUsed: 0,
+        maxCargo: 1,
+        cargoSize: 1,
+        credits: 0,
+        researchPoints: 0,
+      );
+      final delta =
+          traderStanding - base.factionStandingWith(FactionClass.trader);
+      return base.withFactionStandingChange(FactionClass.trader, delta);
+    }
+
+    // Base rate 1% scaled ±0.2%/100 standing, clamped [0.5%, 1.5%].
+    expect(
+      BankingWidget.rateFor(playerWith(100)),
+      closeTo(0.012, 1e-9),
+    );
+    expect(
+      BankingWidget.rateFor(playerWith(-100)),
+      closeTo(0.008, 1e-9),
+    );
+    expect(
+      BankingWidget.rateFor(playerWith(30)),
+      closeTo(0.0106, 1e-9),
+    );
+  });
+
+  test('NPC skips hostile emporiums and is refused on arrival', () {
+    Sector emporium(int id, List<int> warps, FactionClass owner) => Sector(
+          id: id,
+          name: 'E$id',
+          x: 0,
+          y: 0,
+          warpRoutes: warps,
+          hasPort: true,
+          port: Port(
+            name: 'Emporium',
+            portClass: PortClass.hardwareEmporium,
+            buyPrices: const {},
+            sellPrices: const {},
+            ownerFaction: owner,
+          ),
+        );
+    // Pirate (trader standing -60 → refused) with only a trader-owned
+    // emporium discovered.
+    final sectors = [
+      emporium(1, [2], FactionClass.trader),
+      emporium(2, [1], FactionClass.trader)
+    ];
+    var memory = const NpcMemory();
+    memory = memory.withDiscoveredPort(
+      2,
+      const PortInfo(
+        name: 'Emporium',
+        portClass: PortClass.hardwareEmporium,
+        buyPrices: {},
+        sellPrices: {},
+        ownerFaction: FactionClass.trader,
+      ),
+    );
+    var npc = NpcShip.create(
+      faction: FactionClass.pirate,
+      shipDef: ShipDefinition.allShips.first,
+      currentSectorId: 1,
+      startingCredits: 5000,
+      seed: 81,
+    ).copyWith(
+      personality: NpcPersonality.pirateHunter,
+      memory: memory,
+      energy: 50,
+    );
+
+    // No servable emporium → no refuel goal (roams instead).
+    expect(NpcAiService.createRefuelGoal(npc, sectors), isNull);
+
+    // Forced arrival at the hostile pump fails cleanly: no fuel bought,
+    // goal replanned next tick (failed → explore), energy spent moving on.
+    npc = npc.copyWith(
+      energy: 900,
+      currentGoal: NpcGoal(
+        type: NpcGoalType.refuelEnergy,
+        status: NpcGoalStatus.travelling,
+        createdAt: DateTime.now(),
+        params: const {'targetSectorId': 2},
+      ),
+      currentSectorId: 2,
+    );
+    final after = NpcAiService.processTurn(npc, sectors, [], [npc]);
+    expect(after.credits, 5000);
+    // Refused: replanned to explore in the same tick (failed goal never
+    // lingers to steer movement anymore).
+    expect(after.currentGoal?.type, NpcGoalType.explore);
+    final recovered = NpcAiService.processTurn(after, sectors, [], [after]);
+    // …and the NPC roams instead of looping the hostile pump.
+    expect(recovered.currentGoal?.type, isNot(NpcGoalType.refuelEnergy));
+  });
+
+  test('interest accrues daily, clock starts without retro payout', () {
+    final now = DateTime.now();
+    // First balance: clock starts, no payout.
+    final first = BankingAi.accrueInterest(
+      bankBalance: 100000,
+      lastInterestTime: null,
+      rate: 0.01,
+      now: now,
+    );
+    expect(first, isNotNull);
+    expect(first!.interest, 0);
+    expect(first.stamp, now);
+
+    // Same day: nothing.
+    expect(
+      BankingAi.accrueInterest(
+        bankBalance: 100000,
+        lastInterestTime: now,
+        rate: 0.01,
+        now: now.add(const Duration(hours: 23)),
+      ),
+      isNull,
+    );
+
+    // Two days at 1%: 2000.
+    final paid = BankingAi.accrueInterest(
+      bankBalance: 100000,
+      lastInterestTime: now,
+      rate: 0.01,
+      now: now.add(const Duration(hours: 48)),
+    );
+    expect(paid!.interest, 2000);
+
+    // Broke: nothing, ever.
+    expect(
+      BankingAi.accrueInterest(
+        bankBalance: 0,
+        lastInterestTime: now.subtract(const Duration(days: 30)),
+        rate: 0.01,
+        now: now,
+      ),
+      isNull,
+    );
   });
 }

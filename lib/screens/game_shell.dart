@@ -6,6 +6,7 @@ import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
@@ -20,9 +21,12 @@ import 'package:cosmic_trader/screens/sector_view.dart';
 import 'package:cosmic_trader/screens/settings_screen.dart';
 import 'package:cosmic_trader/screens/ship_status.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
+import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/equalizer_widget.dart';
@@ -66,6 +70,8 @@ class _GameShellState extends State<GameShell> {
     _loadSettings();
     _loadNpcs();
     _loadHudSectors();
+    BountyBoard.global.ensureLoaded();
+    EconomyMetrics.global.restore();
     _tickService.onTickComplete = (_) {
       _reloadNpcs();
       _applySolarRecharge();
@@ -84,6 +90,8 @@ class _GameShellState extends State<GameShell> {
     // Mark the tick service with the FedSpace boundary after settings load
     _loadSettings().then((_) {
       _tickService.fedSpaceEnd = _settings.fedSpaceEnd;
+      NpcAiService.safeZoneEnd = _settings.fedSpaceEnd;
+      Port.safeZoneEnd = _settings.fedSpaceEnd;
     });
   }
 
@@ -470,6 +478,7 @@ class _GameShellState extends State<GameShell> {
         PlayerStorage.instance.savePlayer(_player),
         NpcStorage().saveAll(_npcs),
         SettingsStorage.instance.save(_settings),
+        EconomyMetrics.global.persist(),
       ]).timeout(const Duration(seconds: 10));
     } catch (e) {
       debugPrint('[GameShell] Final save on exit failed: $e');

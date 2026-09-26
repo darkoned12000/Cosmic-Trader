@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
@@ -71,6 +72,34 @@ void main() {
     expect(plan.targetPortName, 'Emporium Station');
     expect(plan.hops, 3);
     expect(plan.isRefuelStation, isTrue);
+  });
+
+  test('tow routes around hostile emporiums to a servable one', () {
+    Port ownedEmporium(String name, FactionClass owner) => Port(
+          name: name,
+          portClass: PortClass.hardwareEmporium,
+          buyPrices: const {},
+          sellPrices: const {},
+          ownerFaction: owner,
+        );
+    final hostileSectors = [
+      _sector(1, [2]),
+      _sector(2, [1, 3], port: ownedEmporium('Near', FactionClass.trader)),
+      _sector(3, [2, 4]),
+      _sector(4, [3], port: ownedEmporium('Far', FactionClass.pirate)),
+    ];
+    // Pirate pilot: trader-owned emporium refuses (-60), pirate-owned
+    // serves (-20). Tow must skip the nearer hostile pump.
+    final pirate = _player().copyWith(faction: FactionClass.pirate);
+    final plan = TowService.findTowPlan(hostileSectors, 1, player: pirate);
+
+    expect(plan, isNotNull);
+    expect(plan!.targetSectorId, 4);
+    expect(plan.targetPortName, 'Far');
+
+    // Without player context, nearest still wins (old behavior).
+    final blind = TowService.findTowPlan(hostileSectors, 1);
+    expect(blind!.targetSectorId, 2);
   });
 
   test('tow falls back to the nearest port when no emporium is reachable', () {
