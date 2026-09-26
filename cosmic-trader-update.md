@@ -478,7 +478,7 @@ distress/reinforcement work composes with it directly. Each slice ships
 with automation-log lines + unit tests per the branch norm
 (analyze-clean, format-clean, full suite green, live numbers before/after).
 
-**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26):**
+**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26):**
 - `CombatOutcome` enum (attacker/defender victory, attacker/defender
   retreat, defender surrender, parley, ongoing) + `outcome`,
   `escapeCostEnergy`, `parleyCostCredits` on `CombatResult`
@@ -524,7 +524,43 @@ with automation-log lines + unit tests per the branch norm
 - Covered by `test/combat_reinforcement_test.dart` (3 tests: empty-fight
   clear with no distress re-answer, live-signal re-answer by responder +
   fresh pilot, witness-only vendetta recording).
-  Suite: 177 passing, analyze clean.
+- C2 vendettas (`test/combat_vendetta_test.dart`, 25 tests):
+  - C2a reacquisition — idle pilots check grudges before greed
+    (`_createVendettaGoal` runs first in `_selectGoal`, which only fires
+    when a new goal is needed, so committed goals are never hijacked):
+    grievance ≥ 40, living roster target, intel-sector destination
+    (in-place engage when co-located), in-range + in-tank + weaker-only
+    bounds, 30-min pursuit TTL with same-turn fresh-hunt re-issue, dry
+    holes ease 10 without refreshing the decay window.
+  - C2b resolution — kill settles (`withVendettaResolved` + log, either
+    payout path); crossed blades refresh the trail (sector + 10 bump);
+    `_pruneDeadVendettas` drops targets gone from roster + players each
+    turn; time decay enforced in `_scanSector` (no-op when clean).
+  - C2c avoidance — `fearedSectors` (stronger grudge-targets' last-seen
+    sectors); evaluator danger discount (½ per dangerous end, never
+    refuses the only money); sell-first two-pass (safe buyers win,
+    dangerous-only still flies, logged); `findPathAvoiding` (endpoints
+    exempt, falls back to shortest) wired into `_move` with next-hop
+    change-gated log lines.
+  - C2d gossip + route learning — `_shareIntel` merges sightings both
+    ways for co-located same-faction allies (own grievance kept,
+    strangers adopted at hearsay 10, only adoptions logged);
+    `profitableRoutes` (capped 10/route, JSON-persisted, legacy-safe)
+    recorded on profitable sales, boosting evaluator ranking +5%/win
+    (cap +25%).
+- C2 deltas from the plan: payment/parley resolution applies to NPC
+  kills only — player-id grudges are never recorded (C1c writes NPC
+  killers), so there is nothing player-side to resolve yet; pursuit
+  budgets cover time + energy, with credits bounded implicitly (trips
+  must fit the tank, hunts never buy anything). Restart persistence
+  holds by construction (vendettas + profitableRoutes serialize with
+  legacy-safe defaults through the existing whole-ship save).
+  Suite: 202 passing, analyze clean.
+- Soak note (per review): behavior quality over time is judged by a
+  30–60 min sim + log review in C5, not by unit tests alone. The log
+  lines above (hunts, settlements, eases, prunes, berths, hearsay,
+  dangerous-money) are the soak instrumentation — grep the combat/goal/
+  movement feeds for `Hunting|Settled|wide berth|Heard about|dangerous`.
 
 **Out of scope for C:** shipyard/hull swapping, quests/missions, chat AI,
 planet invasion (planet-phase2), multiplayer sync.
@@ -596,8 +632,7 @@ a dropped session loses no decisions.
   kill/escape/payment/parley, dead-target handling, reacquisition
   bounds, pursuit budgets in time/energy/credits). Avoidance reroutes +
   danger-weighted trade evaluation. Route learning (positive mirror of
-  the cooldown system).
-- **C4 — production spawning.** Homeworld `productionTimer`/
+  the cooldown system).- **C4 — production spawning.** Homeworld `productionTimer`/
   `spawnInterval` drive spawning (supplement/replace floors), backup
   homeworlds, planet-killer path to permanent removal. Lore heroes from
   `notableHeroes` (rare, buffed, bountied, unique hail). Bounded

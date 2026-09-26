@@ -340,15 +340,13 @@ class _CombatScreenState extends State<CombatScreen>
       pursuerEngineLevel: _player.effectiveEngineLevel,
     );
     setState(() {
-      _npc = _npc.copyWith(
-          energy: math.max(0, _npc.energy - res.energyCost));
+      _npc = _npc.copyWith(energy: math.max(0, _npc.energy - res.energyCost));
     });
     if (res.escaped) {
       _combatLog.add('>>> ${_npc.shipName} breaks off and warps out <<<');
       if (widget.sectorWarps.isNotEmpty) {
         final rng = math.Random();
-        final dest =
-            widget.sectorWarps[rng.nextInt(widget.sectorWarps.length)];
+        final dest = widget.sectorWarps[rng.nextInt(widget.sectorWarps.length)];
         setState(() => _npc = _npc.copyWith(currentSectorId: dest));
         _combatLog.add('>>> Enemy warped to sector #$dest <<<');
       }
@@ -888,9 +886,7 @@ class _CombatScreenState extends State<CombatScreen>
           Text(
             '${_npc.pilotName} offers $offer cr to live',
             style: const TextStyle(
-                fontFamily: 'monospace',
-                color: Colors.white70,
-                fontSize: 12),
+                fontFamily: 'monospace', color: Colors.white70, fontSize: 12),
           ),
           const SizedBox(height: 8),
           Row(
@@ -921,8 +917,7 @@ class _CombatScreenState extends State<CombatScreen>
                     style: TextStyle(fontFamily: 'monospace')),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white70,
-                  side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.3)),
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),

@@ -224,6 +224,21 @@ class NpcMemory {
   /// How long a grudge survives without fresh contact.
   static const Duration vendettaMemory = Duration(hours: 6);
 
+  /// Profitable trade routes ("buyId>sellId:commodity" → completed
+  /// profitable runs, capped). Positive mirror of [failedRoutes]: routes
+  /// that paid get a ranking boost in selection, so pilots learn what
+  /// works instead of only what doesn't.
+  final Map<String, int> profitableRoutes;
+
+  /// Cap on remembered wins per route — recent success matters, ancient
+  /// history shouldn't outshout fresh prices.
+  static const int maxRouteWins = 10;
+
+  /// Hearsay grievance for gossiped sightings (C2d): knowing OF a killer
+  /// is not the same as watching them kill. Below the hunt threshold, so
+  /// gossip informs but never launches hunts by itself.
+  static const int hearsayGrievance = 10;
+
   const NpcMemory({
     this.visitedSectors = const {},
     this.discoveredPorts = const {},
@@ -234,6 +249,7 @@ class NpcMemory {
     this.lastBankTime,
     this.failedRoutes = const {},
     this.vendettas = const {},
+    this.profitableRoutes = const {},
   });
 
   factory NpcMemory.empty() => const NpcMemory();
@@ -248,6 +264,7 @@ class NpcMemory {
     DateTime? lastBankTime,
     Map<String, int>? failedRoutes,
     Map<String, VendettaRecord>? vendettas,
+    Map<String, int>? profitableRoutes,
   }) {
     return NpcMemory(
       visitedSectors: visitedSectors ?? this.visitedSectors,
@@ -259,6 +276,7 @@ class NpcMemory {
       lastBankTime: lastBankTime ?? this.lastBankTime,
       failedRoutes: failedRoutes ?? this.failedRoutes,
       vendettas: vendettas ?? this.vendettas,
+      profitableRoutes: profitableRoutes ?? this.profitableRoutes,
     );
   }
 
@@ -327,6 +345,63 @@ class NpcMemory {
     };
   }
 
+  /// Records a profitable run on [key] (see [routeKey]), capped at
+  /// [maxRouteWins]. Returns `this` at the cap so callers can skip
+  /// pointless saves.
+  NpcMemory withProfitableRoute(String key) {
+    final wins = profitableRoutes[key] ?? 0;
+    if (wins >= maxRouteWins) return this;
+    final updated = Map<String, int>.from(profitableRoutes);
+    updated[key] = wins + 1;
+    return copyWith(profitableRoutes: updated);
+  }
+
+  /// Merges gossiped sightings from a wingmate (C2d): sightings ONLY.
+  /// Newer sectors win; each pilot keeps their own grievance, and unknown
+  /// killers are adopted at [hearsayGrievance] — knowing OF a killer is
+  /// not watching them kill. Returns the merged memory plus what changed
+  /// (for log lines), or `this` untouched when there is nothing newer.
+  ({NpcMemory memory, int adopted, int refreshed}) mergeSightings(
+    Map<String, VendettaRecord> other, {
+    int? nowMs,
+  }) {
+    if (other.isEmpty) return (memory: this, adopted: 0, refreshed: 0);
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    var updated = Map<String, VendettaRecord>.from(vendettas);
+    var adopted = 0;
+    var refreshed = 0;
+    var changed = false;
+    for (final entry in other.entries) {
+      final mine = updated[entry.key];
+      if (mine == null) {
+        updated[entry.key] = VendettaRecord(
+          sectorId: entry.value.sectorId,
+          firstSeenMs:
+              now < entry.value.lastSeenMs ? now : entry.value.lastSeenMs,
+          lastSeenMs: entry.value.lastSeenMs,
+          grievance: hearsayGrievance,
+        );
+        adopted++;
+        changed = true;
+      } else if (entry.value.lastSeenMs > mine.lastSeenMs) {
+        updated[entry.key] = VendettaRecord(
+          sectorId: entry.value.sectorId,
+          firstSeenMs: mine.firstSeenMs,
+          lastSeenMs: entry.value.lastSeenMs,
+          grievance: mine.grievance,
+        );
+        refreshed++;
+        changed = true;
+      }
+    }
+    if (!changed) return (memory: this, adopted: 0, refreshed: 0);
+    return (
+      memory: copyWith(vendettas: updated),
+      adopted: adopted,
+      refreshed: refreshed
+    );
+  }
+
   /// Records hostile contact with [targetId] (stable pilot id): creates
   /// or refreshes the vendetta, bumping grievance. First sighting time is
   /// preserved across refreshes.
@@ -366,6 +441,38 @@ class NpcMemory {
     return copyWith(vendettas: updated);
   }
 
+  /// Vengeance satisfied (C2b): the target is dead / paid / parleyed.
+  /// Returns `this` when the entry is absent.
+  NpcMemory withVendettaResolved(String targetId) {
+    if (!vendettas.containsKey(targetId)) return this;
+    final updated = Map<String, VendettaRecord>.from(vendettas)
+      ..remove(targetId);
+    return copyWith(vendettas: updated);
+  }
+
+  /// Eases a grudge by [amount] (dry-hole arrivals, escapes, partial
+  /// payments). Drops the entry when grievance reaches 0; returns `this`
+  /// when absent so callers can skip pointless saves. Sightings are NOT
+  /// refreshed — a fruitless revisit must not extend the memory window,
+  /// or camping a sector would keep a grudge alive forever.
+  NpcMemory withVendettaEased(String targetId, int amount) {
+    final existing = vendettas[targetId];
+    if (existing == null) return this;
+    final updated = Map<String, VendettaRecord>.from(vendettas);
+    final eased = existing.grievance - amount;
+    if (eased <= 0) {
+      updated.remove(targetId);
+    } else {
+      updated[targetId] = VendettaRecord(
+        sectorId: existing.sectorId,
+        firstSeenMs: existing.firstSeenMs,
+        lastSeenMs: existing.lastSeenMs,
+        grievance: eased,
+      );
+    }
+    return copyWith(vendettas: updated);
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'visitedSectors': visitedSectors.toList(),
@@ -381,6 +488,7 @@ class NpcMemory {
       'lastBankTime': lastBankTime?.toIso8601String(),
       'failedRoutes': failedRoutes.map((k, v) => MapEntry(k, v)),
       'vendettas': vendettas.map((k, v) => MapEntry(k, v.toJson())),
+      'profitableRoutes': profitableRoutes.map((k, v) => MapEntry(k, v)),
     };
   }
 
@@ -425,6 +533,10 @@ class NpcMemory {
               k as String,
               VendettaRecord.fromJson((v as Map).cast<String, dynamic>()),
             ),
+          ) ??
+          const {},
+      profitableRoutes: (json['profitableRoutes'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toInt()),
           ) ??
           const {},
     );

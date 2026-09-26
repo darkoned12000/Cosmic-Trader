@@ -39,6 +39,13 @@ class TradeEvaluator {
   /// When [credits] is given, routes whose buy leg costs more than the
   /// whole bankroll for a single unit are filtered out (root-cause guard
   /// for buy-phase debt).
+  /// Sectors in [dangerSectors] (C2c: last-seen sectors of stronger
+  /// vendetta targets) discount ranking — a route touching danger at
+  /// either end scores half, both ends a quarter — so pilots prefer safe
+  /// money without ever refusing the only money on the table.
+  /// [preferredRoutes] (C2d: route keys with past profitable runs) boost
+  /// ranking +5% per remembered win (capped at +25%): pilots learn what
+  /// works, the positive mirror of the failed-route cooldown.
   static TradeRoute? findBestTradeRoute(
     int currentSectorId,
     Map<int, PortInfo> knownPorts,
@@ -48,6 +55,8 @@ class TradeEvaluator {
     double? credits,
     FactionClass? actorFaction,
     Map<String, int> standings = const {},
+    Set<int> dangerSectors = const {},
+    Map<String, int> preferredRoutes = const {},
   }) {
     if (knownPorts.length < 2) return null;
 
@@ -123,7 +132,19 @@ class TradeEvaluator {
 
     if (routes.isEmpty) return null;
 
-    routes.sort((a, b) => b.profitPerHop.compareTo(a.profitPerHop));
+    double score(TradeRoute r) {
+      var s = r.profitPerHop;
+      if (dangerSectors.contains(r.buySectorId)) s *= 0.5;
+      if (dangerSectors.contains(r.sellSectorId)) s *= 0.5;
+      final wins = preferredRoutes[
+          NpcMemory.routeKey(r.buySectorId, r.sellSectorId, r.commodity)];
+      if (wins != null && wins > 0) {
+        s *= 1 + 0.05 * wins.clamp(1, 5);
+      }
+      return s;
+    }
+
+    routes.sort((a, b) => score(b).compareTo(score(a)));
     return routes.first;
   }
 

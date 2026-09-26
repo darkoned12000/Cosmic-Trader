@@ -163,8 +163,7 @@ class CombatService {
     const ({CombatOutcome? outcome, int escapeCost}) none =
         (outcome: null, escapeCost: 0);
     final config = self.personalityConfig;
-    final hullFraction =
-        self.maxHull <= 0 ? 0.0 : self.hull / self.maxHull;
+    final hullFraction = self.maxHull <= 0 ? 0.0 : self.hull / self.maxHull;
     final shieldsFraction =
         self.maxShields <= 0 ? 0.0 : self.shields / self.maxShields;
 
@@ -174,9 +173,8 @@ class CombatService {
       FactionClass.trader => 0.40,
       FactionClass.pirate => 0.30,
     };
-    final limit =
-        (base + config.caution * 0.2 - config.aggression * 0.15)
-            .clamp(0.05, 0.8);
+    final limit = (base + config.caution * 0.2 - config.aggression * 0.15)
+        .clamp(0.05, 0.8);
 
     // Pressing an advantage: a pirate beating down a dying foe never
     // breaks off, and nobody retreats from a nearly-dead enemy while
@@ -239,8 +237,7 @@ class CombatService {
           'paid $tribute cr tribute');
       return (
         attacker: attacker.copyWith(credits: attacker.credits + tribute),
-        defender:
-            defender.copyWith(credits: defender.credits - tribute),
+        defender: defender.copyWith(credits: defender.credits - tribute),
         result: CombatResult(
           attackerWon: false,
           damageToDefender: 0,
@@ -631,9 +628,8 @@ class CombatService {
       lootScrapTech: lootScrapTech,
       updatedPlayer: updatedPlayer,
       updatedNpc: updatedNpc,
-      outcome: npcDestroyed
-          ? CombatOutcome.attackerVictory
-          : CombatOutcome.ongoing,
+      outcome:
+          npcDestroyed ? CombatOutcome.attackerVictory : CombatOutcome.ongoing,
     );
   }
 

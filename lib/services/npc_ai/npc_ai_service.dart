@@ -54,6 +54,17 @@ class NpcAiService {
   /// 1–3 is a wing, not a migration.
   static const int maxDistressResponders = 3;
 
+  /// C2 vendetta pursuit bounds. A grudge at or above
+  /// [vendettaGrievanceThreshold] (one witnessed kin-kill) funds a hunt
+  /// when the pilot is otherwise idle — never by overwriting a committed
+  /// goal. The hunt itself is budgeted: [vendettaPursuitTtl] caps its age
+  /// (trail goes cold), the trip must fit the tank plus a one-hop
+  /// reserve, weaker targets only (grudges don't make NPCs suicidal),
+  /// and each dry hole eases the grudge by [vendettaDryHoleEase].
+  static const int vendettaGrievanceThreshold = 40;
+  static const Duration vendettaPursuitTtl = Duration(minutes: 30);
+  static const int vendettaDryHoleEase = 10;
+
   @visibleForTesting
   static void clearSignalsForTest() => _activeDistressSignals.clear();
 
@@ -171,8 +182,16 @@ class NpcAiService {
     // 1 — Scan the current sector
     updated = _scanSector(updated, sectors, players, allNpcs);
 
+    // 1b — Drop grudges whose targets are gone from the world (C2b):
+    // absent from both the NPC roster and the player list, or flying
+    // as wreckage. Vengeance needs a living target.
+    updated = _pruneDeadVendettas(updated, players, allNpcs);
+
     // 2 — Execute the current goal (trade, bank, explore, etc.)
     updated = _executeGoal(updated, sectors, allNpcs);
+
+    // 2c — Wingmate gossip (C2d): co-located allies trade sightings.
+    updated = _shareIntel(updated, allNpcs);
 
     if (updated.isDestroyed) {
       GameEventLog.global.combat(
@@ -278,7 +297,7 @@ class NpcAiService {
 
     // 6 — Move one hop towards the goal
     if (_hasEnergy(updated)) {
-      updated = _move(updated, sectors);
+      updated = _move(updated, sectors, allNpcs);
     } else if (!updated.isDestroyed) {
       updated = _handleStranded(updated);
     }
@@ -304,6 +323,10 @@ class NpcAiService {
 
     // Mark visited
     memory = memory.withVisitedSector(sector.id);
+
+    // Time-decay grudges every turn (C2): returns `this` when nothing
+    // expired, so the steady state costs nothing.
+    memory = memory.pruneVendettas();
 
     // Discover port
     if (sector.hasPort && sector.port != null) {
@@ -812,7 +835,13 @@ class NpcAiService {
         credits: npc.credits + npcReceives,
         cargo: newCargo,
         cargoUsed: npc.cargoUsed - actualQuantity,
-        memory: npc.memory.copyWith(lastTradeTime: DateTime.now()),
+        // Route learning (C2d): profitable runs teach; losses don't.
+        // Mirrors the failed-route cooldown with a positive signal.
+        memory: (profit > 0
+                ? npc.memory.withProfitableRoute(NpcMemory.routeKey(
+                    goal.buyPortId, goal.sellPortId, commodity))
+                : npc.memory)
+            .copyWith(lastTradeTime: DateTime.now()),
         currentGoal: goal.copyWith(
           status: NpcGoalStatus.complete,
           params: {...goal.params, 'profit': profit},
@@ -1064,6 +1093,18 @@ class NpcAiService {
       }
     }
 
+    // Vendetta pursuit budget in time (C2a): a grudge funds a hunt, not
+    // an eternity. Expired hunts stand down; the memory (with its own
+    // 6h decay) decides whether a fresh hunt starts later.
+    final vendettaFor = goal.params['vendettaFor'] as String?;
+    if (vendettaFor != null &&
+        DateTime.now().difference(goal.createdAt) > vendettaPursuitTtl) {
+      GameEventLog.global
+          .combat('[${npc.pilotName}] Calling off the hunt for $vendettaFor — '
+              'trail gone cold');
+      return npc.copyWith(clearGoal: true);
+    }
+
     if (npc.currentSectorId != goal.targetSectorId) return npc;
 
     // Safe zone check — no attacks allowed
@@ -1116,6 +1157,22 @@ class NpcAiService {
       GameEventLog.global
           .combat('[${npc.pilotName}] Attack: Target $targetId not found in '
               'Sector ${npc.currentSectorId}');
+      // Dry hole on a vendetta hunt (C2a): the trail cools but the
+      // memory keeps its window — no sighting refresh, so camping can't
+      // hold a grudge open. Easing to zero drops the grudge outright.
+      if (vendettaFor != null) {
+        final before = npc.memory.vendettas[vendettaFor]?.grievance ?? 0;
+        final eased = npc.copyWith(
+          memory:
+              npc.memory.withVendettaEased(vendettaFor, vendettaDryHoleEase),
+          clearGoal: true,
+        );
+        final after = eased.memory.vendettas[vendettaFor]?.grievance;
+        GameEventLog.global.combat(
+            '[${npc.pilotName}] Hunt for $vendettaFor came up empty in '
+            'Sector ${npc.currentSectorId} (grudge $before → ${after ?? 0})');
+        return eased;
+      }
       return npc.copyWith(clearGoal: true);
     }
 
@@ -1200,9 +1257,20 @@ class NpcAiService {
             .combat('$witnesses ${target.faction.name} witness(es) recorded '
                 '${npc.pilotName} over Sector ${npc.currentSectorId}');
       }
+      // Vengeance satisfied (C2b): a vendetta against the dead target
+      // resolves regardless of any bounty payout. Memory only.
+      var resolvedAttacker = result.attacker;
+      if (resolvedAttacker.memory.vendettas.containsKey(target.id)) {
+        resolvedAttacker = resolvedAttacker.copyWith(
+          memory: resolvedAttacker.memory.withVendettaResolved(target.id),
+        );
+        GameEventLog.global
+            .combat('[${resolvedAttacker.pilotName}] Settled the score with '
+                '${target.pilotName} in Sector ${npc.currentSectorId}');
+      }
       if (paid > 0) {
-        var enriched = result.attacker.copyWith(
-          credits: result.attacker.credits + paid,
+        var enriched = resolvedAttacker.copyWith(
+          credits: resolvedAttacker.credits + paid,
         );
         for (final faction in posterFactions) {
           final current = enriched.memory.factionStandings[faction] ?? 0;
@@ -1217,6 +1285,9 @@ class NpcAiService {
           currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
         );
       }
+      return resolvedAttacker.copyWith(
+        currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
+      );
     } else {
       log.combat('[${result.attacker.pilotName}] Engaged ${target.pilotName} '
           '(dealt ${result.result.damageToDefender}, '
@@ -1245,11 +1316,87 @@ class NpcAiService {
           reason: 'unprovoked attack',
         );
       }
+      // Fresh sighting on a vendetta hunt (C2b): crossed blades with the
+      // target, so the trail is warm — refresh where they were seen with
+      // a small bump, whether they stood or slipped away (retreats
+      // resolve inside combat; the sighting is real either way).
+      var engagedAttacker = result.attacker;
+      if (goal.params['vendettaFor'] == target.id) {
+        engagedAttacker = engagedAttacker.copyWith(
+          memory: engagedAttacker.memory.withVendetta(
+            targetId: target.id,
+            sectorId: npc.currentSectorId,
+            grievanceBump: 10,
+          ),
+        );
+      }
+      return engagedAttacker.copyWith(
+        currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
+      );
     }
+  }
 
-    return result.attacker.copyWith(
-      currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
-    );
+  /// Wingmate gossip (C2d): co-located, same-faction, living allies trade
+  /// sightings after acting. Sightings only — each pilot keeps their own
+  /// grievance, and unknown killers arrive as hearsay (below the hunt
+  /// threshold). Both directions run: I learn theirs, they learn mine
+  /// (written back in place, like combat updates). Only genuinely new
+  /// adoptions get log lines; routine refreshes stay quiet so crowded
+  /// homeworlds don't flood the combat feed.
+  static NpcShip _shareIntel(NpcShip npc, List<NpcShip> allNpcs) {
+    var mine = npc.memory;
+    var changed = false;
+    for (int i = 0; i < allNpcs.length; i++) {
+      final mate = allNpcs[i];
+      if (mate.id == npc.id || mate.isDestroyed) continue;
+      if (mate.faction != npc.faction) continue;
+      if (mate.currentSectorId != npc.currentSectorId) continue;
+      final learn = mine.mergeSightings(mate.memory.vendettas);
+      if (learn.adopted > 0 || learn.refreshed > 0) {
+        mine = learn.memory;
+        changed = true;
+        if (learn.adopted > 0) {
+          GameEventLog.global.combat(
+              '[${npc.pilotName}] Heard about ${learn.adopted} killer(s) '
+              'from ${mate.pilotName}');
+        }
+      }
+      final teach = mate.memory.mergeSightings(mine.vendettas);
+      if (teach.adopted > 0 || teach.refreshed > 0) {
+        allNpcs[i] = mate.copyWith(memory: teach.memory);
+        if (teach.adopted > 0) {
+          GameEventLog.global.combat(
+              '[${mate.pilotName}] Heard about ${teach.adopted} killer(s) '
+              'from ${npc.pilotName}');
+        }
+      }
+    }
+    if (!changed) return npc;
+    return npc.copyWith(memory: mine);
+  }
+
+  /// Drops vendetta entries whose targets are gone from the world (C2b):
+  /// absent from both the NPC roster and the player list, or present but
+  /// destroyed. Vengeance needs a living target. Returns the NPC
+  /// unchanged when nothing expired so callers can skip pointless saves.
+  static NpcShip _pruneDeadVendettas(
+    NpcShip npc,
+    List<Player> players,
+    List<NpcShip> allNpcs,
+  ) {
+    if (npc.memory.vendettas.isEmpty) return npc;
+    var memory = npc.memory;
+    for (final id in memory.vendettas.keys) {
+      final npcGone = !allNpcs.any((n) => n.id == id && !n.isDestroyed);
+      final playerGone = !players.any((p) => p.id == id);
+      if (npcGone && playerGone) {
+        memory = memory.withVendettaResolved(id);
+        GameEventLog.global.combat(
+            '[${npc.pilotName}] Letting go of $id — gone from the world');
+      }
+    }
+    if (identical(memory, npc.memory)) return npc;
+    return npc.copyWith(memory: memory);
   }
 
   static NpcShip _executeRaidPortGoal(
@@ -1701,6 +1848,12 @@ class NpcAiService {
   ) {
     final config = npc.personalityConfig;
 
+    // C2: grudge before greed — an idle pilot with a fresh, actionable
+    // vendetta hunts first. Selection only runs when a new goal is needed,
+    // so this never hijacks a committed goal (memory → intent → goal).
+    final vendetta = _createVendettaGoal(npc, sectors, allNpcs);
+    if (vendetta != null) return vendetta;
+
     // Collect viable goal types with their weights
     final candidates = <NpcGoalType>[];
     final weights = <double>[];
@@ -1834,7 +1987,7 @@ class NpcAiService {
   ) {
     switch (type) {
       case NpcGoalType.tradeRoute:
-        return _createTradeRouteGoal(npc, sectors);
+        return _createTradeRouteGoal(npc, sectors, allNpcs);
       case NpcGoalType.explore:
         return _createExploreGoal(npc, sectors);
       case NpcGoalType.bankDeposit:
@@ -1858,9 +2011,30 @@ class NpcAiService {
     }
   }
 
+  /// Last-seen sectors of vendetta targets stronger than [npc] (C2c).
+  /// Intel, not radar: sectors come from memory, but strength is checked
+  /// against the live roster — a grudge against a rust-bucket nobody
+  /// fears. Feeds danger-weighted trade and movement avoidance.
+  static Set<int> fearedSectors(NpcShip npc, List<NpcShip> allNpcs) {
+    if (npc.memory.vendettas.isEmpty) return const {};
+    final myPower = CombatService.calculateFirepower(npc);
+    final feared = <int>{};
+    for (final entry in npc.memory.vendettas.entries) {
+      for (final n in allNpcs) {
+        if (n.id != entry.key || n.isDestroyed) continue;
+        if (CombatService.calculateFirepower(n) >= myPower) {
+          feared.add(entry.value.sectorId);
+        }
+        break;
+      }
+    }
+    return feared;
+  }
+
   static NpcGoal? _createTradeRouteGoal(
     NpcShip npc,
     List<Sector> sectors,
+    List<NpcShip> allNpcs,
   ) {
     // Sell-first whenever there is no economical buy leg: full holds, or
     // mere nibs (< 25% of capacity) not worth topping up with a fresh buy.
@@ -1870,8 +2044,9 @@ class NpcAiService {
     final hasCargo = npc.cargo.values.any((q) => q > 0);
     final nibs = hasCargo && npc.cargoUsed < npc.cargoHoldCapacity * 0.25;
     if ((!hasSpace || nibs) && hasCargo) {
-      return _createSellOnlyGoal(npc, sectors);
+      return _createSellOnlyGoal(npc, sectors, allNpcs);
     }
+    final danger = fearedSectors(npc, allNpcs);
     final route = TradeEvaluator.findBestTradeRoute(
       npc.currentSectorId,
       npc.memory.discoveredPorts,
@@ -1881,6 +2056,8 @@ class NpcAiService {
       credits: npc.credits.toDouble(),
       actorFaction: npc.faction,
       standings: npc.memory.factionStandings,
+      dangerSectors: danger,
+      preferredRoutes: npc.memory.profitableRoutes,
     );
     if (route == null) {
       GameEventLog.global.goal(
@@ -1888,6 +2065,13 @@ class NpcAiService {
         '${npc.memory.discoveredPorts.length} known ports',
       );
       return null;
+    }
+    if (danger.contains(route.buySectorId) ||
+        danger.contains(route.sellSectorId)) {
+      GameEventLog.global.goal(
+        '[${npc.pilotName}] Goal: no safe trade route — flying dangerous '
+        'for ${route.commodity} ${route.buySectorId}>${route.sellSectorId}',
+      );
     }
 
     return NpcGoal(
@@ -1909,11 +2093,21 @@ class NpcAiService {
   /// Sell-first route for full holds: best known buyer for carried cargo.
   /// Returns null (with a log line) when nothing on board has a reachable
   /// buyer — the NPC keeps exploring instead of idling on dead inventory.
-  static NpcGoal? _createSellOnlyGoal(NpcShip npc, List<Sector> sectors) {
+  /// Dangerous buyers (C2c feared sectors) lose to safe ones at any price;
+  /// only the last buyer standing gets the cargo.
+  static NpcGoal? _createSellOnlyGoal(
+    NpcShip npc,
+    List<Sector> sectors,
+    List<NpcShip> allNpcs,
+  ) {
     final maxTravel = npc.personalityConfig.maxTravelDistance;
+    final danger = fearedSectors(npc, allNpcs);
     String? bestCommodity;
     int? bestPortId;
     var bestPrice = 0.0;
+    String? dangerCommodity;
+    int? dangerPortId;
+    var dangerPrice = 0.0;
 
     npc.cargo.forEach((commodity, qty) {
       if (qty <= 0) return;
@@ -1933,6 +2127,14 @@ class NpcAiService {
           entry.key,
         );
         if (path == null || path.length - 1 > maxTravel) continue;
+        if (danger.contains(entry.key)) {
+          if (price > dangerPrice) {
+            dangerPrice = price;
+            dangerCommodity = commodity;
+            dangerPortId = entry.key;
+          }
+          continue;
+        }
         if (price > bestPrice) {
           bestPrice = price;
           bestCommodity = commodity;
@@ -1942,11 +2144,20 @@ class NpcAiService {
     });
 
     if (bestCommodity == null || bestPortId == null) {
-      GameEventLog.global.goal(
-        '[${npc.pilotName}] Goal: holds full but no buyer known for '
-        'on-board cargo',
-      );
-      return null;
+      if (dangerCommodity != null && dangerPortId != null) {
+        GameEventLog.global.goal(
+          '[${npc.pilotName}] Goal: only dangerous buyers for on-board '
+          'cargo — flying dangerous to $dangerPortId',
+        );
+        bestCommodity = dangerCommodity;
+        bestPortId = dangerPortId;
+      } else {
+        GameEventLog.global.goal(
+          '[${npc.pilotName}] Goal: holds full but no buyer known for '
+          'on-board cargo',
+        );
+        return null;
+      }
     }
     return NpcGoal(
       type: NpcGoalType.tradeRoute,
@@ -2145,6 +2356,71 @@ class NpcAiService {
     );
   }
 
+  static NpcGoal? _createVendettaGoal(
+    NpcShip npc,
+    List<Sector> sectors,
+    List<NpcShip> allNpcs,
+  ) {
+    // C2a reacquisition: memory → intent → goal. Only idle pilots get
+    // here (the caller runs selection solely when a new goal is needed),
+    // so a grudge never overwrites a committed goal.
+    if (npc.memory.vendettas.isEmpty) return null;
+    if (_isSafeZone(npc.currentSectorId)) return null;
+    if (npc.totalWeaponPower <= 0) {
+      // Unarmed pilots hold grudges, not hunts.
+      return null;
+    }
+    final myPower = CombatService.calculateFirepower(npc);
+    final maxDist = npc.personalityConfig.maxTravelDistance;
+    final legCost = EnergyService.npcWarpCost(npc);
+
+    final grudges = npc.memory.vendettas.entries.toList()
+      ..sort((a, b) => b.value.grievance.compareTo(a.value.grievance));
+    for (final entry in grudges) {
+      final record = entry.value;
+      if (record.grievance < vendettaGrievanceThreshold) continue;
+      // Target must be a living NPC in this roster. Player-id grudges
+      // aren't recorded yet (C1c writes NPC killers only); absent from
+      // the roster means gone, and C2b prunes those entries.
+      NpcShip? target;
+      for (final n in allNpcs) {
+        if (n.id == entry.key && !n.isDestroyed) {
+          target = n;
+          break;
+        }
+      }
+      if (target == null) continue;
+      // Destination is the intel (last-seen sector), not the real
+      // position — except under our nose: co-located ships see each
+      // other, so engage in place instead of flying to stale intel.
+      final dest = target.currentSectorId == npc.currentSectorId
+          ? npc.currentSectorId
+          : record.sectorId;
+      if (_isSafeZone(dest)) continue;
+      final path =
+          PathfindingService.findPath(sectors, npc.currentSectorId, dest);
+      if (path == null || path.length - 1 > maxDist) continue;
+      // Pursuit budget in energy: trip plus a one-hop reserve, or sit out.
+      if (npc.energy < (path.length - 1) * legCost + legCost) continue;
+      // Grudges don't make NPCs suicidal: weaker targets only.
+      if (CombatService.calculateFirepower(target) >= myPower) continue;
+      GameEventLog.global.combat(
+          '[${npc.pilotName}] Hunting ${target.pilotName} over Sector $dest '
+          '(grudge ${record.grievance})');
+      return NpcGoal(
+        type: NpcGoalType.attack,
+        status: NpcGoalStatus.travelling,
+        createdAt: DateTime.now(),
+        params: {
+          'targetSectorId': dest,
+          'targetId': target.id,
+          'vendettaFor': target.id,
+        },
+      );
+    }
+    return null;
+  }
+
   static NpcGoal? _createAttackGoal(
     NpcShip npc,
     List<Sector> sectors,
@@ -2297,7 +2573,11 @@ class NpcAiService {
   // Step 6 — Movement
   // ────────────────────────────────────────────────────────────────
 
-  static NpcShip _move(NpcShip npc, List<Sector> sectors) {
+  static NpcShip _move(
+    NpcShip npc,
+    List<Sector> sectors,
+    List<NpcShip> allNpcs,
+  ) {
     if (!_hasEnergy(npc)) return npc;
 
     // Deployed Solar Array locks the ship (mirrors Player.canMove).
@@ -2317,11 +2597,35 @@ class NpcAiService {
     if (steering != null &&
         steering.targetSectorId != null &&
         steering.targetSectorId != npc.currentSectorId) {
-      final path = PathfindingService.findPath(
+      var path = PathfindingService.findPath(
         sectors,
         npc.currentSectorId,
         steering.targetSectorId!,
       );
+      // C2c avoidance: bend transit around feared sectors when the bend
+      // actually changes the next hop (no log spam for identical routes).
+      final fear = fearedSectors(npc, allNpcs);
+      if (fear.isNotEmpty) {
+        final bent = PathfindingService.findPathAvoiding(
+          sectors,
+          npc.currentSectorId,
+          steering.targetSectorId!,
+          fear,
+        );
+        if (bent != null &&
+            bent.length > 1 &&
+            (path == null || path.length < 2 || bent[1] != path[1])) {
+          final dodged = (path ?? const <int>[])
+              .where((s) => fear.contains(s) && s != steering.targetSectorId)
+              .toList();
+          if (dodged.isNotEmpty) {
+            GameEventLog.global.movement(
+                '[${npc.pilotName}] Giving Sector ${dodged.join(', ')} a '
+                'wide berth');
+          }
+          path = bent;
+        }
+      }
       if (path != null && path.length > 1) {
         final next = path[1];
         GameEventLog.global

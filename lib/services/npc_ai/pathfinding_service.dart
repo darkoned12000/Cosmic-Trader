@@ -49,6 +49,50 @@ class PathfindingService {
     return path != null ? path.length - 1 : 9999;
   }
 
+  /// BFS shortest path that avoids [avoid] sectors (C2c avoidance
+  /// reroutes). Endpoints are never avoided — a goal inside a feared
+  /// sector still terminates there; only the transit bends around.
+  /// Falls back to the plain shortest path when every route crosses
+  /// feared space, so avoidance never strands an NPC that could move.
+  static List<int>? findPathAvoiding(
+    List<Sector> sectors,
+    int startId,
+    int targetId,
+    Set<int> avoid,
+  ) {
+    if (avoid.isEmpty) return findPath(sectors, startId, targetId);
+    if (startId == targetId) return [startId];
+
+    final byId = {for (final s in sectors) s.id: s};
+    if (!byId.containsKey(startId) || !byId.containsKey(targetId)) {
+      return null;
+    }
+
+    final visited = <int>{startId};
+    final queue = <_PathNode>[
+      _PathNode(startId, [startId])
+    ];
+
+    while (queue.isNotEmpty) {
+      final current = queue.removeAt(0);
+      final s = byId[current.sectorId];
+      if (s == null) continue;
+
+      for (final nId in s.warpRoutes) {
+        if (nId == targetId) {
+          return [...current.path, nId];
+        }
+        if (avoid.contains(nId)) continue;
+        if (!visited.contains(nId)) {
+          visited.add(nId);
+          queue.add(_PathNode(nId, [...current.path, nId]));
+        }
+      }
+    }
+
+    return findPath(sectors, startId, targetId);
+  }
+
   /// Find nearest sector matching a predicate, starting from [startId].
   static int? findNearestWhere(
       List<Sector> sectors, int startId, bool Function(Sector) predicate) {

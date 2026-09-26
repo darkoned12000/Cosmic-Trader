@@ -67,8 +67,7 @@ void main() {
 
     test('resolveCombat always sets an explicit outcome', () {
       final attacker = _ship(faction: FactionClass.pirate, seed: 1);
-      final defender =
-          _ship(faction: FactionClass.trader, seed: 2, hull: 1);
+      final defender = _ship(faction: FactionClass.trader, seed: 2, hull: 1);
       final outcome = CombatService.resolveCombat(attacker, defender);
       expect(outcome.result.defenderDestroyed, isTrue);
       expect(outcome.result.outcome, CombatOutcome.attackerVictory);
@@ -107,16 +106,13 @@ void main() {
   group('VendettaRecord lifecycle', () {
     test('create, refresh bumps and preserves first sighting', () {
       var memory = const NpcMemory();
-      memory = memory.withVendetta(
-          targetId: 'pilot-9', sectorId: 12, nowMs: 1000);
+      memory =
+          memory.withVendetta(targetId: 'pilot-9', sectorId: 12, nowMs: 1000);
       expect(memory.vendettas['pilot-9']!.grievance, 20);
       expect(memory.vendettas['pilot-9']!.firstSeenMs, 1000);
 
       memory = memory.withVendetta(
-          targetId: 'pilot-9',
-          sectorId: 30,
-          grievanceBump: 50,
-          nowMs: 2000);
+          targetId: 'pilot-9', sectorId: 30, grievanceBump: 50, nowMs: 2000);
       final v = memory.vendettas['pilot-9']!;
       expect(v.grievance, 70);
       expect(v.sectorId, 30);
@@ -131,11 +127,9 @@ void main() {
       expect(memory.vendettas['pilot-9']!.grievance, 100);
     });
 
-    test('prune drops stale grudges, keeps fresh, skips saves when clean',
-        () {
+    test('prune drops stale grudges, keeps fresh, skips saves when clean', () {
       var memory = const NpcMemory();
-      memory = memory.withVendetta(
-          targetId: 'old', sectorId: 1, nowMs: 0);
+      memory = memory.withVendetta(targetId: 'old', sectorId: 1, nowMs: 0);
       memory = memory.withVendetta(
           targetId: 'fresh',
           sectorId: 2,
@@ -149,13 +143,12 @@ void main() {
       expect(identical(clean, pruned), isTrue);
     });
 
-    test('vendettas survive JSON round-trip; legacy files default empty',
-        () {
+    test('vendettas survive JSON round-trip; legacy files default empty', () {
       var memory = const NpcMemory();
-      memory = memory.withVendetta(
-          targetId: 'pilot-9', sectorId: 12, nowMs: 1000);
-      final restored = NpcMemory.fromJson(
-          Map<String, dynamic>.from(memory.toJson()));
+      memory =
+          memory.withVendetta(targetId: 'pilot-9', sectorId: 12, nowMs: 1000);
+      final restored =
+          NpcMemory.fromJson(Map<String, dynamic>.from(memory.toJson()));
       expect(restored.vendettas['pilot-9']!.sectorId, 12);
       expect(restored.vendettas['pilot-9']!.grievance, 20);
 
@@ -165,4 +158,3 @@ void main() {
     });
   });
 }
-

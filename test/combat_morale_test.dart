@@ -116,8 +116,7 @@ void main() {
       );
       final outcome = CombatService.resolveCombat(attacker, defender);
       expect(outcome.result.outcome, isNot(CombatOutcome.defenderRetreat));
-      expect(outcome.result.outcome,
-          isNot(CombatOutcome.defenderSurrender));
+      expect(outcome.result.outcome, isNot(CombatOutcome.defenderSurrender));
     });
 
     test('trader defender surrenders tribute without exchange', () {
@@ -181,8 +180,7 @@ void main() {
       );
       final outcome = CombatService.resolveCombat(attacker, defender);
       expect(outcome.result.outcome, isNot(CombatOutcome.attackerRetreat));
-      expect(outcome.result.outcome,
-          isNot(CombatOutcome.defenderRetreat));
+      expect(outcome.result.outcome, isNot(CombatOutcome.defenderRetreat));
     });
 
     test('losing attacker breaks off when it can escape', () {
