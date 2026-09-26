@@ -38,7 +38,7 @@ Navigate a procedurally generated universe. Buy low, sell high. Manage your ship
 
 The game runs on Android, iOS, Web, Linux, macOS, and Windows — all from a single codebase.
 
-Current status: **Active development with a full feature base in place.** The core trading/navigation loop is complete alongside a full NPC AI system (personality-driven trading, combat, banking, patrols, port raiding), player-vs-NPC and NPC-vs-NPC combat, interactive tactical map, a working hardware emporium (equipment purchases live), port ownership & management, several mini-games, and a partially implemented planet system (claiming, colonies, leveling). Dynamic economy, planet automation, black market goods, and NPC repopulation are the next frontiers.
+Current status: **Active development with a full feature base in place.** The core trading/navigation loop is complete alongside a full NPC AI system (personality-driven trading, combat, banking, patrols, port raiding, energy management, outfitting, bounties), player-vs-NPC and NPC-vs-NPC combat, interactive tactical map, a working hardware emporium (equipment purchases live), port ownership & management, several mini-games, a dynamic 8-commodity economy (supply/demand pricing, drift, regional premiums, black market, standing effects), a bounty board, and a partially implemented planet system (claiming, colonies, leveling). Planet automation and NPC social depth are the next frontiers.
 
 ---
 
@@ -47,14 +47,14 @@ Current status: **Active development with a full feature base in place.** The co
 ### Implemented
 
 - **Procedural universe generation** — 8-phase algorithm creates a fully connected, balanced graph of sectors with ports, planets, NPCs, homeworlds, and anomalies
-- **Port trading** — Buy and sell commodities (minerals, organics, industrial by default) with finite supply and demand per port; data-driven `CommodityConfig` system makes adding new commodities trivial, and price/quantity ranges are editable in Settings
+- **Port trading** — Buy and sell 8 commodities (minerals, organics, industrial, food, ore, crystalline, munitions, contraband) with finite supply and demand per port; data-driven `CommodityConfig` system makes adding new commodities trivial, and price/quantity ranges are editable in Settings. Live pricing layers supply/demand depth, per-tick drift, homeworld/anomaly regionals, and faction-standing effects. Contraband trades only at black-market ports
 - **Galaxy map** — Interactive zoomable map with force-directed layout, tap-to-navigate, search, NPC position dots, and planet markers
 - **Planet system (partial)** — Planet tab with scanning (1 turn), claiming, resource/colonist/drone transfers, colony production display, defense readout, and Citadel leveling (Outpost → Citadel); one homeworld per major faction at generation
-- **Warp navigation** — Travel between connected sectors at the cost of 1 turn
+- **Warp navigation** — Travel between connected sectors at an energy cost scaled by distance and engine efficiency; refuel at Hardware Emporiums, trickle-charge with a deployable Solar Array, or call an Emergency Tow
 - **Ship status screen** — View hull, shields, cargo, weapons, drones, credits, equipment stats (damage, fire rate, defense, regeneration, speed, warp capacity, efficiency), installed modules, and scrap inventory
-- **Banking system** — Deposit and withdraw credits at 1% interest per 24 hours; view bank statistics across all players
+- **Banking system** — Deposit and withdraw credits at Trade-Guild-standing-based interest (~1% per 24 hours); view bank statistics across all players and NPCs
 - **Lottery mini-game** — Pick 6 unique digits (0-9), watch the animated draw, and win prizes up to 10M credits
-- **Computer hub** — Centralized tool access: Banking, Port Report, Knowledge Base, Ports Guide, and Faction Power Rankings
+- **Computer hub** — Centralized tool access: Banking, Port Report, Economy Report, Bounty Board, Knowledge Base, Ports Guide, and Faction Power Rankings (with Most Wanted feed)
 - **Port Report** — Browse all ports with commodity filters and price sorting (Best Buy / Best Sell)
 - **Knowledge Base** — In-game lore browser for factions (Duran Hegemony, Vinari Collective, Independent Traders Guild, Pirates)
 - **Settings** — Configurable universe generation parameters, per-commodity price/quantity editors, per-faction NPC densities, theme picker (15 color presets + dark/light), font family/size, video (fullscreen/resolution/animation speed), audio (music/SFX volume + folder)
@@ -75,15 +75,17 @@ Current status: **Active development with a full feature base in place.** The co
 - **Ship renaming** — Rename your ship via the Ship Status screen with an inline dialog
 - **NPC scan details** — Scan action reveals full NPC loadout (ship, class, faction, personality, hull/shields, weapons with damage)
 - **Combat system** — Full player-vs-NPC and NPC-vs-NPC combat resolution with shields, hull damage, loot, and death cries
-- **NPC AI engine** — Personality-driven autonomous NPCs with 12 personalities (3 per faction) across 4 factions; goal state machine (trade, explore, attack, bank, flee, patrol, raid, upgrade); BFS pathfinding
-- **NPC trading** — NPCs discover ports, evaluate trade routes by profit-per-hop, buy/sell commodities, bank profits
-- **NPC banking** — Autonomous deposit/withdraw decisions based on caution thresholds and credit balances
-- **NPC combat** — NPCs hunt hostile NPCs, raid weakly-defended ports, attack players (when aggressive and able to win)
-- **NPC distress signals** — Outmatched NPCs broadcast distress calls; allied NPCs respond
-- **NPC port owners** — ~40% of non-FedSpace ports have named NPC owners
+- **NPC AI engine** — Personality-driven autonomous NPCs with 12 personalities (3 per faction) across 4 factions; goal state machine (trade, explore, attack, bank, flee, patrol, raid, upgrade, refuel, port purchase); BFS pathfinding; energy management with refuel/solar/stranded logic; fear/hatred combat calculus; distress responses (capped); bounties (post, hunt, collect)
+- **NPC trading** — NPCs discover ports, evaluate trade routes by profit-per-hop (affordability/cooldown/standing aware), buy/sell commodities, bank profits, buy ports, and outfit their ships (repairs + equipment levels)
+- **NPC banking** — Autonomous deposit/withdraw decisions based on caution thresholds and credit balances; Guild interest accrues per tick
+- **NPC combat** — NPCs hunt hostile NPCs (greedy prefer bountied targets), raid beaten ports, attack players (fear/hatred calculus, distress-capped responses)
+- **NPC distress signals** — Outmatched NPCs broadcast distress calls; max 3 armed responders with trip budgets and en-route revalidation
+- **NPC port owners** — NPCs buy unowned ports, collect revenue, and upgrade defenses/storage; ~40% of non-FedSpace ports have named NPC owners at generation
 - **NPC death cries** — Faction-specific death broadcasts when NPCs are destroyed
-- **Faction Power Rankings** — Live report with pie/bar charts, top-10 pilots, power scores, combat stats, and wealth rankings
-- **Game tick system** — 30-second background timer processes all NPCs; turn replenishment, proximity-filtered event logging
+- **Faction Power Rankings** — Live report with pie/bar charts, top-10 pilots, power scores, combat stats, wealth rankings, Most Wanted feed, and copy-to-clipboard
+- **Economy Report** — Session trade metrics (volume, NPC share, avg-vs-base prices, faction net/loot/holdings), persisted across restarts
+- **Bounty Board** — Post bounties (custom reason, type-ahead pilot search), NPC survivors auto-post, killers collect (NPCs instantly, players via Claim), Federation auto-posts on notorious pilots
+- **Game tick system** — Adjustable background timer processes all NPCs; energy/refuel/repopulation/bounties/interest per tick
 - **Audio system** — Music/SFX playback with volume control, custom music folder scanning (5 tracks bundled), loop modes, equalizer visualizer
 - **Video settings** — Fullscreen toggle, resolution/window size, animation speed slider
 - **Font customization** — Font family/size picker with custom .ttf/.otf file loading
@@ -172,14 +174,19 @@ Each commodity has its own configurable price/quantity range via the `CommodityR
 | Minerals | 10 - 42 cr | 43 - 75 cr | 10,000 - 80,000 |
 | Organics | 80 - 114 cr | 115 - 150 cr | 5,000 - 70,000 |
 | Industrial | 160 - 229 cr | 230 - 300 cr | 3,000 - 60,000 |
+| Food | 5 - 22 cr | 23 - 40 cr | 8,000 - 60,000 |
+| Ore | 30 - 75 cr | 76 - 120 cr | 6,000 - 50,000 |
+| Crystalline | 200 - 324 cr | 325 - 450 cr | 1,000 - 8,000 |
+| Munitions | 150 - 274 cr | 275 - 400 cr | 2,000 - 15,000 |
+| Contraband | 300 - 549 cr | 550 - 800 cr | 500 - 5,000 |
 
-Sell and buy ranges are **guaranteed non-overlapping** — the mid-point (`splitPoint`) divides each commodity's total `[priceMin, priceMax]` range so the highest sell price is always below the lowest buy price. Every trade route is inherently profitable.
+Sell and buy ranges are **guaranteed non-overlapping at base** — the mid-point (`splitPoint`) divides each commodity's total `[priceMin, priceMax]` range so the highest base sell price is always below the lowest base buy price. Live effective prices layer cash, supply/demand, drift, regionals, and standing on top (capped), so near-split routes can occasionally invert into real losses.
 
 ### Player starting values
 
 | Setting | Default |
 |---------|---------|
-| Turns | 1000 |
+| Initial Energy | 1000 |
 | Credits | 1,000,000 |
 | Cargo Holds | 50 |
 | Drones | 100 |
@@ -242,7 +249,7 @@ Each commodity's `[priceMin, priceMax]` range is split at the mid-point (`splitP
 - **Sell price** (what you pay to buy from the port) = random in `[priceMin, splitPoint)` — the **lower half**
 - **Buy price** (what you receive when selling to the port) = random in `[splitPoint, priceMax]` — the **upper half**
 
-This guarantees `maxSellPrice < minBuyPrice` for every commodity at every port. **Every trade route is inherently profitable.**
+This guarantees `maxSellPrice < minBuyPrice` for every commodity at every port **at base prices**. Live effective prices layer supply/demand depth, per-tick drift, homeworld/anomaly regionals, and faction standing on top, so near-split routes can occasionally invert into real (logged, self-correcting) losses. Typical runs still net 30–300%+.
 
 **Making a profit:**
 
@@ -290,7 +297,7 @@ Your ship has the following stats visible on the Ship screen:
 | Shields | Energy shields |
 | Cargo | Used / Max cargo holds |
 | Drones | Available / Max drones |
-| Turns | Remaining / Max actions |
+| Energy | Remaining / Max ship energy (warp, scan, actions spend it; refuel at emporiums) |
 | Credits | On-hand credits |
 | Equipment | Hull / Shield / Engine type + installed level |
 | Modules | Installed modules (cargo expander, scanner, cloaking, etc.) |
@@ -437,11 +444,11 @@ Listings are filtered by your faction. Purchases cost credits **and** scrap meta
 - [x] Galaxy map NPC presence dots (faction-colored, updated per tick)
 - [x] Faction Power Rankings report (pie/bar charts, top-10, power scores)
 - [x] Action log (filtered event log with proximity-aware NPC events)
-- [ ] **NPC repopulation** — Spawn new NPCs over time to maintain faction density (homeworld fields exist; wiring pending)
+- [ ] **NPC repopulation** — Homeworld control-gated respawns keep factions alive (extinction reversible by recapture); production-timer-driven spawning still pending
 - [ ] **Damage-based fleeing** — NPCs retreat when hull drops below caution-scaled threshold
 - [ ] **Low-aggression immediate flee** — NPCs with aggression<0.3 flee from any hostile presence
-- [ ] **Faction standing tracking** — Player actions (kills, trades, port purchases) affect reputation; combat checks standings
-- [ ] **Player faction reputation UI** — Visible standing meter for each faction with effects shown
+- [x] **Faction standing tracking** — Player/NPC actions (kills, trades, hacks, bounties) affect reputation; pricing, access, banking, combat all consume it
+- [x] **Player faction reputation UI** — Standing meters per faction in Ship view with effects (prices, interest, refusals)
 
 ### Phase 3: Ship Equipment & Enhancements (Partial)
 - [x] **Equipment purchasing** — Weapons, hull, shields, engines, and modules purchased from Hardware Emporiums (credits + scrap); services and scrap exchange live
@@ -455,16 +462,12 @@ Listings are filtered by your faction. Purchases cost credits **and** scrap meta
 - [ ] **Hacking computers** — Improve hacking mini-game success rates
 - [ ] **Insurance system** — Pay premium to recover partial credits on ship destruction
 
-### Phase 4: Economy, Ports & Black Market (Planned)
-- [ ] **Full port upgrade tree** — Storage capacity, deeper defense/pricing influence, revenue generation
-- [ ] **Dynamic commodity prices** — Prices fluctuate per tick based on:
-  - Global supply/demand trends (weighted random walk)
-  - Faction presence (faction-owned ports get trade bonuses)
-  - Local effects (anomalies boost/depress adjacent sectors)
-  - Player activity (heavy trading shifts local prices)
+### Phase 4: Economy, Ports & Black Market (Mostly Complete)
+- [x] **Full port upgrade tree** — Storage capacity, defense upgrades, revenue generation (player + NPC owners)
+- [x] **Dynamic commodity prices** — Supply/demand depth pricing, per-tick drift with mean reversion, homeworld/anomaly regionals, standing effects, Guild-rate banking
 - [ ] **Faction economic effects** — Trade embargoes, faction trade routes, faction-subsidized commodities
-- [ ] **Universe anomaly economy** — Anomaly types affect sector prices (nebula→organics premium, asteroid→minerals premium)
-- [ ] **Black market goods** — Contraband commodities with seizure risk, NPC enforcement patrols, high profit margins
+- [x] **Universe anomaly economy** — Anomaly boom/bust on adjacent sectors
+- [x] **Black market goods** — Contraband at fenced ports, lootable from kills, NPCs trade it
 - [ ] **Port resource quantity evolution** — Supply/demand regenerates over time based on connected sector traffic
 - [ ] **Trade route automation** — Set up recurring buy/sell routes between owned/known ports
 
@@ -480,7 +483,7 @@ Listings are filtered by your faction. Purchases cost credits **and** scrap meta
 - [ ] Planet-to-port supply chains (colony production feeds adjacent port prices)
 - [ ] Colonist system refinement (3 colonist types matching factions — each gives different bonuses)
 - [ ] Planet colonization by NPC factions (autonomous empire building)
-- [ ] Homeworld NPC repopulation + backup homeworld claiming
+- [x] Homeworld NPC repopulation (control-gated floors; production-timer spawning still pending) + backup homeworld claiming
 - [ ] Per-tick automated production engine
 
 ### Phase 6: Social, Events & Galaxy Simulation (Planned)
@@ -546,7 +549,7 @@ lib/
 - **Versioned async writes** — Counter prevents stale writes from overwriting newer state
 - **IndexedStack for tabs** — Preserves tab state while navigating; Computer and Planet keys regenerate on tab-select to reset screens
 - **Adaptive layout** — `LayoutBuilder` + breakpoints for mobile vs desktop
-- **Run checks** — `flutter analyze` is clean (7 informational deprecation hints); `flutter test` passes (2 widget tests)
+- **Run checks** — `flutter analyze` is clean; `flutter test` passes (177 tests)
 
 ---
 

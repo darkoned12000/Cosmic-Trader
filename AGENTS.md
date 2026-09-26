@@ -166,18 +166,18 @@ lib/
                                      prefix so AssetSource keys don't double-prefix to silence)
     npc_ai/
       npc_ai_service.dart         -- main NPC AI orchestrator: goal selection, pathfinding, action execution
-      npc_goal.dart               -- NpcGoalType enum (tradeRoute/explore/attack/bank/flee/patrol/raid/upgrade)
-      npc_memory.dart             -- PortInfo + NpcMemory, visited sector/port recall for trade route evaluation
+      npc_goal.dart               -- NpcGoalType enum (tradeRoute/explore/attack/bank/flee/patrol/raid/upgrade/refuelEnergy/buyPort)
+      npc_memory.dart             -- PortInfo (full pricing snapshots) + NpcMemory, visited sector/port recall, failed-route cooldowns, standings
       npc_personality.dart        -- 12 personality archetypes (3 per faction x 4 factions), trait weights
       npc_death_cries.dart        -- faction-specific death broadcast messages
-      banking_ai.dart             -- NPC deposit/withdraw decisions based on caution/credit thresholds
-      trade_evaluator.dart        -- TradeRoute evaluation, profit-per-hop analysis, nearest-port BFS
-      pathfinding_service.dart    -- BFS shortest path between sectors
-      combat_service.dart         -- combat resolution engine, damage/loot/faction-standing calculation
-      port_combat_service.dart    -- port combat resolution engine with defense stats
+      banking_ai.dart             -- NPC deposit/withdraw decisions + shared Guild interest-rate math
+      trade_evaluator.dart        -- TradeRoute evaluation, profit-per-hop analysis, nearest-port BFS, affordability + cooldown filters
+      pathfinding_service.dart    -- BFS shortest path between sectors (id-keyed lookup)
+      combat_service.dart         -- combat resolution engine, damage/loot/faction-standing calculation, siege estimate, CombatOutcome contract, morale (trigger/eligibility/resolution)
+      port_combat_service.dart    -- port combat resolution engine (shared siege core) with defense stats
 ```
 
-## File inventory (79 source files)
+## File inventory (102 source files, 35 test files, 177 tests passing)
 
 | Path | Role |
 |------|------|
@@ -187,21 +187,24 @@ lib/
 | `lib/core/tw_layout.dart` | Responsive layout breakpoints |
 | `lib/core/faction_colors.dart` | Single source of truth for the faction palette (`factionColor(FactionClass)` + `FactionPalette`) |
 | `lib/core/npc_name_generator.dart` | Procedural NPC pilot/ship name generation |
-| `lib/data/models/player.dart` | Player + ship stats + equipment + modules + scrap + banking + faction standings + hack history/codex/bans + energy/maxEnergy + solarArrayDeployed (B1 turns replacement; legacy turns kept for old saves) |
-| `lib/data/models/commodity.dart` | CommodityConfig + CommodityRegistry (data-driven economy) |
+| `lib/data/models/player.dart` | Player + ship stats + equipment + modules + scrap + banking + faction standings + hack history/codex/bans + energy/maxEnergy + solarArrayDeployed + recentKills (turns fully removed; legacy `turns` keys migrate in `fromJson`) |
+| `lib/data/models/commodity.dart` | CommodityConfig + CommodityRegistry (8 goods: minerals/organics/industrial/food/ore/crystalline/munitions/contraband; split-point pricing) |
 | `lib/data/models/sector.dart` | Sector content container + structured port/planet + npcShips counts |
 | `lib/data/models/planet.dart` | Enhanced Planet model (10 types, colonies, levels, defense, images) |
-| `lib/data/models/port.dart` | Port + buy/sell prices + supply/demand + defense + ownership |
+| `lib/data/models/port.dart` | Port + buy/sell prices + supply/demand + defense + ownership (id + name) + persisted pricing layers (drift/regional/anomaly) + standing multipliers + service-refusal rule |
+| `lib/data/models/bounty.dart` | Bounty + PaidBounty (target/poster/amount/reason, poster faction, JSON round-trip) |
 | `lib/data/models/game_settings.dart` | Universe generation config + economy + video/audio/font prefs |
 | `lib/data/models/universe_generator.dart` | 8-phase generation algorithm (1258 lines) |
 | `lib/data/models/faction.dart` | Faction model + lore data + heroes |
 | `lib/data/models/faction_standing.dart` | Inter-faction reputation tracking |
-| `lib/data/models/npc_ship.dart` | NPC ship model (identity, stats, equipment, AI state) |
+| `lib/data/models/npc_ship.dart` | NPC ship model (identity, stats, equipment, AI state, energy/solar, clearGoal semantics) |
 | `lib/data/models/ship_templates.dart` | Ship class types + per-faction ship definitions (12 ships) |
 | `lib/data/models/hardware_data.dart` | Hardware item catalog (services, hulls, shields, engines, weapons, modules) |
 | `lib/data/models/ship_equipment_types.dart` | Equipment type enums + stat maps |
 | `lib/data/models/sector_knowledge.dart` | per-sector player knowledge (discovered, visited, bookmarked, notes) |
 | `lib/data/models/port_defense_config.dart` | port defense stats per level (shield, firepower, special abilities) |
+| `lib/data/storage/bounty_storage.dart` | Bounty file I/O (`bounties.json`), failures logged not swallowed |
+| `lib/data/storage/economy_metrics_storage.dart` | Economy snapshot file I/O (restore on launch, save on exit) |
 | `lib/data/storage/player_storage.dart` | Players file I/O |
 | `lib/data/storage/universe_storage.dart` | Universe file I/O |
 | `lib/data/storage/settings_storage.dart` | Settings file I/O |
@@ -216,11 +219,14 @@ lib/
 | `lib/screens/galaxy_map.dart` | Interactive galaxy map using extracted painter/hit-test helpers |
 | `lib/screens/port_screen.dart` | Trading + mini-games + hardware emporium |
 | `lib/screens/port_management_screen.dart` | Full port management (defense upgrades, pricing, revenue, rename) |
-| `lib/screens/computer_screen.dart` | Computer tool hub (5 tools) |
-| `lib/screens/settings_screen.dart` | Universe gen form + commodity editor + theme/audio/video/font |
+| `lib/screens/computer_screen.dart` | Computer tool hub (7 tools: Banking, Port Report, Economy Report, Bounty Board, Knowledge Base, Ports Guide, Rankings) |
+| `lib/screens/settings_screen.dart` | Universe gen form + commodity editor + theme/audio/video/font + Automation (dev console, tick controls, grants/drains, diagnostics) |
+| `lib/screens/economy_report_screen.dart` | Session trade metrics report (totals, avg-vs-base, faction net/loot/holdings, copy, reset) |
+| `lib/screens/bounty_board_screen.dart` | Bounty Board (active/claim/post with type-ahead, paid history) |
 | `lib/screens/knowledge_base_screen.dart` | Faction lore browser |
 | `lib/screens/faction_rankings_screen.dart` | Leaderboard with faction tabs |
 | `lib/screens/ports_knowledge_base.dart` | Port mechanics reference guide |
+| `lib/widgets/automation_console_widget.dart` | Settings → Automation dev console (event-bus viewer + tick/grant/drain/diagnostics controls) |
 | `lib/widgets/star_field.dart` | Animated background |
 | `lib/widgets/lottery_widget.dart` | Lottery mini-game |
 | `lib/widgets/hacking_widget.dart` | Hacking mini-game |
@@ -254,14 +260,18 @@ lib/
 | `lib/widgets/shared/stat_bar.dart` | Shared `StatBar` — optional icon + label + progress bar + value row (inline) or label/value above bar (stacked); hull/shields/cargo, planet & faction bars |
 | `lib/widgets/shared/hud_pill.dart` | Shared `HudPill` — tiny rounded badge (port/faction/sabotaged/stat-chip tags) with radius/padding/font/icon overrides |
 | `lib/widgets/shared/data_table_shell.dart` | Shared `DataTableShell` — bordered dense table (header + divider-separated rows) |
-| `lib/services/game_tick_service.dart` | 30s background tick timer |
+| `lib/services/game_tick_service.dart` | Background timer (adjustable interval, re-entrancy guard, per-NPC bulkhead + 3-strike reset, repopulation, Fed bounties, NPC interest, multi-player attack check) |
+| `lib/services/game_event_log.dart` | Central categorized event bus (2000-entry ring + all-time counters, debugPrint mirror) |
+| `lib/services/economy_metrics.dart` | Session trade metrics (persisted across restarts; server health-feed payload) |
+| `lib/services/bounty_board.dart` | Bounty post/stack/pay/claim singleton (kill-verified claims, Fed auto-post rule) |
+| `lib/services/repopulation_service.dart` | Homeworld control-gated respawns (extinction reversible by recapture) |
+| `lib/services/tow_service.dart` | Emergency Tow recovery — nearest Hardware Emporium tow with port fallback, distance-scaled fee, emergency energy |
 | `lib/services/energy_service.dart` | B1 energy economy rules (warp/scan costs by distance + engine efficiency, refuel pricing/clamping) |
 | `lib/services/salvage_service.dart` | Scrap drop rules for destroyed NPC ships (class-scaled metal/tech) used by combat |
-| `lib/services/tow_service.dart` | Emergency Tow recovery — nearest Hardware Emporium tow with port fallback, distance-scaled fee, emergency energy |
 | `lib/services/audio_service.dart` | Audio playback engine (music/sfx, folder scanning, loop mode, equalizer) |
 | `lib/services/npc_ai/npc_ai_service.dart` | NPC AI orchestrator |
-| `lib/services/npc_ai/npc_goal.dart` | NPC goal types |
-| `lib/services/npc_ai/npc_memory.dart` | NPC port/sector memory |
+| `lib/services/npc_ai/npc_goal.dart` | NPC goal types (trade/attack/bank/flee/patrol/raid/upgrade/refuel/buyPort) |
+| `lib/services/npc_ai/npc_memory.dart` | Port memory (full pricing snapshots) + visits, hazards, threats, standings, route cooldowns, vendettas (memory-only grudge records) |
 | `lib/services/npc_ai/npc_personality.dart` | 12 personality archetypes |
 | `lib/services/npc_ai/npc_death_cries.dart` | Faction-specific death cries |
 | `lib/services/npc_ai/banking_ai.dart` | NPC banking decisions |
@@ -288,38 +298,46 @@ Seeding: `GameSettings.seed` → `Random(seed)`. Seed 0 → time-based replaceme
 ### Economy model
 
 Data-driven commodity system via `CommodityConfig` + `CommodityRegistry` (single source of truth in `commodity.dart`).
-Adding a commodity requires just 2 entries in `commodity.dart`.
+Adding a commodity requires just 2 entries in `commodity.dart` (+ mirror in `defaultsMap`).
 
-Three default commodities: minerals, organics, industrial.
+Eight goods: minerals, organics, industrial, food, ore, crystalline, munitions, contraband.
 Each commodity has a `[priceMin, priceMax]` range split at the mid-point (`splitPoint`):
 - **Sell price** (player buys from port) = random in `[priceMin, splitPoint)` — lower half
 - **Buy price** (player sells to port) = random in `[splitPoint, priceMax]` — upper half
 
-This **guarantees** `maxSellPrice < minBuyPrice` — every trade route is inherently profitable.
+Base prices **guarantee** `maxSellPrice < minBuyPrice`, but live effective prices layer cash-ratio × supply/demand depth × drift × regional/anomaly × standing (capped [0.25, 4.0] on the multiplier), so near-split routes can invert into real (logged, self-correcting) losses.
 
-Ports use dynamic type strings (N characters, one per commodity). Each character = `S` (port sells, player buys) or `B` (port buys, player sells). Generated at port-creation time with at least one `S` and one `B`.
+Ports use dynamic type strings (N characters, one per commodity). Each character = `S` (port sells, player buys), `B` (port buys, player sells), or `X` (untraded — contraband at law-abiding ports, padding on old saves). Generated at port-creation time with at least one `S` and one `B` among legal goods.
 
-A port never buys and sells the same commodity.
+A port never buys and sells the same commodity. Contraband trades only at free/independent black-market ports (~30%).
 
 Current defaults (editable in the Settings → Commodity Economy section):
 - Minerals: 10-75 cr, 10,000-80,000 qty
 - Organics: 80-150 cr, 5,000-70,000 qty
 - Industrial: 160-300 cr, 3,000-60,000 qty
+- Food: 5-40 cr, 8,000-60,000 qty
+- Ore: 30-120 cr, 6,000-50,000 qty
+- Crystalline: 200-450 cr, 1,000-8,000 qty
+- Munitions: 150-400 cr, 2,000-15,000 qty
+- Contraband: 300-800 cr, 500-5,000 qty
 
 ### NPC AI engine
 
-Autonomous NPCs with 12 personality archetypes (3 per faction) across 4 factions (Duran, Vinari, Trader, Pirate). Goal state machine with weighted random selection:
+Autonomous NPCs with 12 personality archetypes (3 per faction) across 4 factions (Duran, Vinari, Trader, Pirate). Goal state machine with weighted random selection (null-instantiating picks are skipped, not stalling):
 
-- **Goals**: tradeRoute, explore, attack, bankDeposit, bankWithdraw, patrol, flee, upgradeEquipment, raidPort
+- **Goals**: tradeRoute (incl. sell-first for full/nib holds), explore, attack, bankDeposit, bankWithdraw, patrol (5-leg expiry), flee, upgradeEquipment (repairs + levels + arrays), raidPort (siege-gated), refuelEnergy (discovered emporiums only), buyPort
+- **Guards**: banking/distress/refuel only preempt interruptible (explore/patrol/none) goals; refuel breaks committed legs below 10%; dead goals never steer movement; failed routes cool 5 min
 - **Personality config**: aggression (0-1), greed (0-1), caution (0-1), explorationDrive, maxTravelDistance
-- **Pathfinding**: BFS shortest path via `PathfindingService`
-- **Trading**: Port discovery, profit-per-hop route evaluation, buy/sell commodities, bank profits
-- **Banking**: Autonomous deposit/withdraw based on caution thresholds and credit balances
-- **Combat**: NPCs hunt hostiles, raid weakly-defended ports, attack players (aggression + power check)
-- **Distress signals**: Outmatched NPCs broadcast; allied NPCs respond
-- **Port owners**: ~40% of non-FedSpace ports have named NPC owners
+- **Pathfinding**: BFS shortest path via `PathfindingService` (id-keyed)
+- **Trading**: Port discovery, profit-per-hop route evaluation (affordability + cooldown + standing aware), buy/sell commodities, bank profits
+- **Banking**: Autonomous deposit/withdraw based on caution thresholds and credit balances; Guild interest for NPCs and players
+- **Combat**: NPCs hunt hostiles (greedy prefer bounties), raid beaten ports, attack players (aggression + power + fear/hatred calculus)
+- **Fear/hatred**: Notoriety inflates perceived power (deterrence + sector-clearing); standing ≤ −50 substitutes for hostility at 1.5× odds
+- **Distress signals**: Outmatched NPCs broadcast; max 3 armed responders with trip budgets; en-route revalidation
+- **Port owners**: NPCs buy unowned ports, collect revenue, upgrade defenses/storage; ownership keyed by stable id
 - **Death cries**: Faction-specific broadcasts when NPCs are destroyed
-- **Processing**: `GameTickService` runs every 30s, batches NPC turns, proximity-filters events to player sector
+- **Repopulation**: Homeworld control-gated respawns (extinction reversible)
+- **Processing**: `GameTickService` (adjustable interval, re-entrancy guard, per-NPC error bulkhead, Fed bounties, NPC interest) batches NPC turns, proximity-filters events to player sectors
 
 ### Combat system
 
@@ -414,9 +432,11 @@ File-based JSON in app documents directory:
 - `universe.json` — list of Sector
 - `settings.json` — persisted GameSettings (incl. commodity configs, video/font/audio prefs)
 - `npcs.json` — NPC ship states
+- `bounties.json` — active + recently paid bounties
+- `economy_metrics.json` — cumulative trade metrics snapshot (restore on launch, save on exit)
 - Per-player exploration file — visited-sector timestamps, bookmarks, notes
 
-`UniverseStorage.ensureUniverse()` fires at startup (fire-and-forget).
+`UniverseStorage.ensureUniverse()` fires at startup (fire-and-forget). NPC roster persistence is awaited by the caller, never fire-and-forget (a race that once emptied fresh universes).
 
 ## Assets
 
@@ -434,21 +454,22 @@ Bundled assets (declared in `pubspec.yaml`):
 - `path_provider` ^2.1.3 — file paths
 - `uuid` ^4.4.0 — ID generation
 - `crypto` ^3.0.3 — password hashing
-- `provider` ^6.1.2 — state management for sector view widgets
 - `flutter_svg` ^2.2.0 — SVG rendering
 - `file_picker` ^8.1.7 — file/folder picker for music directory
 - `audioplayers` ^6.6.0 — audio playback (music/SFX)
 - `window_manager` ^0.4.3 — desktop window management (fullscreen, size)
+- `screen_retriever` ^0.2.0 — desktop display probing for UI-scale auto-detect
 - `cupertino_icons` ^1.0.8
 - `flutter_lints` ^5.0.0 — lint rules
+- (`provider` was removed — state is callbacks + `ValueNotifier`/`ChangeNotifier` only)
 
 ## Known issues / technical debt
 
 - `core/theme.dart` (TWTheme) is unused — theme built inline in main.dart from ThemeService
-- `flutter analyze` passes with 0 errors/warnings; 7 informational deprecation hints remain (`galaxy_map.dart` `translate`, `register_screen.dart` `Radio.groupValue/onChanged` ×2, `tactical_map.dart` and `video_settings_widget.dart` `activeColor`)
+- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (177 tests) before committing
 - Repeated UI patterns (cards, stat bars, pills) duplicated across screens → **A2 shared widget library**: `lib/widgets/shared/` ships `PanelCard`, `StatBar` (inline + stacked layouts), `HudPill` (radius/padding/font/icon overrides), `DataTableShell` (all density-aware via `UiScale.spacing()`). Adopted in `ship_status.dart` (5 panels), `port_trade_view.dart` (pills + trade table), `ship_status_summary.dart` (4 bars), `planet_screen.dart` (resource/defense bars), `faction_rankings_screen.dart` (stat pills). Screens whose cards use distinct visual families (radius-12 banded headers, padding-20 accent cards, ExpansionTile settings cards, hero/terminal styles) were audited and intentionally left as-is rather than forced.
 - No lint/format CI pipeline
-- Test coverage is minimal: `test/widget_test.dart` has 2 smoke tests only
+- Test coverage: 177 tests across 35 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
 - No audio asset files shipped in the past — this is no longer the case; 5 tracks are now bundled
 - Sector `planetType` string removed from `Sector` (structured `Planet` object used instead) — old saves are handled by `fromJson` defaults
 - `PlanetScreen` "Attack" action currently only writes to the action log (combat pending)

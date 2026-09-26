@@ -119,6 +119,21 @@ class NpcAiService {
   /// distress) comes up. Trade/attack/raid carry multi-leg state in
   /// goal.params — clobbering them mid-route strands cargo and wastes trips,
   /// so they run to completion unless fleeing or bone-dry (see below).
+  ///
+  /// Goal-interruption policy (locked 2026-09-26, Phase C contract):
+  ///
+  /// | Current state              | Incoming event                    | Behavior              |
+  /// |----------------------------|-------------------------------------|-----------------------|
+  /// | Idle / exploring           | vendetta / distress / banking       | may take new goal     |
+  /// | Patrol (interruptible)     | any                                 | may redirect          |
+  /// | Trading (committed route)  | any                                 | preserve unless floor |
+  /// | Refueling (critical)       | any                                 | never abandon         |
+  /// | Fleeing                    | any, incl. revenge target visible   | keep escaping         |
+  /// | Actively fighting          | reinforcement request               | combat rules, no swap |
+  /// | Dead/completed/failed goal | any                                 | clear/resolve first   |
+  ///
+  /// Vendettas (see [NpcMemory.vendettas]) influence selection through
+  /// this policy — they never overwrite a committed goal directly.
   static bool _isInterruptible(NpcShip npc) {
     final type = npc.currentGoal?.type;
     return type == null ||
@@ -1082,6 +1097,22 @@ class NpcAiService {
     }
 
     if (target == null) {
+      // Distress responder arriving to an empty sector: if the defender
+      // is gone too (fled, or cleared by another responder), the fight is
+      // over — clear the signal so no further wings converge on nowhere,
+      // then stand down. (Defender death already clears it at kill time.)
+      if (distressFor != null) {
+        final defenderPresent = allNpcs.any((n) =>
+            n.id == distressFor &&
+            n.currentSectorId == npc.currentSectorId &&
+            !n.isDestroyed);
+        if (!defenderPresent) {
+          _activeDistressSignals.remove(distressFor);
+          GameEventLog.global
+              .combat('[${npc.pilotName}] Arrived to an empty fight in Sector '
+                  '${npc.currentSectorId} — distress call cleared');
+        }
+      }
       GameEventLog.global
           .combat('[${npc.pilotName}] Attack: Target $targetId not found in '
               'Sector ${npc.currentSectorId}');
@@ -1140,6 +1171,35 @@ class NpcAiService {
         killerName: result.attacker.pilotName,
         targetName: target.pilotName,
       );
+      // Post-kill retaliation intent (C1c): same-faction witnesses in
+      // this sector record the killer. Memory only — vendetta goals and
+      // pursuit arrive in C2, and goal changes still go through the
+      // interruption policy, so this never hijacks a committed goal.
+      // Runs on every kill, independent of any bounty payout.
+      var witnesses = 0;
+      for (int i = 0; i < allNpcs.length; i++) {
+        final witness = allNpcs[i];
+        if (witness.id == target.id ||
+            witness.id == npc.id ||
+            witness.isDestroyed ||
+            witness.faction != target.faction ||
+            witness.currentSectorId != npc.currentSectorId) {
+          continue;
+        }
+        allNpcs[i] = witness.copyWith(
+          memory: witness.memory.withVendetta(
+            targetId: npc.id,
+            sectorId: npc.currentSectorId,
+            grievanceBump: 40,
+          ),
+        );
+        witnesses++;
+      }
+      if (witnesses > 0) {
+        GameEventLog.global
+            .combat('$witnesses ${target.faction.name} witness(es) recorded '
+                '${npc.pilotName} over Sector ${npc.currentSectorId}');
+      }
       if (paid > 0) {
         var enriched = result.attacker.copyWith(
           credits: result.attacker.credits + paid,

@@ -141,6 +141,65 @@ class HazardInfo {
   }
 }
 
+/// One remembered attacker. Keyed by stable pilot id in
+/// [NpcMemory.vendettas] — never by display name (names can collide across
+/// seeded generators).
+///
+/// This is the memory layer only: it records what happened. Intent
+/// (revenge / avoid / demand) derives from it in C2, and `NpcGoal`
+/// changes still go through the interruption policy — a grudge never
+/// overwrites a committed goal by itself.
+class VendettaRecord {
+  /// Sector where the target was last seen.
+  final int sectorId;
+
+  /// Epoch ms of the first recorded encounter.
+  final int firstSeenMs;
+
+  /// Epoch ms of the most recent encounter/sighting.
+  final int lastSeenMs;
+
+  /// 0–100. Bumped on hostile contact, decays with time (see
+  /// [NpcMemory.vendettaMemory]).
+  final int grievance;
+
+  const VendettaRecord({
+    required this.sectorId,
+    required this.firstSeenMs,
+    required this.lastSeenMs,
+    this.grievance = 0,
+  });
+
+  VendettaRecord refreshed({
+    required int sectorId,
+    required int nowMs,
+    int grievanceBump = 0,
+  }) {
+    return VendettaRecord(
+      sectorId: sectorId,
+      firstSeenMs: firstSeenMs,
+      lastSeenMs: nowMs,
+      grievance: (grievance + grievanceBump).clamp(0, 100),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'sectorId': sectorId,
+        'firstSeenMs': firstSeenMs,
+        'lastSeenMs': lastSeenMs,
+        'grievance': grievance,
+      };
+
+  factory VendettaRecord.fromJson(Map<String, dynamic> json) {
+    return VendettaRecord(
+      sectorId: (json['sectorId'] as num?)?.toInt() ?? 0,
+      firstSeenMs: (json['firstSeenMs'] as num?)?.toInt() ?? 0,
+      lastSeenMs: (json['lastSeenMs'] as num?)?.toInt() ?? 0,
+      grievance: ((json['grievance'] as num?)?.toInt() ?? 0).clamp(0, 100),
+    );
+  }
+}
+
 class NpcMemory {
   final Set<int> visitedSectors;
   final Map<int, PortInfo> discoveredPorts;
@@ -158,6 +217,13 @@ class NpcMemory {
   /// Cooldown before a failed route becomes eligible again.
   static const Duration routeCooldown = Duration(minutes: 5);
 
+  /// Encounter memory ("pilotId" → record). Grudges older than
+  /// [vendettaMemory] (by last sighting) are dropped by [pruneVendettas].
+  final Map<String, VendettaRecord> vendettas;
+
+  /// How long a grudge survives without fresh contact.
+  static const Duration vendettaMemory = Duration(hours: 6);
+
   const NpcMemory({
     this.visitedSectors = const {},
     this.discoveredPorts = const {},
@@ -167,6 +233,7 @@ class NpcMemory {
     this.lastTradeTime,
     this.lastBankTime,
     this.failedRoutes = const {},
+    this.vendettas = const {},
   });
 
   factory NpcMemory.empty() => const NpcMemory();
@@ -180,6 +247,7 @@ class NpcMemory {
     DateTime? lastTradeTime,
     DateTime? lastBankTime,
     Map<String, int>? failedRoutes,
+    Map<String, VendettaRecord>? vendettas,
   }) {
     return NpcMemory(
       visitedSectors: visitedSectors ?? this.visitedSectors,
@@ -190,6 +258,7 @@ class NpcMemory {
       lastTradeTime: lastTradeTime ?? this.lastTradeTime,
       lastBankTime: lastBankTime ?? this.lastBankTime,
       failedRoutes: failedRoutes ?? this.failedRoutes,
+      vendettas: vendettas ?? this.vendettas,
     );
   }
 
@@ -258,6 +327,45 @@ class NpcMemory {
     };
   }
 
+  /// Records hostile contact with [targetId] (stable pilot id): creates
+  /// or refreshes the vendetta, bumping grievance. First sighting time is
+  /// preserved across refreshes.
+  NpcMemory withVendetta({
+    required String targetId,
+    required int sectorId,
+    int grievanceBump = 20,
+    int? nowMs,
+  }) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    final updated = Map<String, VendettaRecord>.from(vendettas);
+    final existing = updated[targetId];
+    updated[targetId] = existing?.refreshed(
+          sectorId: sectorId,
+          nowMs: now,
+          grievanceBump: grievanceBump,
+        ) ??
+        VendettaRecord(
+          sectorId: sectorId,
+          firstSeenMs: now,
+          lastSeenMs: now,
+          grievance: grievanceBump.clamp(0, 100),
+        );
+    return copyWith(vendettas: updated);
+  }
+
+  /// Drops grudges with no contact inside [vendettaMemory]. Returns `this`
+  /// when nothing expired so callers can skip pointless saves.
+  NpcMemory pruneVendettas({int? nowMs}) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    final cutoff = now - vendettaMemory.inMilliseconds;
+    if (vendettas.values.every((v) => v.lastSeenMs >= cutoff)) {
+      return this;
+    }
+    final updated = Map<String, VendettaRecord>.from(vendettas)
+      ..removeWhere((_, v) => v.lastSeenMs < cutoff);
+    return copyWith(vendettas: updated);
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'visitedSectors': visitedSectors.toList(),
@@ -272,6 +380,7 @@ class NpcMemory {
       'lastTradeTime': lastTradeTime?.toIso8601String(),
       'lastBankTime': lastBankTime?.toIso8601String(),
       'failedRoutes': failedRoutes.map((k, v) => MapEntry(k, v)),
+      'vendettas': vendettas.map((k, v) => MapEntry(k, v.toJson())),
     };
   }
 
@@ -309,6 +418,13 @@ class NpcMemory {
           : null,
       failedRoutes: (json['failedRoutes'] as Map?)?.map(
             (k, v) => MapEntry(k as String, (v as num).toInt()),
+          ) ??
+          const {},
+      vendettas: (json['vendettas'] as Map?)?.map(
+            (k, v) => MapEntry(
+              k as String,
+              VendettaRecord.fromJson((v as Map).cast<String, dynamic>()),
+            ),
           ) ??
           const {},
     );

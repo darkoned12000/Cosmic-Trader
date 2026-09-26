@@ -8,6 +8,7 @@ import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
+import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
@@ -49,6 +50,10 @@ class _CombatScreenState extends State<CombatScreen>
   int _dronesToSend = 0;
   int _dronesLost = 0;
   int _dronesReturned = 0;
+
+  /// Pending surrender tribute offered by the NPC (C1b parley). While set,
+  /// the action row offers Accept/Refuse instead of FIRE/FLEE.
+  int? _parleyOffer;
 
   static const _droneHp = 15;
 
@@ -296,6 +301,75 @@ class _CombatScreenState extends State<CombatScreen>
       _endCombat(victory: false);
       return;
     }
+
+    // C1b morale: the NPC re-evaluates willingness every round, on the
+    // post-exchange state both sides just produced.
+    final morale = CombatService.assessMorale(
+      self: _npc,
+      selfPower: _npcFirepower.toDouble(),
+      foePower: _playerFirepower.toDouble(),
+      foeHullFraction:
+          _player.maxHull <= 0 ? 0.0 : playerHull / _player.maxHull,
+      isDefender: true,
+    );
+    if (morale.outcome == CombatOutcome.defenderSurrender) {
+      final tribute = CombatService.surrenderTribute(_npc.credits);
+      if (tribute <= 0) {
+        // Broke traders run instead of offering nothing.
+        _attemptNpcRetreat();
+      } else {
+        setState(() => _parleyOffer = tribute);
+        _combatLog.add(
+            '>>> ${_npc.pilotName} offers surrender: $tribute cr tribute <<<');
+        _combatLog.add('>>> Accept the tribute or refuse and fight on <<<');
+      }
+      return;
+    }
+    if (morale.outcome == CombatOutcome.defenderRetreat) {
+      _attemptNpcRetreat();
+      return;
+    }
+  }
+
+  /// NPC break-off attempt (C1b). Interception is engine-relative with the
+  /// tractor-beam hook reserved in [CombatService.resolveRetreat]; the
+  /// attempt costs energy whether it succeeds or not.
+  void _attemptNpcRetreat() {
+    final res = CombatService.resolveRetreat(
+      escapeeEngineLevel: _npc.engineEquipmentLevel,
+      pursuerEngineLevel: _player.effectiveEngineLevel,
+    );
+    setState(() {
+      _npc = _npc.copyWith(
+          energy: math.max(0, _npc.energy - res.energyCost));
+    });
+    if (res.escaped) {
+      _combatLog.add('>>> ${_npc.shipName} breaks off and warps out <<<');
+      if (widget.sectorWarps.isNotEmpty) {
+        final rng = math.Random();
+        final dest =
+            widget.sectorWarps[rng.nextInt(widget.sectorWarps.length)];
+        setState(() => _npc = _npc.copyWith(currentSectorId: dest));
+        _combatLog.add('>>> Enemy warped to sector #$dest <<<');
+      }
+      _endCombat(victory: false, npcRetreated: true);
+    } else {
+      _combatLog.add(
+          '>>> ${_npc.shipName} tried to break off — you cut them off <<<');
+    }
+  }
+
+  /// Player accepts the NPC's surrender: tribute transfers, fight ends.
+  /// No kill, no loot, no notoriety — they paid for their lives.
+  void _acceptParley() {
+    final tribute = _parleyOffer ?? 0;
+    setState(() {
+      _player = _player.copyWith(credits: _player.credits + tribute);
+      _npc = _npc.copyWith(credits: math.max(0, _npc.credits - tribute));
+      _parleyOffer = null;
+    });
+    _combatLog.add('>>> You accept $tribute cr tribute. Combat ends. <<<');
+    _endCombat(victory: false, parleyed: true);
   }
 
   void _flee() {
@@ -312,7 +386,11 @@ class _CombatScreenState extends State<CombatScreen>
     _endCombat(victory: false, fled: true);
   }
 
-  void _endCombat({required bool victory, bool fled = false}) {
+  void _endCombat(
+      {required bool victory,
+      bool fled = false,
+      bool npcRetreated = false,
+      bool parleyed = false}) {
     setState(() => _combatOver = true);
 
     int loot = 0;
@@ -385,6 +463,12 @@ class _CombatScreenState extends State<CombatScreen>
     } else if (fled) {
       ActionLogProvider.global.combat(
           'Fled from ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
+    } else if (npcRetreated) {
+      ActionLogProvider.global.combat(
+          '${_npc.pilotName} (${_npc.shipName}) broke off in sector #${_npc.currentSectorId}');
+    } else if (parleyed) {
+      ActionLogProvider.global.combat(
+          'Accepted ${_npc.pilotName} (${_npc.shipName}) surrender in sector #${_npc.currentSectorId}');
     } else {
       ActionLogProvider.global.combat(
           'Disabled by ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
@@ -793,6 +877,58 @@ class _CombatScreenState extends State<CombatScreen>
             padding: const EdgeInsets.symmetric(vertical: 14),
           ),
         ),
+      );
+    }
+
+    if (_parleyOffer != null) {
+      final offer = _parleyOffer!;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${_npc.pilotName} offers $offer cr to live',
+            style: const TextStyle(
+                fontFamily: 'monospace',
+                color: Colors.white70,
+                fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _animating ? null : _acceptParley,
+                  icon: const Icon(Icons.handshake_rounded, size: 18),
+                  label: const Text('ACCEPT',
+                      style: TextStyle(fontFamily: 'monospace')),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.green.shade800,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _animating
+                    ? null
+                    : () => setState(() {
+                          _parleyOffer = null;
+                          _combatLog.add(
+                              '>>> You refuse. ${_npc.shipName} fights on <<<');
+                        }),
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('REFUSE',
+                    style: TextStyle(fontFamily: 'monospace')),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white70,
+                  side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.3)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ],
+          ),
+        ],
       );
     }
 

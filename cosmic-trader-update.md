@@ -420,6 +420,210 @@ meaningfully more dangerous as the player gets richer.
 
 ---
 
+## Phase C (`living-npcs`) — scope (2026-09-26, branch created)
+
+Goal: NPCs go from reactive to alive — memory with consequences, social
+structure, and mid-combat reactivity. Current-state assessment per item
+(code-read, not aspirational):
+
+**Done already (do not rebuild):** threat-gated flee, distress + capped
+armed response with revalidation, fear/hatred calculus, outfitting,
+repopulation floors, failed-route cooldowns, bounty post/hunt/collect,
+greedy hunter preference, owner management, guard rails on goal
+interruption. The "reacts" layer is solid.
+
+**C1 — Mid-combat intelligence (highest value, M–L).**
+- NPC-vs-NPC resolves instantly today: no damage-based break-off, no
+  surrender, no mid-fight reinforcement arrival (distress only fires
+  pre-engagement). Add per-round morale: break contact under
+  caution-scaled hull thresholds, gated by engine (disengage move).
+- Faction-flavored rules from lore: Duran (rarely flee), Vinari (usually
+  disengage), Traders (bribe/parley — credits-for-peace offer),
+  Pirates (fight cornered, flee overwhelmed). Verify: `Combat: broke off`
+  / `parley` lines + declining one-sided massacres in long runs.
+- Player-combat side: NPC opponents get the same morale (flee/parley
+  mid-fight in `CombatScreen`), so kills require commitment. Reinforcement
+  wing warps in 1–3 ticks after distress — finish-or-break decisions.
+
+**C2 — Memory & grudges (M).**
+- `knownThreatIds` is written but nothing reads it: wire encounter memory
+  (vendetta goal vs specific pilots, avoidance reroutes, gossip to
+  same-faction allies in range).
+- Route learning (positive mirror of the cooldown system): revisit
+  profitable routes, not just avoid dead ones.
+- Feed danger into `findBestTradeRoute` (avoidance-weighted profit).
+
+**C3 — Coordination & formations (L).**
+- Convoy (traders group + escort), wolf-pack ambush (pirates on
+  high-value lanes), border patrol holds (Duran map segments).
+- Shared intel: probabilistic "last seen" propagation; bounty hunters
+  predict destinations via BFS intercept (extends the greedy preference).
+- Pirate outposts (spawn fallback to replace random-sector spawn).
+
+**C4 — Living galaxy remainder (M).**
+- Production-timer spawning on homeworlds (replace/supplement floors),
+  backup homeworlds, planet-killer path to permanent removal.
+- Lore heroes from `notableHeroes`: rare spawns, better stats, bounty,
+  unique hail dialogue.
+- Personality drift: survivors +caution, victors +aggression (bounded).
+
+**C5 — Danger/tension curve (S–M, mostly tuning + verify).**
+- Pirates specifically target high-notoriety players; bounties attract
+  hunters at scale. Mostly exists (fear + Fed auto-post + greedy
+  hunters) — needs long-run measurement, not new systems.
+
+**Suggested build order:** C1 → C2 → C4 (production spawning) → C3 →
+C5-verify. C1 first: it changes every fight in the game, and the
+distress/reinforcement work composes with it directly. Each slice ships
+with automation-log lines + unit tests per the branch norm
+(analyze-clean, format-clean, full suite green, live numbers before/after).
+
+**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26):**
+- `CombatOutcome` enum (attacker/defender victory, attacker/defender
+  retreat, defender surrender, parley, ongoing) + `outcome`,
+  `escapeCostEnergy`, `parleyCostCredits` on `CombatResult`
+  (`outcomeFromDestruction` maps the destruction flags; mutual kill
+  scores attacker). `resolveCombat` sets it explicitly;
+  `PlayerCombatResult` carries it (defaults `ongoing`) for C1b.
+- `NpcMemory.vendettas` (stable pilot id → sector last seen, first/last
+  timestamps, grievance 0–100): `withVendetta` bumps + preserves first
+  sighting, 6h `pruneVendettas` (returns identical when clean),
+  JSON round-trip with legacy-safe default. Memory only — intent and
+  goals arrive in C2.
+- Interruption policy table formalized in comments at `_isInterruptible`.
+- Covered by `test/combat_contract_test.dart` (8 tests: outcome mapping,
+  defaults, live resolution, vendetta lifecycle/decay/serialization).
+- C1a morale (`CombatService.assessMorale`, three stages): faction hull
+  limits (Duran 0.15 / pirate 0.30 / trader 0.40 / Vinari 0.55) ±
+  caution/aggression modifiers; outmatched-plus-exposed rule; pressing an
+  advantage and near-dead-foe suppressors; engine + energy eligibility;
+  surrender preempts the round (10% tribute, no damage); retreat applies
+  round damage first (destruction stands), deducts escape cost, skips
+  loot/kills/cargo-wipe; attacker never retreats from a corpse. Bonus
+  fix: attacker wrecks now flagged `isDestroyed` (0-hull attackers
+  previously stayed "alive" to the tick loop).
+- Covered by `test/combat_morale_test.dart` (9 tests: willingness,
+  eligibility, surrender tribute, lethal-round precedence, faction
+  tendencies).
+- C1b player parity (`CombatScreen`): NPC re-evaluates morale every round
+  post-exchange. Trader surrender surfaces an Accept/Refuse tribute UI
+  (accept: tribute transfers, no kill/loot/notoriety; refuse: fight on,
+  may re-offer); retreat resolves immediately via shared
+  `resolveRetreat` (interception is engine-relative, attempt always costs
+  energy; success warps the NPC out, failure logs the cut-off). New
+  `npcRetreated`/`parleyed` endings (no notoriety penalty).
+- C1c reinforcements-as-joins (`_executeAttackGoal`, distress system
+  unchanged at max-3/trip-budgets): arrival revalidation — a responder
+  whose target is gone checks the defender too; both gone clears the
+  signal (no further wings converge on nowhere) with an automation-log
+  line, defender present keeps it live (same-turn re-answer). Post-kill
+  retaliation intent — same-faction, same-sector, living witnesses
+  record the killer (`withVendetta`, grievance 40); bystanders, the dead,
+  and the killer itself untouched. Memory only, no goal hijack (C2
+  builds goals/pursuit on top through the interruption policy).
+- Covered by `test/combat_reinforcement_test.dart` (3 tests: empty-fight
+  clear with no distress re-answer, live-signal re-answer by responder +
+  fresh pilot, witness-only vendetta recording).
+  Suite: 177 passing, analyze clean.
+
+**Out of scope for C:** shipyard/hull swapping, quests/missions, chat AI,
+planet invasion (planet-phase2), multiplayer sync.
+
+---
+
+## Phase C build plan (agreed 2026-09-26, external review incorporated)
+
+Branch: `living-npcs` (created, green baseline: analyze clean, 152 tests).
+This section is the contract for the build — written before any C code so
+a dropped session loses no decisions.
+
+### Architecture decisions (locked)
+
+1. **Combat stays instantaneous (Option A).** No per-tick engagement store,
+   no round scheduler, no join-in-progress. Morale decides *before* damage
+   is applied, retreat *is* an outcome, reinforcements join pre-engagement
+   or retaliate post-kill. A persistent-engagement engine is a separate
+   branch with its own design doc if playtests ever demand it — not a side
+   effect of C1.
+2. **Vendetta is three layers, never a bare goal overwrite.** Memory
+   (`NpcMemory.vendettas`: target stable ID → last-seen sector, timestamp,
+   grievance 0–100 with decay) records what happened; intent derives from
+   it (revenge / avoid / demand); `NpcGoal` changes only through the
+   interruption policy below. Gossip shares *sightings* (low confidence,
+   fast expiry), never permanent hostility — no faction-wide cascades.
+3. **Interruption policy (formalized, replaces ad-hoc guards):**
+
+   | Current state | Vendetta/distress/bank event | Behavior |
+   |---|---|---|
+   | Idle / exploring | may select vendetta goal | allowed |
+   | Patrol (interruptible) | redirect | allowed |
+   | Trading (committed route) | any | preserve unless emergency/floor |
+   | Refueling (critical) | any | never abandon |
+   | Fleeing | any incl. revenge target visible | keep escaping |
+   | Actively fighting | reinforcement request | combat rules, not goal swap |
+   | Dead/completed/failed goal | any | clear/resolve first, then select |
+4. **No per-future-behavior fields on `NpcShip`.** New concepts live in
+   `NpcGoal` params (action lifecycle) or `NpcMemory` (knowledge
+   lifecycle). Group/convoy models wait for C3 proper.
+5. **Retreat costs.** Disengagement spends energy + takes parting damage;
+   cornered ships don't always escape. (Prevents trading unkillable
+   pirates for uncatchable cowards.)
+6. **Faction behavior = tendencies, not absolutes.** Duran resist retreat
+   until heavily damaged/outmatched; Vinari favor disengagement; Traders
+   prefer surrender/payment/escape; Pirates fight ahead, flee behind —
+   each modified by the individual pilot's caution/aggression within the
+   12 archetypes.
+
+### Milestones (each independently mergeable, each with log lines + tests)
+
+- **Step 0 — contracts.** Extend `CombatResult` with outcome enum
+  (victory/defeat/retreat/surrender/parley) + disengage details, produced
+  by both NPC resolution and `CombatScreen`. Add `NpcMemory.vendettas`
+  map with decay + serialization. Formalize the interruption table above
+  in code comments where guards live.
+- **C1a — NPC morale at resolution.** Trigger (willingness) → eligibility
+  (engine/energy/restrictions) → resolution (success, opponent
+  interception) as three distinct stages. Faction/personality modifiers.
+  Measure: outcome counters per faction, escape success rate.
+- **C1b — player-combat parity.** Same rules in `CombatScreen`: explicit
+  retreat attempt/success/failure, surrender and parley (credits-for-peace)
+  outcomes, player response to NPC retreat.
+- **C1c — reinforcements as joins.** Bounded (existing max-3 cap, trip
+  budgets, revalidation kept): pre-engagement arrival + post-kill
+  retaliation. No mid-fight interruption (follows from Option A).
+- **C2 — memory & vendettas.** Encounter memory with lifecycle
+  (creation criteria, restart persistence, decay, resolution via
+  kill/escape/payment/parley, dead-target handling, reacquisition
+  bounds, pursuit budgets in time/energy/credits). Avoidance reroutes +
+  danger-weighted trade evaluation. Route learning (positive mirror of
+  the cooldown system).
+- **C4 — production spawning.** Homeworld `productionTimer`/
+  `spawnInterval` drive spawning (supplement/replace floors), backup
+  homeworlds, planet-killer path to permanent removal. Lore heroes from
+  `notableHeroes` (rare, buffed, bountied, unique hail). Bounded
+  personality drift (survivors +caution, victors +aggression).
+- **C3 — coordination.** Convoy (trader group + escort, with member
+  leave-conditions and leader-death rules), wolf-pack ambush (pirates),
+  Duran border holds, probabilistic last-seen intel, BFS-intercept
+  bounty hunters, pirate outposts replacing random-sector fallback.
+- **C5 — verification.** Long-run measurement: engagements/outcomes per
+  faction, hull remaining at retreat, loot per faction, failed escapes,
+  player kills/escapes, population over time. Before/after sim summaries
+  via the automation console, not just log lines.
+
+### Standing decisions / non-goals
+
+- Combat simultaneity, shouldAttackPlayer/canWin consolidation, drones in
+  power math, weapon-slot map hardening: deferred, see C-branch notes in
+  prior review batches (no live defect attached).
+- Bounty-farming loop (survivor posts → ally collects): watch in live
+  numbers; throttle survivor posts if vengeance claims dominate pirate
+  income.
+- Interruption-matrix tests (goal-state × incoming-event table) ship with
+  the guard work; seeded RNG in sim tests for reproducibility.
+
+---
+
 ## Suggested plan (phases → branches)
 
 | Branch | Scope | Why first |
