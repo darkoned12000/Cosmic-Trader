@@ -466,7 +466,6 @@ class _GameShellState extends State<GameShell> {
 
   Future<void> _handleLogout() async {
     await PlayerStorage.instance.savePlayer(_player);
-    await PlayerStorage.instance.clearPlayer();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -602,6 +601,7 @@ class _GameShellState extends State<GameShell> {
                       npcs: _npcs,
                       currentSectorId: _player.currentSectorId,
                       onSectorSelected: _onSectorSelected,
+                      playerId: _player.id,
                     ),
                     ShipStatusView(
                         player: _player, onPlayerUpdate: _updatePlayer),
@@ -868,6 +868,7 @@ class _GameShellState extends State<GameShell> {
                             npcs: _npcs,
                             currentSectorId: _player.currentSectorId,
                             onSectorSelected: _onSectorSelected,
+                            playerId: _player.id,
                           ),
                           ShipStatusView(
                               player: _player, onPlayerUpdate: _updatePlayer),

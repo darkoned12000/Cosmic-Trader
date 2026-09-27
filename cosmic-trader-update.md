@@ -847,6 +847,27 @@ with automation-log lines + unit tests per the branch norm
   - Soak watch: vengeful wings converging on the player is intended;
     tuning lever is the 40-grievance witness bump if it feels unfair.
   Suite: 301 passing, analyze clean.
+- Storage review batch (`test/storage_safety_test.dart`, 10 tests):
+  - C1 wipe closed: corrupt files quarantine aside (timestamped,
+    recoverable) with loud logs; patch paths refuse on failed loads
+    (`saveSectors`) or empty base; player/npc mutations refuse
+    (`updatePlayer`→bool, register throws unverifiable); sticky
+    failure flags with lifecycle handling — generation clears them
+    (caught live: poisoned flags blocked fresh writes).
+  - C2 coalesced: in-flight `ensureUniverse` guard (proven single
+    generation under overlap); `hasUniverse` requires non-empty.
+  - Regen completes: economy + exploration reset wired.
+  - Player records: uuid ids, null-not-throw find, loud login,
+    unknown-id signaling, dead cache fixed, `clearPlayer` stub
+    removed.
+  - Exploration per-player: nested schema, legacy migration to first
+    login, retry-safe loads, player-scoped galaxy map.
+  - NPC load outer catch loud; FileSafe mkdir + quarantine.
+  - Deferred: web adapter (aspirational target), write queue/
+    manifest transactions, SectorKnowledge persistence (no UI
+    writes it yet), destroyed-roster age pruning (done via
+    clearWrecks instead).
+  Suite: 311 passing, analyze clean.
 - Phase C CLOSED 2026-09-27. Scope delivered: Step 0 + C1 (morale,
   parity, reinforcements) + C2 (memory/vendettas/avoidance/gossip/
   learning) + C4 (production/backups/legends/drift) + C3
