@@ -52,6 +52,15 @@ class GameTickService {
   static void unlockNpc(String npcId) => _lockedNpcIds.remove(npcId);
   static bool isNpcLocked(String npcId) => _lockedNpcIds.contains(npcId);
 
+  /// Removes destroyed NPCs from [npcs] in place. Returns the count
+  /// cleared. Faction kill totals persist in CombatMetrics and bounties
+  /// live on the board — the roster itself keeps only the living.
+  static int clearWrecks(List<NpcShip> npcs) {
+    final before = npcs.length;
+    npcs.removeWhere((n) => n.isDestroyed);
+    return before - npcs.length;
+  }
+
   Timer? _timer;
   Duration tickInterval;
   bool _isRunning = false;
@@ -378,7 +387,20 @@ class GameTickService {
         }
       });
 
-      // Save all updated NPCs (destroyed ones retained for stats/history)
+      // Wreckage clearing (soak fix, ex-P3#22): destroyed hulls used to
+      // accumulate in the roster and every save (118 corpses vs 92 living
+      // in one soak). All post-death consumers key off living ids and
+      // faction totals persist in CombatMetrics — nothing reads a corpse
+      // after its death tick.
+      DevProfiler.instance.trace('tick_clear_wrecks', () {
+        final cleared = GameTickService.clearWrecks(npcs);
+        if (cleared > 0) {
+          log.system('[TickService] Cleared $cleared wreck(s)');
+        }
+      });
+
+      // Save all updated NPCs (wrecks cleared just above, so the save
+      // only persists the living)
       await DevProfiler.instance
           .traceAsync('tick_save_npcs', () => NpcStorage().saveAll(npcs));
 

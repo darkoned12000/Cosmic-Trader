@@ -494,7 +494,9 @@ with automation-log lines + unit tests per the branch norm
 - Covered by `test/combat_contract_test.dart` (8 tests: outcome mapping,
   defaults, live resolution, vendetta lifecycle/decay/serialization).
 - C1a morale (`CombatService.assessMorale`, three stages): faction hull
-  limits (Duran 0.15 / pirate 0.30 / trader 0.40 / Vinari 0.55) ±
+  limits (Duran 0.25 — raised from 0.15 after the 2nd soak showed 43
+  deaths with 0 retreats: stubborn read as suicidal; still boldest by
+  far — versus pirate 0.30 / trader 0.40 / Vinari 0.55) ±
   caution/aggression modifiers; outmatched-plus-exposed rule; pressing an
   advantage and near-dead-foe suppressors; engine + energy eligibility;
   surrender preempts the round (10% tribute, no damage); retreat applies
@@ -717,7 +719,12 @@ with automation-log lines + unit tests per the branch norm
   their live-goal sector when reachable (arrival-early hunters hold
   and engage on arrival; stale cutoffs dissolve via dry holes).
   Covered by 3 tests (unmarked cutoff, hold cap, vendetta cutoff).
-  Suite: 274 passing, analyze clean.
+- Soak fix 3 (2nd run): Duran retreat threshold 0.15 → 0.25 (43 deaths,
+  0 retreats — the watchlist verdict is suicidal, not stubborn);
+  tick-end wreckage clearing (`clearWrecks` — 118 corpses vs 92 living
+  were riding every save; faction totals persist in CombatMetrics).
+  Covered by 1 test.
+  Suite: 275 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

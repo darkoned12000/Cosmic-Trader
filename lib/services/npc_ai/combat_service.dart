@@ -167,8 +167,11 @@ class CombatService {
     final shieldsFraction =
         self.maxShields <= 0 ? 0.0 : self.shields / self.maxShields;
 
+    // Soak-tuned (2nd run: 43 Duran deaths, 0 retreats — stubborn read
+    // as suicidal, not flavorful): Duran break off below ~15–25% hull
+    // depending on archetype, still the boldest faction by far.
     final base = switch (self.faction) {
-      FactionClass.duran => 0.15,
+      FactionClass.duran => 0.25,
       FactionClass.vinari => 0.55,
       FactionClass.trader => 0.40,
       FactionClass.pirate => 0.30,
