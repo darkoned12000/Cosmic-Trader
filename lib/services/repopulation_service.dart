@@ -126,9 +126,17 @@ class RepopulationService {
         seed: random.nextInt(1 << 30),
       );
       spawned.add(ship);
+      // Backup-yard tag (soak instrumentation): which capital launched.
+      var backupTag = '';
+      for (final s in sectors) {
+        if (s.id == sectorId && (s.planet?.isBackupHomeworld ?? false)) {
+          backupTag = ' (backup yards)';
+          break;
+        }
+      }
       GameEventLog.global.system(
         '[Repopulation] ${ship.pilotName} (${entry.key.name}) '
-        'launched from sector #$sectorId',
+        'launched from sector #$sectorId$backupTag',
       );
     }
     return spawned;
@@ -199,7 +207,8 @@ class RepopulationService {
       spawned.add(ship);
       GameEventLog.global.system(
         '[Production] ${planet.name} rolled out ${ship.pilotName} '
-        '(${faction.name}) in sector #${s.id}',
+        '(${faction.name}) in sector #${s.id}'
+        '${planet.isBackupHomeworld ? ' (backup yards)' : ''}',
       );
     }
     return spawned;

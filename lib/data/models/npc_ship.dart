@@ -105,6 +105,20 @@ class NpcShip {
             (driftCaution + surviveCautionStep).clamp(0.0, maxPersonalityDrift),
       );
 
+  /// Tier width for drift milestone lines (soak instrumentation): one
+  /// log line per tier crossed, not per event.
+  static const double driftTierWidth = 0.05;
+
+  /// True when drift moved into a new milestone tier — the call sites
+  /// log exactly then, keeping veteran lines rare and meaningful.
+  /// Epsilon guards the tier edges (0.15 / 0.05 is 2.999… in floats).
+  static bool driftTierCrossed(double before, double after) {
+    if (after <= before) return false;
+    const eps = 1e-9;
+    return ((after + eps) / driftTierWidth).floor() >
+        ((before + eps) / driftTierWidth).floor();
+  }
+
   NpcShip({
     required this.id,
     required this.pilotName,

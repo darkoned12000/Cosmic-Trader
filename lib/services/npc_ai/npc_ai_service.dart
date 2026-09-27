@@ -980,19 +980,25 @@ class NpcAiService {
         isBuy: false,
       );
 
+      // Route learning (C2d): profitable runs teach; losses don't.
+      // Mirrors the failed-route cooldown with a positive signal.
+      // Sell-only self-loops (buyPortId == sellPortId) teach nothing
+      // the evaluator could ever match (review batch 3, P1). First wins
+      // log one line per route ever (soak instrumentation).
+      final routeKey =
+          NpcMemory.routeKey(goal.buyPortId, goal.sellPortId, commodity);
+      final teachable = profit > 0 && goal.buyPortId != goal.sellPortId;
+      if (teachable && !npc.memory.profitableRoutes.containsKey(routeKey)) {
+        GameEventLog.global
+            .trade('[${npc.pilotName}] Learned profitable route $routeKey');
+      }
       return npc.copyWith(
         credits: npc.credits + npcReceives,
         cargo: newCargo,
         cargoUsed: npc.cargoUsed - actualQuantity,
-        // Route learning (C2d): profitable runs teach; losses don't.
-        // Mirrors the failed-route cooldown with a positive signal.
-        // Sell-only self-loops (buyPortId == sellPortId) teach nothing
-        // the evaluator could ever match (review batch 3, P1).
-        memory: (profit > 0 && goal.buyPortId != goal.sellPortId
-                ? npc.memory.withProfitableRoute(NpcMemory.routeKey(
-                    goal.buyPortId, goal.sellPortId, commodity))
-                : npc.memory)
-            .copyWith(lastTradeTime: DateTime.now()),
+        memory:
+            (teachable ? npc.memory.withProfitableRoute(routeKey) : npc.memory)
+                .copyWith(lastTradeTime: DateTime.now()),
         currentGoal: goal.copyWith(
           status: NpcGoalStatus.complete,
           params: {...goal.params, 'profit': profit},
@@ -1399,10 +1405,18 @@ class NpcAiService {
 
     // Update defender in-place in the list. Survivors grow warier
     // (C4d drift) — living through someone's guns teaches caution,
-    // wreckage notwithstanding (the dead don't spend it).
+    // wreckage notwithstanding (the dead don't spend it). Milestone
+    // lines per tier crossed (soak instrumentation).
     final idx = allNpcs.indexWhere((n) => n.id == targetId);
     if (idx != -1) {
-      allNpcs[idx] = result.defender.driftedForSurvival();
+      final survived = result.defender.driftedForSurvival();
+      allNpcs[idx] = survived;
+      if (NpcShip.driftTierCrossed(
+          result.defender.driftCaution, survived.driftCaution)) {
+        GameEventLog.global
+            .combat('[${survived.pilotName}] Veteran warier: caution '
+                '${survived.driftCaution.toStringAsFixed(2)}');
+      }
     }
 
     if (result.result.defenderDestroyed) {
@@ -1455,8 +1469,15 @@ class NpcAiService {
       }
       // Vengeance satisfied (C2b): a vendetta against the dead target
       // resolves regardless of any bounty payout. Memory only.
-      // Killers grow bolder (C4d drift) on the same occasion.
+      // Killers grow bolder (C4d drift) on the same occasion — a
+      // milestone line per tier crossed (soak instrumentation).
       var resolvedAttacker = result.attacker.driftedForKill();
+      if (NpcShip.driftTierCrossed(
+          result.attacker.driftAggression, resolvedAttacker.driftAggression)) {
+        GameEventLog.global.combat(
+            '[${resolvedAttacker.pilotName}] Veteran bolder: aggression '
+            '${resolvedAttacker.driftAggression.toStringAsFixed(2)}');
+      }
       // Legends earn their price (review batch 1): a hero's kill posts
       // the Guild bounty when none is active — never at spawn, so
       // newborn legends aren't beelined before doing anything legendary.

@@ -419,7 +419,13 @@ class _CombatScreenState extends State<CombatScreen>
     CombatMetrics.global.recordPlayerFlee();
 
     // The NPC lives through your guns (C4d drift): survivors grow warier.
+    // Milestone lines per tier crossed (soak instrumentation).
+    final warinessBefore = _npc.driftCaution;
     setState(() => _npc = _npc.driftedForSurvival());
+    if (NpcShip.driftTierCrossed(warinessBefore, _npc.driftCaution)) {
+      _combatLog.add(
+          '>>> ${_npc.shipName} crew grows warier (caution ${_npc.driftCaution.toStringAsFixed(2)}) <<<');
+    }
 
     // Send player to a random adjacent sector; the NPC stays put.
     if (widget.sectorWarps.isNotEmpty) {

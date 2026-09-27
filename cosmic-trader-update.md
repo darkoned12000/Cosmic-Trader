@@ -699,7 +699,12 @@ with automation-log lines + unit tests per the branch norm
   recovery, sell-phase join, broke sell-first, revenue, guards,
   no-ops, corpse gossip/bounty, key namespaces, overrides, caps,
   fromJson).
-  Suite: 264 passing, analyze clean.
+- Soak instrumentation (`test/soak_instrumentation_test.dart`,
+  5 tests): drift milestones (`Veteran bolder/warier` per 0.05 tier,
+  epsilon-guarded edges), first-win route lines (`Learned profitable
+  route`, once per key), backup-yard launch tags on both spawners.
+  Extend the soak grep with `Veteran|Learned profitable|backup yards`.
+  Suite: 269 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide
