@@ -724,7 +724,7 @@ with automation-log lines + unit tests per the branch norm
   tick-end wreckage clearing (`clearWrecks` — 118 corpses vs 92 living
   were riding every save; faction totals persist in CombatMetrics).
   Covered by 1 test.
-  Suite: 275 passing, analyze clean.
+  Suite: 276 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide
