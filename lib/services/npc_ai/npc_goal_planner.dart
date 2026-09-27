@@ -606,17 +606,19 @@ NpcGoal? _createBorderHoldGoal(
   }
   if (hostileSectors.isEmpty) return null;
 
+  // One BFS tree from the holder (P2): distances to every candidate
+  // instead of a findPath per sector.
+  final tree = PathfindingService.bfsParents(sectors, npc.currentSectorId);
   int? bestHold;
   var bestDist = 1 << 30;
   for (final s in sectors) {
     if (NpcAiService._isSafeZone(s.id)) continue;
     if (!s.warpRoutes.any(hostileSectors.contains)) continue;
-    final path =
-        PathfindingService.findPath(sectors, npc.currentSectorId, s.id);
-    if (path == null || path.length - 1 > maxDist) continue;
-    if (npc.energy < (path.length - 1) * legCost + legCost) continue;
-    if (path.length - 1 < bestDist) {
-      bestDist = path.length - 1;
+    final dist = PathfindingService.distanceInTree(tree, s.id);
+    if (dist == null || dist > maxDist) continue;
+    if (npc.energy < dist * legCost + legCost) continue;
+    if (dist < bestDist) {
+      bestDist = dist;
       bestHold = s.id;
     }
   }
@@ -761,13 +763,23 @@ NpcGoal? _createVendettaGoal(
     if (record.grievance < vendettaGrievanceThreshold) continue;
     // Target must be a living NPC in this roster. Player-id grudges
     // aren't recorded yet (C1c writes NPC killers only); absent from
-    // the roster means gone, and C2b prunes those entries.
-    NpcShip? target;
-    for (final n in allNpcs) {
-      if (n.id == entry.key && !n.isDestroyed) {
-        target = n;
-        break;
+    // the roster means gone, and C2b prunes those entries. Lookup via
+    // the tick index when present (P2).
+    final indexed = NpcAiService.npcById?[entry.key];
+    final NpcShip? target;
+    if (indexed != null && !indexed.isDestroyed) {
+      target = indexed;
+    } else if (NpcAiService.npcById != null) {
+      target = null;
+    } else {
+      NpcShip? found;
+      for (final n in allNpcs) {
+        if (n.id == entry.key && !n.isDestroyed) {
+          found = n;
+          break;
+        }
       }
+      target = found;
     }
     if (target == null) continue;
     // Convergence cap (review batch 1): a magnet target with a full
@@ -800,7 +812,6 @@ NpcGoal? _createVendettaGoal(
         }
       }
     }
-    if (NpcAiService._isSafeZone(dest)) continue;
     if (NpcAiService._isSafeZone(dest)) continue;
     final path =
         PathfindingService.findPath(sectors, npc.currentSectorId, dest);
@@ -857,10 +868,14 @@ NpcGoal? _createAttackGoal(
     return candidatePower < CombatService.calculateFirepower(current);
   }
 
-  // 1 — Check same sector for hostile NPCs
+  // 1 — Check same sector for hostile NPCs. Co-located candidates
+  // come from the tick index when present (P2); power is read off the
+  // indexed copy, but execution re-resolves the live object by id.
   NpcShip? bestTarget;
   int? bestTargetSectorId;
-  for (final other in allNpcs) {
+  final locals =
+      NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  for (final other in locals) {
     if (other.id == npc.id || other.isDestroyed) continue;
     if (other.currentSectorId != npc.currentSectorId) continue;
     if (!NpcAiService._isHostileFaction(npc.faction, other.faction)) continue;
@@ -889,8 +904,9 @@ NpcGoal? _createAttackGoal(
       for (final warp in sector.warpRoutes) {
         if (!visited.add(warp)) continue;
         if (NpcAiService._isSafeZone(warp)) continue; // skip safe zones
-        // Check for hostile NPCs in this sector
-        for (final other in allNpcs) {
+        // Check for hostile NPCs in this sector (index when present).
+        final remotes = NpcAiService.npcsBySector?[warp] ?? allNpcs;
+        for (final other in remotes) {
           if (other.id == npc.id || other.isDestroyed) continue;
           if (other.currentSectorId != warp) continue;
           if (!NpcAiService._isHostileFaction(npc.faction, other.faction)) {

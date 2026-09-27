@@ -549,7 +549,7 @@ lib/
 - **Versioned async writes** — Counter prevents stale writes from overwriting newer state
 - **IndexedStack for tabs** — Preserves tab state while navigating; Computer and Planet keys regenerate on tab-select to reset screens
 - **Adaptive layout** — `LayoutBuilder` + breakpoints for mobile vs desktop
-- **Run checks** — `flutter analyze` is clean; `flutter test` passes (279 tests)
+- **Run checks** — `flutter analyze` is clean; `flutter test` passes (281 tests)
 
 ---
 

@@ -66,7 +66,12 @@ NpcShip _scanSector(
     );
   }
 
-  // Detect threats (other factions in the same sector)
+  // Detect threats (other factions in the same sector). Co-located
+  // candidates come from the tick index when present (P2); the write
+  // path below still resolves live objects, so stale refs only ever
+  // nominate, never act.
+  final mates =
+      NpcAiService.npcsBySector?[sector.id] ?? allNpcs;
   final aliveIds = <String>{npc.id};
   for (final player in players) {
     aliveIds.add(player.id);
@@ -75,8 +80,14 @@ NpcShip _scanSector(
       memory = memory.withThreat(player.id);
     }
   }
-  for (final other in allNpcs) {
-    if (!other.isDestroyed) aliveIds.add(other.id);
+  final tickAlive = NpcAiService.livingIds;
+  if (tickAlive != null) {
+    aliveIds.addAll(tickAlive);
+  }
+  for (final other in mates) {
+    if (tickAlive == null && !other.isDestroyed) {
+      aliveIds.add(other.id);
+    }
     if (other.id != npc.id &&
         other.currentSectorId == sector.id &&
         !other.isDestroyed &&
@@ -101,8 +112,12 @@ NpcShip _scanSector(
 NpcShip _shareIntel(NpcShip npc, List<NpcShip> allNpcs) {
   var mine = npc.memory;
   var changed = false;
-  for (int i = 0; i < allNpcs.length; i++) {
-    final mate = allNpcs[i];
+  // Candidacy from the tick index when present (P2); write-back always
+  // resolves the live list slot by id, since indexed copies go stale as
+  // turns run.
+  final mates =
+      NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  for (final mate in mates) {
     if (mate.id == npc.id || mate.isDestroyed) continue;
     if (mate.faction != npc.faction) continue;
     if (mate.currentSectorId != npc.currentSectorId) continue;
@@ -118,7 +133,8 @@ NpcShip _shareIntel(NpcShip npc, List<NpcShip> allNpcs) {
     }
     final teach = mate.memory.mergeSightings(mine.vendettas);
     if (teach.adopted > 0 || teach.refreshed > 0) {
-      allNpcs[i] = mate.copyWith(memory: teach.memory);
+      final li = allNpcs.indexWhere((n) => n.id == mate.id);
+      if (li != -1) allNpcs[li] = mate.copyWith(memory: teach.memory);
       if (teach.adopted > 0) {
         GameEventLog.global.combat(
             '[${mate.pilotName}] Heard about ${teach.adopted} killer(s) '
@@ -141,8 +157,13 @@ NpcShip _pruneDeadVendettas(
 ) {
   if (npc.memory.vendettas.isEmpty) return npc;
   var memory = npc.memory;
+  // Liveness from the tick index when present (P2); a target destroyed
+  // earlier this tick lingers one extra turn, then prunes.
+  final tickAlive = NpcAiService.livingIds;
   for (final id in memory.vendettas.keys) {
-    final npcGone = !allNpcs.any((n) => n.id == id && !n.isDestroyed);
+    final npcGone = tickAlive != null
+        ? !tickAlive.contains(id)
+        : !allNpcs.any((n) => n.id == id && !n.isDestroyed);
     final playerGone = !players.any((p) => p.id == id);
     if (npcGone && playerGone) {
       memory = memory.withVendettaResolved(id);

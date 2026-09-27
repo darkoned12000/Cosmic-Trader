@@ -88,7 +88,10 @@ List<dynamic> _findLocalEnemies(
       enemies.add(player);
     }
   }
-  for (final other in allNpcs) {
+  // Co-located candidates from the tick index when present (P2).
+  final locals =
+      NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  for (final other in locals) {
     if (other.id != npc.id &&
         other.currentSectorId == npc.currentSectorId &&
         !other.isDestroyed &&

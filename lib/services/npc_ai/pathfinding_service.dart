@@ -7,6 +7,15 @@ class _PathNode {
 }
 
 class PathfindingService {
+  /// Shared sector index for tick-scoped work (P2 scaling batch). Set by
+  /// `NpcAiService.beginTick`, cleared by `endTick`. Every lookup below
+  /// prefers it and falls back to a locally built map, so direct callers
+  /// (tests, one-off UI paths) behave identically without setup.
+  static Map<int, Sector>? sharedIndex;
+
+  static Map<int, Sector> _indexOf(List<Sector> sectors) =>
+      sharedIndex ?? {for (final s in sectors) s.id: s};
+
   /// BFS shortest path from [startId] to [targetId].
   /// Returns list of sector IDs forming the path (inclusive), or null if
   /// unreachable. Looks sectors up by id (not list position) so sparse or
@@ -14,7 +23,7 @@ class PathfindingService {
   static List<int>? findPath(List<Sector> sectors, int startId, int targetId) {
     if (startId == targetId) return [startId];
 
-    final byId = {for (final s in sectors) s.id: s};
+    final byId = _indexOf(sectors);
     if (!byId.containsKey(startId) || !byId.containsKey(targetId)) {
       return null;
     }
@@ -66,7 +75,7 @@ class PathfindingService {
     if (avoid.isEmpty) return findPath(sectors, startId, targetId);
     if (startId == targetId) return [startId];
 
-    final byId = {for (final s in sectors) s.id: s};
+    final byId = _indexOf(sectors);
     if (!byId.containsKey(startId) || !byId.containsKey(targetId)) {
       return null;
     }
@@ -101,7 +110,7 @@ class PathfindingService {
   /// Find nearest sector matching a predicate, starting from [startId].
   static int? findNearestWhere(
       List<Sector> sectors, int startId, bool Function(Sector) predicate) {
-    final byId = {for (final s in sectors) s.id: s};
+    final byId = _indexOf(sectors);
     if (!byId.containsKey(startId)) return null;
     final visited = <int>{startId};
     final queue = [startId];
@@ -119,5 +128,54 @@ class PathfindingService {
       }
     }
     return null;
+  }
+
+  /// BFS parent map from [startId] (P2 scaling batch): one O(n) pass
+  /// answers every distance/path query out of the source, replacing the
+  /// O(m²) pairwise `findPath` loops in trade evaluation and border-hold
+  /// search. Maps each reachable sector to its BFS predecessor; the
+  /// source maps to itself. Unreachable sectors are absent.
+  static Map<int, int> bfsParents(List<Sector> sectors, int startId) {
+    final byId = _indexOf(sectors);
+    final parents = <int, int>{};
+    if (!byId.containsKey(startId)) return parents;
+    parents[startId] = startId;
+    final queue = [startId];
+    var queueIdx = 0;
+    while (queueIdx < queue.length) {
+      final current = queue[queueIdx++];
+      for (final nId in byId[current]?.warpRoutes ?? const <int>[]) {
+        if (!parents.containsKey(nId) && byId.containsKey(nId)) {
+          parents[nId] = current;
+          queue.add(nId);
+        }
+      }
+    }
+    return parents;
+  }
+
+  /// Hops from a [bfsParents] tree, or null when unreachable.
+  static int? distanceInTree(Map<int, int> parents, int targetId) {
+    if (!parents.containsKey(targetId)) return null;
+    var hops = 0;
+    var node = targetId;
+    while (parents[node] != node) {
+      node = parents[node]!;
+      hops++;
+    }
+    return hops;
+  }
+
+  /// Path from a [bfsParents] tree (inclusive), or null when unreachable.
+  static List<int>? pathInTree(
+      Map<int, int> parents, int startId, int targetId) {
+    if (!parents.containsKey(targetId)) return null;
+    final path = [targetId];
+    var node = targetId;
+    while (node != startId) {
+      node = parents[node]!;
+      path.add(node);
+    }
+    return path.reversed.toList();
   }
 }

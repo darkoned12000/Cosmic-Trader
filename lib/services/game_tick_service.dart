@@ -191,6 +191,11 @@ class GameTickService {
       // _manageOwnedPorts reads it; null (tests) falls back to scanning.
       NpcAiService.ownedPortIndex = _buildOwnerIndex(sectors);
 
+      // P2 roster + topology indices (same null-fallback contract).
+      // Built from the pre-tick roster; see the staleness contract on
+      // the index fields. try/finally: a throwing tick must never leak
+      // a stale index into the next one.
+      NpcAiService.beginTick(sectors, npcs);
       // Find NPCs with energy remaining and process them
       int processed = 0;
       int skipped = 0;
@@ -199,78 +204,82 @@ class GameTickService {
       int errored = 0;
       final log = ActionLogProvider.global;
 
-      DevProfiler.instance.trace('tick_npc_processing (${npcs.length} npcs)',
-          () {
-        for (int i = 0; i < npcs.length; i++) {
-          final npc = npcs[i];
-          if (npc.isDestroyed) {
-            destroyed++;
-            continue;
-          }
-          if (npc.energy <= 0) {
-            // Pre-tick reading: processTurn may resolve this same tick via
-            // the emergency-reserve path, so the counter can overcount
-            // relative to end-of-tick reality. Log-scale only.
-            stranded++;
-          }
-          if (isNpcLocked(npc.id)) {
-            skipped++;
-            continue;
-          }
+      try {
+        DevProfiler.instance.trace('tick_npc_processing (${npcs.length} npcs)',
+            () {
+          for (int i = 0; i < npcs.length; i++) {
+            final npc = npcs[i];
+            if (npc.isDestroyed) {
+              destroyed++;
+              continue;
+            }
+            if (npc.energy <= 0) {
+              // Pre-tick reading: processTurn may resolve this same tick via
+              // the emergency-reserve path, so the counter can overcount
+              // relative to end-of-tick reality. Log-scale only.
+              stranded++;
+            }
+            if (isNpcLocked(npc.id)) {
+              skipped++;
+              continue;
+            }
 
-          final before = npc;
-          try {
-            npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
-            _errorCounts.remove(npc.id);
-          } catch (e) {
-            // One bad NPC (bad data, failed assert) must never abort the
-            // whole tick — keep its pre-tick state and move on. After 3
-            // consecutive failures the goal is force-cleared so one
-            // corrupted goal can't freeze an NPC for the session.
-            errored++;
-            final strikes = (_errorCounts[npc.id] ?? 0) + 1;
-            _errorCounts[npc.id] = strikes;
-            GameEventLog.global
-                .system('[TickService] NPC error (${npc.pilotName}): $e');
-            if (strikes >= 3) {
+            final before = npc;
+            try {
+              npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
               _errorCounts.remove(npc.id);
-              npcs[i] = npc.copyWith(clearGoal: true);
+            } catch (e) {
+              // One bad NPC (bad data, failed assert) must never abort the
+              // whole tick — keep its pre-tick state and move on. After 3
+              // consecutive failures the goal is force-cleared so one
+              // corrupted goal can't freeze an NPC for the session.
+              errored++;
+              final strikes = (_errorCounts[npc.id] ?? 0) + 1;
+              _errorCounts[npc.id] = strikes;
               GameEventLog.global
-                  .system('[TickService] ${npc.pilotName}: goal reset after '
-                      '$strikes errors');
+                  .system('[TickService] NPC error (${npc.pilotName}): $e');
+              if (strikes >= 3) {
+                _errorCounts.remove(npc.id);
+                npcs[i] = npc.copyWith(clearGoal: true);
+                GameEventLog.global
+                    .system('[TickService] ${npc.pilotName}: goal reset after '
+                        '$strikes errors');
+              }
+              continue;
             }
-            continue;
-          }
-          final after = npcs[i];
-          processed++;
+            final after = npcs[i];
+            processed++;
 
-          // Log significant state changes (with proximity filter for non-combat)
-          if (after.isDestroyed && !before.isDestroyed) {
-            log.combat('${npc.pilotName} (${npc.shipName}) was destroyed');
-          } else if (after.currentSectorId != before.currentSectorId) {
-            // Only log movement if within 2 hops of player
-            if (_isNearPlayer(after.currentSectorId, closeSectors) ||
-                _isNearPlayer(before.currentSectorId, closeSectors)) {
-              log.movement(
-                  '${npc.pilotName} warped to sector #${after.currentSectorId}');
+            // Log significant state changes (with proximity filter for non-combat)
+            if (after.isDestroyed && !before.isDestroyed) {
+              log.combat('${npc.pilotName} (${npc.shipName}) was destroyed');
+            } else if (after.currentSectorId != before.currentSectorId) {
+              // Only log movement if within 2 hops of player
+              if (_isNearPlayer(after.currentSectorId, closeSectors) ||
+                  _isNearPlayer(before.currentSectorId, closeSectors)) {
+                log.movement(
+                    '${npc.pilotName} warped to sector #${after.currentSectorId}');
+              }
+            }
+            if (after.credits > before.credits + 5000) {
+              // Only log trade if within 2 hops of player
+              if (_isNearPlayer(after.currentSectorId, closeSectors)) {
+                log.trade(
+                    '${npc.pilotName} earned ${after.credits - before.credits} cr trading');
+              }
+            }
+            if (after.kills > before.kills) {
+              log.combat('${npc.pilotName} destroyed another vessel');
             }
           }
-          if (after.credits > before.credits + 5000) {
-            // Only log trade if within 2 hops of player
-            if (_isNearPlayer(after.currentSectorId, closeSectors)) {
-              log.trade(
-                  '${npc.pilotName} earned ${after.credits - before.credits} cr trading');
-            }
+          if (errored > 0) {
+            GameEventLog.global.system(
+                '[TickService] $errored NPC(s) errored this tick (state kept)');
           }
-          if (after.kills > before.kills) {
-            log.combat('${npc.pilotName} destroyed another vessel');
-          }
-        }
-        if (errored > 0) {
-          GameEventLog.global.system(
-              '[TickService] $errored NPC(s) errored this tick (state kept)');
-        }
-      });
+        });
+      } finally {
+        NpcAiService.endTick();
+      }
 
       // No turn replenishment: NPCs refuel at Hardware Emporiums, trickle-
       // charge via Solar Arrays, or take an emergency reserve when stranded

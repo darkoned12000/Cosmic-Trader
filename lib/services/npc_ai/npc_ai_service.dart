@@ -106,6 +106,52 @@ class NpcAiService {
   /// Null outside ticks (tests, direct calls) → linear-scan fallback.
   static Map<String, List<Sector>>? ownedPortIndex;
 
+  /// Per-tick roster indices (P2 scaling batch), built once by
+  /// [beginTick] and cleared by [endTick]. All NPC-loop candidacy reads
+  /// prefer them; null (tests, direct calls) falls back to scans, so
+  /// behavior is identical with or without setup.
+  ///
+  /// Staleness contract: topology ([sectorById]) never goes stale
+  /// mid-tick. Roster views ([npcsBySector], [npcById], [livingIds]) can
+  /// lag one NPC-turn (immutable copies replace list entries as turns
+  /// run) — safe because indices only nominate CANDIDATES; every write
+  /// path and every combat resolution re-resolves the live object from
+  /// [allNpcs] by id, and the death-prune re-checks liveness against
+  /// the live list before dropping anything.
+  static Map<int, Sector>? sectorById;
+  static Map<int, List<NpcShip>>? npcsBySector;
+  static Map<String, NpcShip>? npcById;
+  static Set<String>? livingIds;
+
+  /// Builds the per-tick indices ([sectorById], [npcsBySector],
+  /// [npcById], [livingIds]) plus the shared pathfinding map. Call once
+  /// before the NPC loop, [endTick] after.
+  static void beginTick(List<Sector> sectors, List<NpcShip> allNpcs) {
+    final byId = {for (final s in sectors) s.id: s};
+    sectorById = byId;
+    PathfindingService.sharedIndex = byId;
+    final bySector = <int, List<NpcShip>>{};
+    final byNpcId = <String, NpcShip>{};
+    final alive = <String>{};
+    for (final n in allNpcs) {
+      (bySector[n.currentSectorId] ??= []).add(n);
+      byNpcId[n.id] = n;
+      if (!n.isDestroyed) alive.add(n.id);
+    }
+    npcsBySector = bySector;
+    npcById = byNpcId;
+    livingIds = alive;
+  }
+
+  /// Clears the per-tick indices (nulls restore scan fallbacks).
+  static void endTick() {
+    sectorById = null;
+    npcsBySector = null;
+    npcById = null;
+    livingIds = null;
+    PathfindingService.sharedIndex = null;
+  }
+
   static List<Sector> _ownedSectors(NpcShip npc, List<Sector> sectors) {
     final index = ownedPortIndex;
     if (index == null) {
@@ -439,7 +485,18 @@ class NpcAiService {
     if (npc.memory.vendettas.isEmpty) return const {};
     final myPower = CombatService.calculateFirepower(npc);
     final feared = <int>{};
+    // O(1) id lookups via the tick index when present (P2).
+    final index = NpcAiService.npcById;
     for (final entry in npc.memory.vendettas.entries) {
+      if (index != null) {
+        final n = index[entry.key];
+        if (n != null &&
+            !n.isDestroyed &&
+            CombatService.calculateFirepower(n) >= myPower) {
+          feared.add(entry.value.sectorId);
+        }
+        continue;
+      }
       for (final n in allNpcs) {
         if (n.id != entry.key || n.isDestroyed) continue;
         if (CombatService.calculateFirepower(n) >= myPower) {
@@ -477,6 +534,8 @@ class NpcAiService {
   // ────────────────────────────────────────────────────────────────
 
   static Sector? _findSector(List<Sector> sectors, int id) {
+    final index = sectorById;
+    if (index != null) return index[id];
     for (final s in sectors) {
       if (s.id == id) return s;
     }

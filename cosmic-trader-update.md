@@ -724,6 +724,27 @@ with automation-log lines + unit tests per the branch norm
   tick-end wreckage clearing (`clearWrecks` — 118 corpses vs 92 living
   were riding every save; faction totals persist in CombatMetrics).
   Covered by 1 test.
+- P2 scaling batch (`test/scaling_benchmark_test.dart`, 2 tests):
+  - Tick indices (`beginTick`/`endTick` around the NPC loop,
+    try/finally guarded): shared sector map (also feeding
+    `PathfindingService.sharedIndex`), co-located NPC lists, id map,
+    living set. Null outside ticks → scan fallbacks, so all 279 prior
+    tests pass unmodified. Documented staleness contract (topology
+    never stale; roster views nominate candidates only, writes
+    re-resolve live objects, death-prune re-checks).
+  - Consumers: scan threats/gossip/prune, attack same-sector + BFS
+    sectors, vendetta lookup, fearedSectors, threat sensing.
+  - `bfsParents` trees: trade evaluator O(m²)→O(m) BFS passes,
+    border holds O(S²)→O(S). Single-source BFS + index-pointer queues.
+  - Measured baseline: 200 NPC turns over 300 sectors in 53ms
+    (0.27ms/turn); 20× 30-port evaluations in 45ms. Generous
+    tripwire budgets (120s/60s) catch hangs/regressions, not SLAs.
+  - Deferred with rationale: full per-tick hunters map (per-call
+    memos already bound it; sharing would go stale against the cap),
+    movement-log gating (logs are soak instrumentation), evaluator
+    distance caching across ticks (universe mutates; per-call trees
+    suffice at measured rates).
+  Suite: 281 passing, analyze clean.
 - Bounty review (external pass — fixed, verified, deferred):
   - H1 player marks pay out: NPC killers collect on player death
     (credited + logged); new Fed marks on the player raise an Action
