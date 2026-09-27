@@ -39,7 +39,6 @@ class NpcGoal {
   String? get targetId => params['targetId'] as String?;
   String? get commodity => params['commodity'] as String?;
   double? get buyPrice => params['buyPrice'] as double?;
-  double? get sellPrice => params['sellPrice'] as double?;
 
   NpcGoal copyWith({
     NpcGoalType? type,
@@ -65,6 +64,23 @@ class NpcGoal {
   }
 
   factory NpcGoal.fromJson(Map<String, dynamic> json) {
+    DateTime createdAt;
+    try {
+      createdAt = json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'] as String)
+          : DateTime.now();
+    } catch (_) {
+      createdAt = DateTime.now();
+    }
+    // Malformed params degrade to empty, not to a roster-wiping throw
+    // (review batch 3, P3/P4): storage now skips bad records, and this
+    // keeps one bad goal from killing its ship's whole load.
+    Map<String, dynamic> params;
+    try {
+      params = Map<String, dynamic>.from(json['params'] as Map? ?? {});
+    } catch (_) {
+      params = {};
+    }
     return NpcGoal(
       type: NpcGoalType.values.firstWhere(
         (e) => e.name == json['type'],
@@ -74,10 +90,8 @@ class NpcGoal {
         (e) => e.name == json['status'],
         orElse: () => NpcGoalStatus.planning,
       ),
-      createdAt: json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'] as String)
-          : DateTime.now(),
-      params: Map<String, dynamic>.from(json['params'] ?? {}),
+      createdAt: createdAt,
+      params: params,
     );
   }
 }

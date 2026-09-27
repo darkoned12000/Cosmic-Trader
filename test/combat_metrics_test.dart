@@ -168,8 +168,7 @@ void main() {
           params: {'targetSectorId': 11, 'targetId': roster[1].id},
         ),
       );
-      roster[0] =
-          NpcAiService.processTurn(roster[0], sectors(), [], roster);
+      roster[0] = NpcAiService.processTurn(roster[0], sectors(), [], roster);
 
       final m = CombatMetrics.global;
       expect(m.engagements, 1);
@@ -199,8 +198,7 @@ void main() {
           params: {'targetSectorId': 11, 'targetId': roster[1].id},
         ),
       );
-      roster[0] =
-          NpcAiService.processTurn(roster[0], sectors(), [], roster);
+      roster[0] = NpcAiService.processTurn(roster[0], sectors(), [], roster);
 
       // Counted however it ended (exchange, retreat, or surrender) —
       // the choke point never misses a resolution.

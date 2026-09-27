@@ -178,8 +178,7 @@ class CombatMetrics extends ChangeNotifier {
     for (final name in names) {
       final s = perFaction[name]!;
       final loot = lootByFaction?[name];
-      buf.writeln(
-          '${name.padRight(10)} ${s.attacks.toString().padLeft(4)} '
+      buf.writeln('${name.padRight(10)} ${s.attacks.toString().padLeft(4)} '
           '${s.kills.toString().padLeft(5)} ${s.deaths.toString().padLeft(6)} '
           '${s.retreats.toString().padLeft(7)} ${s.surrenders.toString().padLeft(4)} '
           '${s.escapesFailed.toString().padLeft(7)}'

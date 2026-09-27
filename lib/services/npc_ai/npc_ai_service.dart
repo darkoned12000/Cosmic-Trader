@@ -71,13 +71,19 @@ class NpcAiService {
   /// Hulls with live attack goals on [targetId] (destroyed excluded).
   /// Counts across mechanisms — distress, pack, vendetta, and bounty
   /// hunters all see each other here.
-  static int huntersOnTarget(List<NpcShip> allNpcs, String targetId) {
-    var hunters = 0;
+  static int huntersOnTarget(List<NpcShip> allNpcs, String targetId) =>
+      _huntersByTarget(allNpcs)[targetId] ?? 0;
+
+  /// Full hunter census, built once per selection call (review batch 3,
+  /// P2): calling [huntersOnTarget] per candidate is O(N) per candidate.
+  static Map<String, int> _huntersByTarget(List<NpcShip> allNpcs) {
+    final hunters = <String, int>{};
     for (final n in allNpcs) {
+      final target = n.currentGoal?.targetId;
       if (!n.isDestroyed &&
           n.currentGoal?.type == NpcGoalType.attack &&
-          n.currentGoal?.targetId == targetId) {
-        hunters++;
+          target != null) {
+        hunters[target] = (hunters[target] ?? 0) + 1;
       }
     }
     return hunters;
@@ -249,14 +255,16 @@ class NpcAiService {
     // 2 — Execute the current goal (trade, bank, explore, etc.)
     updated = _executeGoal(updated, sectors, allNpcs);
 
-    // 2c — Wingmate gossip (C2d): co-located allies trade sightings.
-    updated = _shareIntel(updated, allNpcs);
-
     if (updated.isDestroyed) {
       GameEventLog.global.combat(
           '[${updated.pilotName}] Destroyed in Sector ${updated.currentSectorId}');
       return updated;
     }
+
+    // 2c — Wingmate gossip (C2d): co-located allies trade sightings.
+    // Runs only for the living (review batch 3, P1): a ship killed in
+    // its own execution has no death rattle to share.
+    updated = _shareIntel(updated, allNpcs);
 
     // 2b — Manage owned ports: collect revenue, buy upgrades. Runs
     // independent of the active goal (paperwork needs no travel).
@@ -402,6 +410,10 @@ class NpcAiService {
           desiredCredits: p.desiredCredits,
           owner: p.owner,
           ownerFaction: p.ownerFaction,
+          pricingOverride: switch (p.pricingOverride) {
+            null => const {},
+            final o => Map<String, double>.from(o),
+          },
           sellFactors: {
             for (final c in p.sellPrices.keys)
               c: p.supplyPriceMultiplier(c) * p.driftFor(c),
@@ -426,13 +438,16 @@ class NpcAiService {
     }
 
     // Detect threats (other factions in the same sector)
+    final aliveIds = <String>{npc.id};
     for (final player in players) {
+      aliveIds.add(player.id);
       if (player.currentSectorId == sector.id &&
           _isHostileFaction(npc.faction, player.faction)) {
         memory = memory.withThreat(player.id);
       }
     }
     for (final other in allNpcs) {
+      if (!other.isDestroyed) aliveIds.add(other.id);
       if (other.id != npc.id &&
           other.currentSectorId == sector.id &&
           !other.isDestroyed &&
@@ -440,6 +455,9 @@ class NpcAiService {
         memory = memory.withThreat(other.id);
       }
     }
+    // Threats whose holders are gone stop being threats (review batch
+    // 3, P1): without this the set only ever grows.
+    memory = memory.pruneThreats(aliveIds);
 
     return npc.copyWith(memory: memory);
   }
@@ -664,12 +682,18 @@ class NpcAiService {
   /// reselection can run. Every terminal failure below is visible in the
   /// trade log — silent kills were how live trade volume dropped to zero
   /// unnoticed.
+  ///
+  /// Sell-only runs (buyPortId == sellPortId) cool under a `sell>` key
+  /// namespace (review batch 3, P1): the evaluator only ever produces
+  /// `buy>sell` keys with distinct sectors, so shared keys would pile up
+  /// unmatched forever.
   static NpcShip _failTrade(NpcShip npc, NpcGoal goal, String reason) {
     GameEventLog.global.trade(
       '[${npc.pilotName}] Trade: route failed ($reason)',
     );
-    final key =
-        NpcMemory.routeKey(goal.buyPortId, goal.sellPortId, goal.commodity);
+    final key = goal.buyPortId == goal.sellPortId
+        ? 'sell>${goal.sellPortId}:${goal.commodity}'
+        : NpcMemory.routeKey(goal.buyPortId, goal.sellPortId, goal.commodity);
     return npc.copyWith(
       clearGoal: true,
       memory: npc.memory.withFailedRoute(key),
@@ -738,6 +762,20 @@ class NpcAiService {
       var port = sector.port;
       if (port == null) {
         return _failTrade(npc, goal, '${sector.name} lost its port');
+      }
+
+      // Service check (review batch 3, P1): refused or wrecked ports
+      // don't trade, same as refuel/upgrade already enforce.
+      final buyStanding = FactionStanding.resolveFor(
+        npc.faction,
+        port.ownerFaction,
+        npc.memory.factionStandings,
+      );
+      if (port.isDestroyed) {
+        return _failTrade(npc, goal, '${port.name} destroyed');
+      }
+      if (port.deniesServiceTo(buyStanding)) {
+        return _failTrade(npc, goal, '${port.name} refuses service');
       }
 
       // Regen before reading
@@ -847,6 +885,20 @@ class NpcAiService {
         return _failTrade(npc, goal, '${sector.name} lost its port');
       }
 
+      // Service check (review batch 3, P1): refused or wrecked ports
+      // don't buy either.
+      final sellStanding = FactionStanding.resolveFor(
+        npc.faction,
+        port.ownerFaction,
+        npc.memory.factionStandings,
+      );
+      if (port.isDestroyed) {
+        return _failTrade(npc, goal, '${port.name} destroyed');
+      }
+      if (port.deniesServiceTo(sellStanding)) {
+        return _failTrade(npc, goal, '${port.name} refuses service');
+      }
+
       // Regen before reading
       port = port.regen(now: nowMs);
       sector.port = port;
@@ -934,7 +986,9 @@ class NpcAiService {
         cargoUsed: npc.cargoUsed - actualQuantity,
         // Route learning (C2d): profitable runs teach; losses don't.
         // Mirrors the failed-route cooldown with a positive signal.
-        memory: (profit > 0
+        // Sell-only self-loops (buyPortId == sellPortId) teach nothing
+        // the evaluator could ever match (review batch 3, P1).
+        memory: (profit > 0 && goal.buyPortId != goal.sellPortId
                 ? npc.memory.withProfitableRoute(NpcMemory.routeKey(
                     goal.buyPortId, goal.sellPortId, commodity))
                 : npc.memory)
@@ -1012,9 +1066,13 @@ class NpcAiService {
         updated = updated.copyWith(credits: updated.credits + revenue);
       }
 
-      // One upgrade per tick max: defense first, then storage.
+      // One upgrade per tick max: defense first, then storage. A spent
+      // upgrade must not eat sibling ports' revenue (review batch 3, P1):
+      // the old break exited the whole sector loop, so ports after the
+      // upgraded one skipped collection that tick.
+      var upgraded = false;
       final live = sector.port!;
-      if (live.defenseLevel < 4) {
+      if (!upgraded && live.defenseLevel < 4) {
         final cost = live.defenseUpgradeCost.round();
         if (updated.credits - cost >= 50000) {
           sector.port = live.copyWith(defenseLevel: live.defenseLevel + 1);
@@ -1023,9 +1081,9 @@ class NpcAiService {
             '[${npc.pilotName}] Port upgrade: ${port.name} defenses → '
             'level ${live.defenseLevel + 1} for $cost cr',
           );
-          break;
+          upgraded = true;
         }
-      } else if (live.storageLevel < 10) {
+      } else if (!upgraded && live.storageLevel < 10) {
         final cost = live.storageUpgradeCost;
         if (cost.isFinite && updated.credits - cost.round() >= 50000) {
           sector.port = live.copyWith(storageLevel: live.storageLevel + 1);
@@ -1034,7 +1092,7 @@ class NpcAiService {
             '[${npc.pilotName}] Port upgrade: ${port.name} storage → '
             'level ${live.storageLevel + 1}',
           );
-          break;
+          upgraded = true;
         }
       }
     }
@@ -1455,9 +1513,11 @@ class NpcAiService {
       // Survivor posts a bounty on the aggressor from its own bankroll
       // (flat 5000 when affordable) — hits fund the board that pays hits.
       // Debit first: post() is infallible for validated amounts, so the
-      // bounty can never exist unpaid-for.
+      // bounty can never exist unpaid-for. Skipped when the aggressor
+      // died in the exchange (review batch 3, P1): a corpse can't earn,
+      // so the bounty would sit unclaimable forever.
       final survivor = allNpcs[idx];
-      if (survivor.credits >= 10000) {
+      if (survivor.credits >= 10000 && !result.attacker.isDestroyed) {
         allNpcs[idx] = survivor.copyWith(
           credits: survivor.credits - 5000,
         );
@@ -2078,13 +2138,13 @@ class NpcAiService {
         // Full holds are fine when the NPC carries sellable cargo — it
         // becomes a sell-first route (see _createTradeRouteGoal). Without
         // this, full holds deadlocked all future trading: no new route
-        // could start, and nothing else empties cargo.
-        // Credits gate only the buy leg: a broke NPC sitting on sellable
-        // cargo needs to trade most of all.
+        // could start, and nothing else empties cargo. Same for broke
+        // NPCs with room but cargo aboard (review batch 3, P1): credits
+        // gate only the buy leg, and creation routes them sell-first.
         final hasSpace = npc.cargoUsed < npc.cargoHoldCapacity;
         final hasCargo = npc.cargo.values.any((q) => q > 0);
         return npc.memory.discoveredPorts.length >= 2 &&
-            (hasSpace ? npc.credits > 100 : hasCargo);
+            (hasCargo || (hasSpace && npc.credits > 100));
       case NpcGoalType.explore:
         return _hasUnvisitedSectors(npc, sectors);
       case NpcGoalType.bankDeposit:
@@ -2202,14 +2262,16 @@ class NpcAiService {
     List<Sector> sectors,
     List<NpcShip> allNpcs,
   ) {
-    // Sell-first whenever there is no economical buy leg: full holds, or
-    // mere nibs (< 25% of capacity) not worth topping up with a fresh buy.
+    // Sell-first whenever there is no economical buy leg: full holds,
+    // mere nibs (< 25% of capacity) not worth topping up with a fresh buy,
+    // or broke pilots (credits gate the buy leg only — review batch 3).
     // Aborted routes leave partial cargo that would otherwise ride along
     // unsold forever while new commodities pile on top.
     final hasSpace = npc.cargoUsed < npc.cargoHoldCapacity;
     final hasCargo = npc.cargo.values.any((q) => q > 0);
     final nibs = hasCargo && npc.cargoUsed < npc.cargoHoldCapacity * 0.25;
-    if ((!hasSpace || nibs) && hasCargo) {
+    final broke = hasCargo && npc.credits <= 100;
+    if ((!hasSpace || nibs || broke) && hasCargo) {
       return _createSellOnlyGoal(npc, sectors, allNpcs);
     }
     final danger = fearedSectors(npc, allNpcs);
@@ -2250,7 +2312,6 @@ class NpcAiService {
         'sellPortId': route.sellSectorId,
         'commodity': route.commodity,
         'buyPrice': route.buyPrice,
-        'sellPrice': route.sellPrice,
         'phase': 'travel_to_buy',
       },
     );
@@ -2278,6 +2339,12 @@ class NpcAiService {
     npc.cargo.forEach((commodity, qty) {
       if (qty <= 0) return;
       for (final entry in npc.memory.discoveredPorts.entries) {
+        // Skip buyers on cooldown (review batch 3, P1): a failed sell
+        // keys `sell>port:commodity`, so dead buyers rest instead of
+        // re-selecting every cycle.
+        if (npc.memory.isRouteCooling('sell>${entry.key}:$commodity')) {
+          continue;
+        }
         final price = entry.value.getEffectiveBuyPrice(
           commodity,
           standing: FactionStanding.resolveFor(
@@ -2463,8 +2530,18 @@ class NpcAiService {
         }
       }
       if (escorts >= maxConvoyEscorts) continue;
-      final path = PathfindingService.findPath(
-          sectors, npc.currentSectorId, run.buyPortId!);
+      // Review batch 3, P0: target the phase-appropriate port. The old
+      // code always aimed at the buy port while copying the phase
+      // wholesale — escorts joining a sell-leg run sat at the buy port
+      // forever (arrival acts only at the sell port, movement holds on
+      // arrival). Empty-hold escorts still fail fast at the sell port
+      // ('hold empty'), which reselection handles normally.
+      final joinTarget = run.params['phase'] == 'travel_to_sell'
+          ? run.sellPortId
+          : run.buyPortId;
+      if (joinTarget == null) continue;
+      final path =
+          PathfindingService.findPath(sectors, npc.currentSectorId, joinTarget);
       if (path == null || path.length - 1 > maxDist) continue;
       if (npc.energy < (path.length - 1) * legCost + legCost) continue;
       GameEventLog.global
@@ -2476,7 +2553,7 @@ class NpcAiService {
         createdAt: DateTime.now(),
         params: {
           ...run.params,
-          'targetSectorId': run.buyPortId,
+          'targetSectorId': joinTarget,
           'convoyLeader': leader.id,
         },
       );
@@ -2696,6 +2773,9 @@ class NpcAiService {
 
     final grudges = npc.memory.vendettas.entries.toList()
       ..sort((a, b) => b.value.grievance.compareTo(a.value.grievance));
+    // Hunter census once per selection (P2): per-grudge scans are O(N)
+    // each against a roster scanned every tick.
+    final hunters = _huntersByTarget(allNpcs);
     for (final entry in grudges) {
       final record = entry.value;
       if (record.grievance < vendettaGrievanceThreshold) continue;
@@ -2712,7 +2792,7 @@ class NpcAiService {
       if (target == null) continue;
       // Convergence cap (review batch 1): a magnet target with a full
       // wing already inbound waits — the grudge keeps for later.
-      if (huntersOnTarget(allNpcs, target.id) >= maxHuntersPerTarget) {
+      if ((hunters[target.id] ?? 0) >= maxHuntersPerTarget) {
         continue;
       }
       // Destination is the intel (last-seen sector while fresh,
@@ -2761,11 +2841,18 @@ class NpcAiService {
     // Greedy hunters (greed ≥ 0.7) prefer marked targets: highest active
     // bounty first, weakest as tie-break. Everyone else takes the weakest.
     final greedy = npc.personalityConfig.greed >= 0.7;
+    // Per-call memos (review batch 3, P2): bounty totals and hunter
+    // counts are roster-wide scans — pay once per selection, not per
+    // candidate comparison.
+    final bountyCache = <String, int>{};
+    int bountyOf(String id) =>
+        bountyCache.putIfAbsent(id, () => BountyBoard.global.totalFor(id));
+    final hunters = _huntersByTarget(allNpcs);
     bool prefers(NpcShip candidate, int candidatePower, NpcShip? current) {
       if (current == null) return true;
       if (greedy) {
-        final bounty = BountyBoard.global.totalFor(candidate.id);
-        final best = BountyBoard.global.totalFor(current.id);
+        final bounty = bountyOf(candidate.id);
+        final best = bountyOf(current.id);
         if (bounty != best) return bounty > best;
       }
       return candidatePower < CombatService.calculateFirepower(current);
@@ -2781,7 +2868,7 @@ class NpcAiService {
       final otherPower = CombatService.calculateFirepower(other);
       if (otherPower >= myPower) continue; // only attack weaker targets
       // Convergence cap (review batch 1): magnet targets wait their turn.
-      if (huntersOnTarget(allNpcs, other.id) >= maxHuntersPerTarget) {
+      if ((hunters[other.id] ?? 0) >= maxHuntersPerTarget) {
         continue;
       }
       if (prefers(other, otherPower, bestTarget)) {
@@ -2810,7 +2897,7 @@ class NpcAiService {
             if (!_isHostileFaction(npc.faction, other.faction)) continue;
             final otherPower = CombatService.calculateFirepower(other);
             if (otherPower >= myPower) continue;
-            if (huntersOnTarget(allNpcs, other.id) >= maxHuntersPerTarget) {
+            if ((hunters[other.id] ?? 0) >= maxHuntersPerTarget) {
               continue;
             }
             if (prefers(other, otherPower, bestTarget)) {
@@ -2858,7 +2945,7 @@ class NpcAiService {
     // live roster, the same intent gossip would carry), when reachable.
     // No heading, no bounty, or out of reach: hunt where they are.
     if (bestTarget != null && greedy && bestTargetSectorId != null) {
-      final bounty = BountyBoard.global.totalFor(bestTarget.id);
+      final bounty = bountyOf(bestTarget.id);
       final heading = bestTarget.currentGoal;
       final dest = heading?.targetSectorId;
       if (bounty > 0 &&
@@ -2937,10 +3024,22 @@ class NpcAiService {
   ) {
     if (!_hasEnergy(npc)) return npc;
 
+    final cost = EnergyService.npcWarpCost(npc);
+
+    // Solar Array retract (review batch 3, P0): a deployed array locks
+    // the ship, and nothing ever furled it again — array owners with
+    // energy sat at full tanks forever. Charged enough to warp means
+    // fly; the trickle resumes next stranding.
+    if (npc.solarArrayDeployed) {
+      if (!npc.hasEnergy(cost)) return _handleStranded(npc);
+      GameEventLog.global
+          .energy('NPC_ENERGY event=array_retract pilot=${npc.pilotName}');
+      return _move(npc.copyWith(solarArrayDeployed: false), sectors, allNpcs);
+    }
+
     // Deployed Solar Array locks the ship (mirrors Player.canMove).
     if (!npc.canMove) return npc;
 
-    final cost = EnergyService.npcWarpCost(npc);
     if (!npc.hasEnergy(cost)) return _handleStranded(npc);
 
     // Only travelling goals steer movement. Following a complete/failed

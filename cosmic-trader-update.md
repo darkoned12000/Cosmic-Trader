@@ -658,7 +658,48 @@ with automation-log lines + unit tests per the branch norm
     maxed drift on both axes).
   Covered by 3 new tests (unique homeworld names + reserve labels +
   outpost count; destroy timer hygiene; credits clamp).
-  Suite: 247 passing, analyze clean.
+- Review batch 3 (npc_ai deep pass — fixed, verified, deferred):
+  - P0 deadlocks, both confirmed and fixed: array retract on charge
+    (`_move` furls and flies when energy covers a warp; trickle
+    resumes next stranding) and convoy sell-phase target (escorts aim
+    at the phase-appropriate port; empty holds fail fast normally).
+  - P1 verified and fixed: broke-with-cargo gate + sell-first routing;
+    sell-only `sell>` cooldown namespace (consulted at selection,
+    self-loops teach no route-learning); revenue no longer skipped
+    after upgrades (`continue`, not `break`); trade refuses wrecked/
+    hostile ports like refuel/upgrade; PortInfo snapshots + applies
+    owner overrides; scan no-op guards (+ `PortInfo ==`); dead threats
+    prune on scan; death check moved above gossip; no bounty on dead
+    aggressors.
+  - P2 (this round): per-call hunter/bounty memos, `removeAt(0)` →
+    index pointers in pathfinding. Deferred with rationale: full
+    per-tick indices, evaluator path reuse, sector-index threading —
+    the default 50-sector soak never touches those paths; revisit
+    with a scaling benchmark before raising sector caps. (Noted in
+    passing: an `ownedPortIndex` per-tick index already exists.)
+  - P3: discovered-ports cap (40, stalest evicted), failed-routes
+    prune-on-write + caps, profitable-route key cap, bounty board cap
+    (200, oldest out), per-record storage parse (skip-and-log) and
+    loud save failures. Deferred: destroyed-roster pruning (needs
+    death timestamps — long-session backlog).
+  - P4: dead `sellPrice` goal param removed, `NpcGoal.fromJson`
+    hardened (bad dates/params degrade). Deferred: Combatant
+    interface, magic-string params, service split (churn risk
+    outweighs soak value).
+  - Refuted with evidence: player-hunt `maxDist + 1` is identical
+    hops semantics, not an off-by-one. Design questions parked:
+    trade `lastRegenTime` reset (consistent with player trade);
+    supply/demand snapshot filtering (stale zeros would stall worse
+    than wasted trips, which self-correct via cooldown).
+  - P5 deferred to roadmap (NPC↔NPC trade, directional flee,
+    limp-to-port repairs, loss-triggered distress, chatter, fleets,
+    ActionLog proximity gating); P6 benchmark deferred with the
+    scaling backlog.
+  Covered by `test/review_batch3_test.dart` (17 tests: retract,
+  recovery, sell-phase join, broke sell-first, revenue, guards,
+  no-ops, corpse gossip/bounty, key namespaces, overrides, caps,
+  fromJson).
+  Suite: 264 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

@@ -233,15 +233,13 @@ class _AutomationConsoleWidgetState extends State<AutomationConsoleWidget> {
                     );
                   },
                   icon: const Icon(Icons.copy_rounded, size: 16),
-                  label: const Text('Copy report',
-                      style: TextStyle(fontSize: 12)),
+                  label:
+                      const Text('Copy report', style: TextStyle(fontSize: 12)),
                 ),
                 TextButton.icon(
                   onPressed: () => metrics.reset(),
-                  icon:
-                      const Icon(Icons.delete_outline_rounded, size: 16),
-                  label: const Text('Reset',
-                      style: TextStyle(fontSize: 12)),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                  label: const Text('Reset', style: TextStyle(fontSize: 12)),
                 ),
               ],
             ),

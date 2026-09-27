@@ -291,12 +291,12 @@ void main() {
       }
 
       hero = strike(hero, victim(582));
-      expect(BountyBoard.global.totalFor(hero.id),
-          RepopulationService.heroBounty);
+      expect(
+          BountyBoard.global.totalFor(hero.id), RepopulationService.heroBounty);
       // Active price stands: no stacking on the second kill.
       hero = strike(hero, victim(583));
-      expect(BountyBoard.global.totalFor(hero.id),
-          RepopulationService.heroBounty);
+      expect(
+          BountyBoard.global.totalFor(hero.id), RepopulationService.heroBounty);
     });
 
     test('a legend already flying is never duplicated', () {

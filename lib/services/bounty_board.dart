@@ -22,6 +22,11 @@ class BountyBoard extends ChangeNotifier {
   final List<PaidBounty> _paid = [];
   bool _loaded = false;
 
+  /// Cap on live bounties (review batch 3, P3): only payKiller trims,
+  /// so unclaimed marks on long-dead targets would pile up forever.
+  /// Oldest evicts first.
+  static const int maxActiveBounties = 200;
+
   List<Bounty> get active => List.unmodifiable(_active);
   List<PaidBounty> get paid => List.unmodifiable(_paid);
 
@@ -90,6 +95,13 @@ class BountyBoard extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
     _active.add(bounty);
+    while (_active.length > maxActiveBounties) {
+      final evicted = _active.removeAt(0);
+      GameEventLog.global.system(
+        '[Bounty] Board full — oldest mark (${evicted.targetName} '
+        '${evicted.amount} cr) expired unclaimed',
+      );
+    }
     GameEventLog.global.system(
       '[Bounty] $posterName posted $amount cr on $targetName'
       '${reason.isNotEmpty ? ' ($reason)' : ''}',

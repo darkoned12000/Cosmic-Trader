@@ -19,6 +19,11 @@ class PortInfo {
   final Map<String, double> sellFactors;
   final Map<String, double> buyFactors;
 
+  /// Owner price overrides, snapshotted (review batch 3, P1): live
+  /// execution applies them outright, so selection must too — otherwise
+  /// owner-customized ports misprice during route evaluation.
+  final Map<String, double> pricingOverride;
+
   const PortInfo({
     required this.name,
     required this.portClass,
@@ -31,7 +36,47 @@ class PortInfo {
     this.ownerFaction,
     this.sellFactors = const {},
     this.buyFactors = const {},
+    this.pricingOverride = const {},
   });
+
+  /// Deep equality so scans can skip unchanged snapshots (review batch
+  /// 3, P1): map `==` is identity, so compare contents.
+  static bool _pricesEqual(Map<String, double> a, Map<String, double> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
+    return true;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is PortInfo &&
+        other.name == name &&
+        other.portClass == portClass &&
+        _pricesEqual(other.buyPrices, buyPrices) &&
+        _pricesEqual(other.sellPrices, sellPrices) &&
+        other.defenseLevel == defenseLevel &&
+        other.portCredits == portCredits &&
+        other.desiredCredits == desiredCredits &&
+        other.owner == owner &&
+        other.ownerFaction == ownerFaction &&
+        _pricesEqual(other.sellFactors, sellFactors) &&
+        _pricesEqual(other.buyFactors, buyFactors) &&
+        _pricesEqual(other.pricingOverride, pricingOverride);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        name,
+        portClass,
+        defenseLevel,
+        portCredits,
+        desiredCredits,
+        owner,
+        ownerFaction,
+      );
 
   double get cashRatio {
     if (desiredCredits <= 0) return 1.0;
@@ -43,6 +88,10 @@ class PortInfo {
   double getEffectiveSellPrice(String commodity, {int standing = 0}) {
     final base = sellPrices[commodity] ?? 0;
     if (base <= 0) return 0;
+    // Owner override wins outright, mirroring live execution exactly.
+    if (pricingOverride.containsKey(commodity)) {
+      return base * pricingOverride[commodity]!;
+    }
     final mult = (priceMultiplier *
             (sellFactors[commodity] ?? 1.0) *
             Port.standingBuyMultiplier(standing))
@@ -53,6 +102,9 @@ class PortInfo {
   double getEffectiveBuyPrice(String commodity, {int standing = 0}) {
     final base = buyPrices[commodity] ?? 0;
     if (base <= 0) return 0;
+    if (pricingOverride.containsKey(commodity)) {
+      return base * pricingOverride[commodity]!;
+    }
     final mult = (priceMultiplier *
             (buyFactors[commodity] ?? 1.0) *
             Port.standingSellMultiplier(standing))
@@ -73,6 +125,7 @@ class PortInfo {
       'ownerFaction': ownerFaction?.name,
       'sellFactors': sellFactors,
       'buyFactors': buyFactors,
+      'pricingOverride': pricingOverride,
     };
   }
 
@@ -105,6 +158,10 @@ class PortInfo {
           ) ??
           {},
       buyFactors: (json['buyFactors'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toDouble()),
+          ) ??
+          {},
+      pricingOverride: (json['pricingOverride'] as Map?)?.map(
             (k, v) => MapEntry(k as String, (v as num).toDouble()),
           ) ??
           {},
@@ -234,6 +291,14 @@ class NpcMemory {
   /// history shouldn't outshout fresh prices.
   static const int maxRouteWins = 10;
 
+  /// Cap on remembered ports per pilot (review batch 3, P3).
+  static const int maxDiscoveredPorts = 40;
+
+  /// Cap on tracked route keys (review batch 3, P3): cooldowns prune by
+  /// time, but a busy trader would still accumulate keys all session.
+  static const int maxFailedRoutes = 50;
+  static const int maxProfitableRoutes = 50;
+
   /// Hearsay grievance for gossiped sightings (C2d): knowing OF a killer
   /// is not the same as watching them kill. Below the hunt threshold, so
   /// gossip informs but never launches hunts by itself.
@@ -281,26 +346,53 @@ class NpcMemory {
   }
 
   NpcMemory withVisitedSector(int sectorId) {
+    if (visitedSectors.contains(sectorId)) return this;
     final updated = Set<int>.from(visitedSectors);
     updated.add(sectorId);
     return copyWith(visitedSectors: updated);
   }
 
   NpcMemory withDiscoveredPort(int sectorId, PortInfo port) {
+    // No-op when the snapshot is unchanged (review batch 3, P1): a
+    // parked NPC otherwise copies its whole port book every turn.
+    if (discoveredPorts[sectorId] == port) return this;
     final updated = Map<int, PortInfo>.from(discoveredPorts);
     updated[sectorId] = port;
+    // Bound the book (review batch 3, P3): explorers in huge universes
+    // would otherwise carry hundreds of ports into every save.
+    // Insertion-ordered, so the first key is the stalest lead.
+    while (updated.length > maxDiscoveredPorts) {
+      updated.remove(updated.keys.first);
+    }
     return copyWith(discoveredPorts: updated);
   }
 
   NpcMemory withKnownHazard(int sectorId, HazardInfo hazard) {
+    final existing = knownHazards[sectorId];
+    if (existing != null &&
+        existing.navHaz == hazard.navHaz &&
+        existing.anomaly == hazard.anomaly) {
+      return this;
+    }
     final updated = Map<int, HazardInfo>.from(knownHazards);
     updated[sectorId] = hazard;
     return copyWith(knownHazards: updated);
   }
 
   NpcMemory withThreat(String threatId) {
+    if (knownThreatIds.contains(threatId)) return this;
     final updated = Set<String>.from(knownThreatIds);
     updated.add(threatId);
+    return copyWith(knownThreatIds: updated);
+  }
+
+  /// Drops threat ids with no living holder in [aliveIds] (review batch
+  /// 3, P1): `removeThreat` had no callers, so the set only grew.
+  /// Returns `this` when nothing expired.
+  NpcMemory pruneThreats(Set<String> aliveIds) {
+    if (knownThreatIds.every(aliveIds.contains)) return this;
+    final updated = Set<String>.from(knownThreatIds)
+      ..retainWhere(aliveIds.contains);
     return copyWith(knownThreatIds: updated);
   }
 
@@ -320,10 +412,22 @@ class NpcMemory {
   static String routeKey(int? buyPortId, int? sellPortId, String? commodity) =>
       '$buyPortId>$sellPortId:$commodity';
 
-  /// Records a failed route, starting its cooldown.
+  /// Records a failed route, starting its cooldown. Expired entries
+  /// prune on write and the map caps at [maxFailedRoutes] (review batch
+  /// 3, P3): `coolingRoutes` only filters on read, so without this the
+  /// keys accumulate all session.
   NpcMemory withFailedRoute(String key, {int? nowMs}) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
     final updated = Map<String, int>.from(failedRoutes);
-    updated[key] = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    updated[key] = now;
+    updated.removeWhere(
+        (k, at) => k != key && now - at >= routeCooldown.inMilliseconds);
+    while (updated.length > maxFailedRoutes) {
+      final victim =
+          updated.keys.firstWhere((k) => k != key, orElse: () => key);
+      if (victim == key) break;
+      updated.remove(victim);
+    }
     return copyWith(failedRoutes: updated);
   }
 
@@ -351,6 +455,11 @@ class NpcMemory {
   NpcMemory withProfitableRoute(String key) {
     final wins = profitableRoutes[key] ?? 0;
     if (wins >= maxRouteWins) return this;
+    // Cap keys as well as wins (review batch 3, P3).
+    if (!profitableRoutes.containsKey(key) &&
+        profitableRoutes.length >= maxProfitableRoutes) {
+      return this;
+    }
     final updated = Map<String, int>.from(profitableRoutes);
     updated[key] = wins + 1;
     return copyWith(profitableRoutes: updated);

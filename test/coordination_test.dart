@@ -265,9 +265,9 @@ void main() {
                 status: NpcGoalStatus.travelling,
                 createdAt: DateTime.now(),
                 params: {
-                  'targetSectorId': sector,
-                  'targetId': targetId,
-                }));
+              'targetSectorId': sector,
+              'targetId': targetId,
+            }));
 
     test('vendetta waits when a full wing is already inbound', () {
       final sectors = [
@@ -323,8 +323,7 @@ void main() {
       var extra = _npc(FactionClass.pirate, 11, 815,
           personality: NpcPersonality.pirateHunter);
       extra = extra.copyWith(
-          memory:
-              extra.memory.copyWith(visitedSectors: {11, 12}));
+          memory: extra.memory.copyWith(visitedSectors: {11, 12}));
 
       final roster = [...pack, victim, extra];
       extra = NpcAiService.processTurn(extra, sectors, [], roster);
@@ -402,7 +401,8 @@ void main() {
     });
   });
 
-  group('C3 bounty intercepts', () {    setUp(BountyBoard.resetForTest);
+  group('C3 bounty intercepts', () {
+    setUp(BountyBoard.resetForTest);
     tearDown(BountyBoard.resetForTest);
 
     List<Sector> triangle() => [

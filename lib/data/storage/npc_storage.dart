@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/npc_ship.dart';
+import '../../services/game_event_log.dart';
 import 'file_safe.dart';
 
 class NpcStorage {
@@ -26,9 +27,24 @@ class NpcStorage {
       if (contents.isEmpty) return [];
       final data = json.decode(contents) as Map<String, dynamic>;
       final npcList = data['npcs'] as List? ?? [];
-      return npcList
-          .map((npc) => NpcShip.fromJson(npc as Map<String, dynamic>))
-          .toList();
+      // Per-record parse (review batch 3, P3): one corrupt NPC used to
+      // discard the entire roster. Skips are loud in the system feed.
+      final roster = <NpcShip>[];
+      var skipped = 0;
+      for (final raw in npcList) {
+        try {
+          roster.add(NpcShip.fromJson(raw as Map<String, dynamic>));
+        } catch (_) {
+          skipped++;
+        }
+      }
+      if (skipped > 0) {
+        GameEventLog.global.system(
+          '[NpcStorage] Skipped $skipped corrupt NPC record(s) '
+          '(${roster.length} loaded)',
+        );
+      }
+      return roster;
     } catch (e) {
       return [];
     }
@@ -40,7 +56,9 @@ class NpcStorage {
       final data = {'npcs': npcs.map((npc) => npc.toJson()).toList()};
       await FileSafe.writeString(file, json.encode(data));
     } catch (e) {
-      // Silently fail to not break universe generation
+      // Loud instead of silent (review batch 3, P3): an invisible
+      // failed save is how sessions lose whole rosters.
+      GameEventLog.global.system('[NpcStorage] Save failed: $e');
     }
   }
 

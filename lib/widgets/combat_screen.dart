@@ -299,8 +299,8 @@ class _CombatScreenState extends State<CombatScreen>
         attackerFaction: _player.faction.name,
         defenderFaction: _npc.faction.name,
         outcome: CombatOutcome.attackerVictory,
-        attackerHullFraction: CombatMetrics.fractionOf(
-            playerHull, _player.maxHull),
+        attackerHullFraction:
+            CombatMetrics.fractionOf(playerHull, _player.maxHull),
         defenderHullFraction: 0.0,
       );
       _endCombat(victory: true);
@@ -316,8 +316,7 @@ class _CombatScreenState extends State<CombatScreen>
         defenderFaction: _npc.faction.name,
         outcome: CombatOutcome.defenderVictory,
         attackerHullFraction: 0.0,
-        defenderHullFraction:
-            CombatMetrics.fractionOf(npcHull, _npc.maxHull),
+        defenderHullFraction: CombatMetrics.fractionOf(npcHull, _npc.maxHull),
       );
       _endCombat(victory: false);
       return;
@@ -376,13 +375,11 @@ class _CombatScreenState extends State<CombatScreen>
         attackerFaction: _player.faction.name,
         defenderFaction: _npc.faction.name,
         outcome: CombatOutcome.defenderRetreat,
-        attackerHullFraction: CombatMetrics.fractionOf(
-            _player.hull, _player.maxHull),
-        defenderHullFraction:
-            CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
+        attackerHullFraction:
+            CombatMetrics.fractionOf(_player.hull, _player.maxHull),
+        defenderHullFraction: CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
       );
-      CombatMetrics.global
-          .recordNpcYield(retreated: true, parleyed: false);
+      CombatMetrics.global.recordNpcYield(retreated: true, parleyed: false);
       _endCombat(victory: false, npcRetreated: true);
     } else {
       _combatLog.add(
@@ -409,12 +406,10 @@ class _CombatScreenState extends State<CombatScreen>
       outcome: CombatOutcome.defenderSurrender,
       attackerHullFraction:
           CombatMetrics.fractionOf(_player.hull, _player.maxHull),
-      defenderHullFraction:
-          CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
+      defenderHullFraction: CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
       tribute: tribute,
     );
-    CombatMetrics.global
-        .recordNpcYield(retreated: false, parleyed: true);
+    CombatMetrics.global.recordNpcYield(retreated: false, parleyed: true);
     _endCombat(victory: false, parleyed: true);
   }
 

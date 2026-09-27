@@ -1000,7 +1000,8 @@ void main() {
       expect(identical(memory.withVendettaResolved('nobody'), memory), isTrue);
     });
 
-    test('ease reduces, drops at zero, never refreshes the window', () {      var memory = const NpcMemory().withVendetta(
+    test('ease reduces, drops at zero, never refreshes the window', () {
+      var memory = const NpcMemory().withVendetta(
         targetId: 'killer',
         sectorId: 7,
         grievanceBump: 40,

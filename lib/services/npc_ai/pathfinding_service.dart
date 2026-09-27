@@ -24,8 +24,11 @@ class PathfindingService {
       _PathNode(startId, [startId])
     ];
 
-    while (queue.isNotEmpty) {
-      final current = queue.removeAt(0);
+    // Index pointer, not removeAt(0) (review batch 3, P2): draining
+    // from the front is O(n) per pop.
+    var queueIdx = 0;
+    while (queueIdx < queue.length) {
+      final current = queue[queueIdx++];
       final s = byId[current.sectorId];
       if (s == null) continue;
 
@@ -73,8 +76,10 @@ class PathfindingService {
       _PathNode(startId, [startId])
     ];
 
-    while (queue.isNotEmpty) {
-      final current = queue.removeAt(0);
+    // Index pointer, not removeAt(0) (review batch 3, P2).
+    var queueIdx = 0;
+    while (queueIdx < queue.length) {
+      final current = queue[queueIdx++];
       final s = byId[current.sectorId];
       if (s == null) continue;
 
@@ -101,8 +106,9 @@ class PathfindingService {
     final visited = <int>{startId};
     final queue = [startId];
 
-    while (queue.isNotEmpty) {
-      final current = queue.removeAt(0);
+    var queueIdx = 0;
+    while (queueIdx < queue.length) {
+      final current = queue[queueIdx++];
       final s = byId[current];
       if (s == null) continue;
 

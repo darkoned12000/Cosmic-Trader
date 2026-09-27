@@ -177,7 +177,7 @@ lib/
       port_combat_service.dart    -- port combat resolution engine (shared siege core) with defense stats
 ```
 
-## File inventory (103 source files, 39 test files, 247 tests passing)
+## File inventory (103 source files, 40 test files, 264 tests passing)
 
 | Path | Role |
 |------|------|
@@ -467,10 +467,10 @@ Bundled assets (declared in `pubspec.yaml`):
 ## Known issues / technical debt
 
 - `core/theme.dart` (TWTheme) is unused — theme built inline in main.dart from ThemeService
-- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (247 tests) before committing
+- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (264 tests) before committing
 - Repeated UI patterns (cards, stat bars, pills) duplicated across screens → **A2 shared widget library**: `lib/widgets/shared/` ships `PanelCard`, `StatBar` (inline + stacked layouts), `HudPill` (radius/padding/font/icon overrides), `DataTableShell` (all density-aware via `UiScale.spacing()`). Adopted in `ship_status.dart` (5 panels), `port_trade_view.dart` (pills + trade table), `ship_status_summary.dart` (4 bars), `planet_screen.dart` (resource/defense bars), `faction_rankings_screen.dart` (stat pills). Screens whose cards use distinct visual families (radius-12 banded headers, padding-20 accent cards, ExpansionTile settings cards, hero/terminal styles) were audited and intentionally left as-is rather than forced.
 - No lint/format CI pipeline
-- Test coverage: 247 tests across 39 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
+- Test coverage: 264 tests across 40 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
 - No audio asset files shipped in the past — this is no longer the case; 5 tracks are now bundled
 - Sector `planetType` string removed from `Sector` (structured `Planet` object used instead) — old saves are handled by `fromJson` defaults
 - `PlanetScreen` "Attack" action currently only writes to the action log (combat pending)

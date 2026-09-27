@@ -39,7 +39,8 @@ void main() {
     expect(sectors, hasLength(20));
   });
 
-  test('generated universe invariants hold', () {    final gen = UniverseGenerator(_settings());
+  test('generated universe invariants hold', () {
+    final gen = UniverseGenerator(_settings());
     final sectors = gen.generate();
     final npcs = gen.generatedNpcs;
 
