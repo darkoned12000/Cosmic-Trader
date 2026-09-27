@@ -10,6 +10,7 @@ import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/combat_metrics.dart';
+import 'package:cosmic_trader/services/repopulation_service.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
@@ -59,9 +60,28 @@ class NpcAiService {
   /// wing: visible on the map, meaningful in a fight, not a migration.
   static const int maxConvoyEscorts = 2;
 
-  /// Max hulls converging on one wolf-pack target (C3), matching the
-  /// distress wing size so combined arms never stack past it casually.
-  static const int maxWolfpackSize = 3;
+  /// Shared target-convergence cap (review batch 1): EVERY hunt path —
+  /// distress, wolf-pack, vendetta, and bounty targeting — counts hulls
+  /// already holding attack goals on a candidate (whatever created them)
+  /// and stands down past this many. Without it, notorious targets
+  /// (stacked grudges, stacked bounties, fresh heroes) attract unbounded
+  /// independent swarms: the stampede pattern, rediscovered.
+  static const int maxHuntersPerTarget = 3;
+
+  /// Hulls with live attack goals on [targetId] (destroyed excluded).
+  /// Counts across mechanisms — distress, pack, vendetta, and bounty
+  /// hunters all see each other here.
+  static int huntersOnTarget(List<NpcShip> allNpcs, String targetId) {
+    var hunters = 0;
+    for (final n in allNpcs) {
+      if (!n.isDestroyed &&
+          n.currentGoal?.type == NpcGoalType.attack &&
+          n.currentGoal?.targetId == targetId) {
+        hunters++;
+      }
+    }
+    return hunters;
+  }
 
   /// C2 vendetta pursuit bounds. A grudge at or above
   /// [vendettaGrievanceThreshold] (one witnessed kin-kill) funds a hunt
@@ -1379,6 +1399,23 @@ class NpcAiService {
       // resolves regardless of any bounty payout. Memory only.
       // Killers grow bolder (C4d drift) on the same occasion.
       var resolvedAttacker = result.attacker.driftedForKill();
+      // Legends earn their price (review batch 1): a hero's kill posts
+      // the Guild bounty when none is active — never at spawn, so
+      // newborn legends aren't beelined before doing anything legendary.
+      if (result.attacker.heroName != null &&
+          BountyBoard.global.totalFor(result.attacker.id) <= 0) {
+        BountyBoard.global.post(
+          targetId: result.attacker.id,
+          targetName: result.attacker.heroName!,
+          targetFaction: result.attacker.faction.name,
+          amount: RepopulationService.heroBounty,
+          posterId: 'CHRONICLERS',
+          posterName: 'Guild Chroniclers',
+          posterFaction: FactionClass.trader.name,
+          reason:
+              'living legend — ${result.attacker.heroTitle ?? 'terror of the spacelanes'}',
+        );
+      }
       if (resolvedAttacker.memory.vendettas.containsKey(target.id)) {
         resolvedAttacker = resolvedAttacker.copyWith(
           memory: resolvedAttacker.memory.withVendettaResolved(target.id),
@@ -2448,9 +2485,10 @@ class NpcAiService {
   }
 
   /// Wolf-pack join (C3): an idle pirate piles onto a wingmate's live
-  /// attack run. Packs are bounded ([maxWolfpackSize] hulls per target,
-  /// distress wings counted separately) and dissolve through the normal
-  /// arrival paths — kills, dry holes, and stand-downs all clear legs.
+  /// attack run. Packs share the convergence cap ([maxHuntersPerTarget],
+  /// counted across mechanisms by [huntersOnTarget]) and dissolve through
+  /// the normal arrival paths — kills, dry holes, and stand-downs all
+  /// clear legs.
   static NpcGoal? _createWolfpackGoal(
     NpcShip npc,
     List<Sector> sectors,
@@ -2476,15 +2514,7 @@ class NpcAiService {
           _isSafeZone(hunt.targetSectorId!)) {
         continue;
       }
-      var pack = 0;
-      for (final n in allNpcs) {
-        if (!n.isDestroyed &&
-            n.currentGoal?.type == NpcGoalType.attack &&
-            n.currentGoal?.targetId == targetId) {
-          pack++;
-        }
-      }
-      if (pack >= maxWolfpackSize) continue;
+      if (huntersOnTarget(allNpcs, targetId) >= maxHuntersPerTarget) continue;
       final path = PathfindingService.findPath(
           sectors, npc.currentSectorId, hunt.targetSectorId!);
       if (path == null || path.length - 1 > maxDist) continue;
@@ -2615,19 +2645,14 @@ class NpcAiService {
 
     if (bestSignal == null) return null;
 
-    // Cap the stampede: ships already converging on this aggressor count
-    // against the wing limit (visible immediately — the tick loop writes
-    // each processed NPC back before the next one runs).
-    var committed = 0;
-    for (final n in allNpcs) {
-      if (n.id != npc.id &&
-          !n.isDestroyed &&
-          n.currentGoal?.type == NpcGoalType.attack &&
-          n.currentGoal?.targetId == bestSignal.aggressorId) {
-        committed++;
-      }
+    // Cap the stampede (shared counter — review batch 1): ships already
+    // converging on this aggressor count against the wing limit (visible
+    // immediately — the tick loop writes each processed NPC back before
+    // the next one runs).
+    if (huntersOnTarget(allNpcs, bestSignal.aggressorId) >=
+        maxDistressResponders) {
+      return null;
     }
-    if (committed >= maxDistressResponders) return null;
 
     // Energy gate: don't answer if the trip costs more than the tank
     // holds (plus one hop reserve). A responder that strands en route
@@ -2685,6 +2710,11 @@ class NpcAiService {
         }
       }
       if (target == null) continue;
+      // Convergence cap (review batch 1): a magnet target with a full
+      // wing already inbound waits — the grudge keeps for later.
+      if (huntersOnTarget(allNpcs, target.id) >= maxHuntersPerTarget) {
+        continue;
+      }
       // Destination is the intel (last-seen sector while fresh,
       // probabilistic fan-out once stale — C3), not the real
       // position — except under our nose: co-located ships see each
@@ -2750,6 +2780,10 @@ class NpcAiService {
       if (!_isHostileFaction(npc.faction, other.faction)) continue;
       final otherPower = CombatService.calculateFirepower(other);
       if (otherPower >= myPower) continue; // only attack weaker targets
+      // Convergence cap (review batch 1): magnet targets wait their turn.
+      if (huntersOnTarget(allNpcs, other.id) >= maxHuntersPerTarget) {
+        continue;
+      }
       if (prefers(other, otherPower, bestTarget)) {
         bestTarget = other;
         bestTargetSectorId = npc.currentSectorId;
@@ -2776,6 +2810,9 @@ class NpcAiService {
             if (!_isHostileFaction(npc.faction, other.faction)) continue;
             final otherPower = CombatService.calculateFirepower(other);
             if (otherPower >= myPower) continue;
+            if (huntersOnTarget(allNpcs, other.id) >= maxHuntersPerTarget) {
+              continue;
+            }
             if (prefers(other, otherPower, bestTarget)) {
               bestTarget = other;
               bestTargetSectorId = warp;

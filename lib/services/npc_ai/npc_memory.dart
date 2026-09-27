@@ -404,7 +404,12 @@ class NpcMemory {
 
   /// Records hostile contact with [targetId] (stable pilot id): creates
   /// or refreshes the vendetta, bumping grievance. First sighting time is
-  /// preserved across refreshes.
+  /// preserved across refreshes. Capped at [maxVendettas] entries (review
+  /// batch 1): the 6h time prune never fires inside a soak session, so
+  /// without a count cap the map only grows — beyond the cap the
+  /// coldest grudge (lowest grievance, oldest sighting) is forgotten.
+  static const int maxVendettas = 20;
+
   NpcMemory withVendetta({
     required String targetId,
     required int sectorId,
@@ -425,6 +430,22 @@ class NpcMemory {
           lastSeenMs: now,
           grievance: grievanceBump.clamp(0, 100),
         );
+    // Count cap: forget the coldest grudge when a new one overflows.
+    // Refreshes never evict — only genuine newcomers trigger this.
+    if (existing == null && updated.length > maxVendettas) {
+      String? coldest;
+      for (final entry in updated.entries) {
+        if (entry.key == targetId) continue;
+        final c = coldest == null ? null : updated[coldest];
+        if (c == null ||
+            entry.value.grievance < c.grievance ||
+            (entry.value.grievance == c.grievance &&
+                entry.value.lastSeenMs < c.lastSeenMs)) {
+          coldest = entry.key;
+        }
+      }
+      updated.remove(coldest);
+    }
     return copyWith(vendettas: updated);
   }
 

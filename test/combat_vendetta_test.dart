@@ -1000,8 +1000,7 @@ void main() {
       expect(identical(memory.withVendettaResolved('nobody'), memory), isTrue);
     });
 
-    test('ease reduces, drops at zero, never refreshes the window', () {
-      var memory = const NpcMemory().withVendetta(
+    test('ease reduces, drops at zero, never refreshes the window', () {      var memory = const NpcMemory().withVendetta(
         targetId: 'killer',
         sectorId: 7,
         grievanceBump: 40,
@@ -1013,6 +1012,38 @@ void main() {
       memory = memory.withVendettaEased('killer', 25);
       expect(memory.vendettas, isEmpty);
       expect(identical(memory.withVendettaEased('nobody', 10), memory), isTrue);
+    });
+
+    test('the map caps at maxVendettas, coldest grudge forgotten', () {
+      var memory = const NpcMemory();
+      for (var i = 0; i < NpcMemory.maxVendettas; i++) {
+        memory = memory.withVendetta(
+          targetId: 'grudge$i',
+          sectorId: 1,
+          grievanceBump: 10 + i,
+          nowMs: 1000 + i,
+        );
+      }
+      expect(memory.vendettas.length, NpcMemory.maxVendettas);
+      // Newcomer overflows: grudge0 (coldest: lowest grievance) goes.
+      memory = memory.withVendetta(
+        targetId: 'newcomer',
+        sectorId: 2,
+        grievanceBump: 50,
+        nowMs: 9999,
+      );
+      expect(memory.vendettas.length, NpcMemory.maxVendettas);
+      expect(memory.vendettas.containsKey('grudge0'), isFalse);
+      expect(memory.vendettas['newcomer']!.grievance, 50);
+      // Refreshes never evict, even at the cap.
+      memory = memory.withVendetta(
+        targetId: 'grudge1',
+        sectorId: 3,
+        grievanceBump: 5,
+        nowMs: 10000,
+      );
+      expect(memory.vendettas.length, NpcMemory.maxVendettas);
+      expect(memory.vendettas.containsKey('grudge1'), isTrue);
     });
   });
 }

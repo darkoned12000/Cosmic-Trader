@@ -5,7 +5,6 @@ import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
-import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 
 /// Homeworld repopulation (C4, first slice).
@@ -206,11 +205,13 @@ class RepopulationService {
     return spawned;
   }
 
-  /// Living legends (C4c): rarely a yard rollout is a lore hero from
-  /// [Faction.notableHeroes] — buffed hull/shields/guns, marked notorious,
-  /// with a minted Guild bounty so hunters notice. Roster-unique by hero
-  /// name (a legend already flying is never duplicated). Factions without
-  /// a lore table sail no legends.
+  /// Living legends (C4c, revised review batch 1): rarely a yard rollout
+  /// is a lore hero from [Faction.notableHeroes] — buffed hull/shields/
+  /// guns, marked notorious, roster-unique by hero name. The Guild bounty
+  /// is EARNED, not minted: a legend's first kill posts it (see the kill
+  /// path), so newborn heroes aren't beelined by every greedy hull in
+  /// range before they've done anything legendary. Factions without a
+  /// lore table sail no legends.
   static NpcShip _maybeHero(
     NpcShip ship,
     List<NpcShip> npcs,
@@ -231,16 +232,6 @@ class RepopulationService {
         .toList();
     if (candidates.isEmpty) return ship;
     final hero = candidates[random.nextInt(candidates.length)];
-    BountyBoard.global.post(
-      targetId: ship.id,
-      targetName: hero.name,
-      targetFaction: ship.faction.name,
-      amount: heroBounty,
-      posterId: 'CHRONICLERS',
-      posterName: 'Guild Chroniclers',
-      posterFaction: FactionClass.trader.name,
-      reason: 'living legend — ${hero.title}',
-    );
     GameEventLog.global.system(
       '[Production] Living legend ${hero.name} (${hero.title}) takes '
       'the helm in sector #${ship.currentSectorId}',

@@ -626,6 +626,24 @@ with automation-log lines + unit tests per the branch norm
     are Reset → run → Copy. NPC retreats auto-succeed by design, so
     failed escapes only occur vs the player (interception works).
   Suite: 240 passing, analyze clean.
+- Review batch 1 (external AI pass — stampede findings, all fixed):
+  - Shared convergence cap: `maxHuntersPerTarget` (3) counted via
+    `huntersOnTarget` across ALL mechanisms — distress (unified onto
+    the shared counter), wolf-pack (refactored onto it), vendetta
+    reacquisition (skips magnet targets, grudge keeps), and greedy
+    bounty targeting in `_createAttackGoal` (both search loops).
+    Notorious targets no longer draw unbounded independent swarms.
+  - Legends earn their price: no minted bounty at spawn (newborn
+    heroes drew every greedy hull in range); a hero's kill posts the
+    15k Guild bounty when none is active (no stacking).
+  - Vendetta map cap (`maxVendettas` 20): the 6h time prune never
+    fires inside a soak, so overflow now forgets the coldest grudge
+    (lowest grievance, oldest sighting); refreshes never evict.
+  - No change (soak watchlist): Duran fight-to-5%-hull stubbornness
+    is intended flavor — judge "stubborn vs suicidal" in the logs.
+  Covered by 5 new tests (vendetta/bounty cap waits, drain-and-resume,
+  earned hero bounty + no-stack, map-cap eviction).
+  Suite: 245 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

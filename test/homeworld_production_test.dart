@@ -253,9 +253,47 @@ void main() {
       expect(hero.shields, hero.maxShields);
       expect(hero.weaponSlots.values.every((lvl) => lvl >= 2), isTrue);
       expect(hero.notoriety, 15.0);
-      // The Guild puts story money on legends.
-      expect(
-          BountyBoard.global.totalFor(hero.id), RepopulationService.heroBounty);
+      // No minted bounty at spawn (review batch 1): legends earn it.
+      expect(BountyBoard.global.totalFor(hero.id), 0);
+    });
+
+    test('legends earn their Guild bounty with a first kill', () {
+      final sectors = [
+        Sector(id: 11, name: 'A', x: 0, y: 0, warpRoutes: const [12]),
+        Sector(id: 12, name: 'B', x: 1, y: 0, warpRoutes: const [11]),
+      ];
+      NpcShip victim(int seed) => _npc(FactionClass.trader, 11, seed).copyWith(
+            hull: 1,
+            maxHull: 1,
+            shields: 0,
+            maxShields: 0,
+            weaponSlots: const {'main_forward': 1},
+          );
+      var hero = _npc(FactionClass.duran, 11, 581).copyWith(
+        heroName: 'High Warlord Varak Thul',
+        heroTitle: 'Supreme Commander',
+      );
+      NpcShip strike(NpcShip killer, NpcShip prey) {
+        final out = [killer, prey];
+        out[0] = out[0].copyWith(
+          currentGoal: NpcGoal(
+            type: NpcGoalType.attack,
+            status: NpcGoalStatus.travelling,
+            createdAt: DateTime.now(),
+            params: {'targetSectorId': 11, 'targetId': prey.id},
+          ),
+        );
+        out[0] = NpcAiService.processTurn(out[0], sectors, [], out);
+        return out[0];
+      }
+
+      hero = strike(hero, victim(582));
+      expect(BountyBoard.global.totalFor(hero.id),
+          RepopulationService.heroBounty);
+      // Active price stands: no stacking on the second kill.
+      hero = strike(hero, victim(583));
+      expect(BountyBoard.global.totalFor(hero.id),
+          RepopulationService.heroBounty);
     });
 
     test('a legend already flying is never duplicated', () {

@@ -257,6 +257,112 @@ void main() {
     });
   });
 
+  group('Review batch 1: shared convergence cap', () {
+    NpcShip hunterWithGoal(int seed, String targetId, int sector) =>
+        _npc(FactionClass.pirate, 11, seed).copyWith(
+            currentGoal: NpcGoal(
+                type: NpcGoalType.attack,
+                status: NpcGoalStatus.travelling,
+                createdAt: DateTime.now(),
+                params: {
+                  'targetSectorId': sector,
+                  'targetId': targetId,
+                }));
+
+    test('vendetta waits when a full wing is already inbound', () {
+      final sectors = [
+        _plain(11, [12]),
+        _plain(12, [11]),
+      ];
+      final victim = _npc(FactionClass.pirate, 12, 801,
+          weapons: const {'main_forward': 1});
+      final pack = [
+        hunterWithGoal(802, victim.id, 12),
+        hunterWithGoal(803, victim.id, 12),
+        hunterWithGoal(804, victim.id, 12),
+      ];
+      var holder = _npc(FactionClass.trader, 11, 805, credits: 0);
+      holder = holder.copyWith(
+        memory: holder.memory.withVendetta(
+          targetId: victim.id,
+          sectorId: 12,
+          grievanceBump: 90,
+        ),
+      );
+
+      final roster = [...pack, victim, holder];
+      holder = NpcAiService.processTurn(holder, sectors, [], roster);
+      // Magnet target: the grudge keeps, the hunt waits.
+      expect(holder.currentGoal?.params.containsKey('vendettaFor') ?? false,
+          isFalse);
+      expect(holder.memory.vendettas[victim.id]?.grievance, 90);
+    });
+
+    test('bounty targeting respects the same cap', () {
+      BountyBoard.resetForTest();
+      final sectors = [
+        _plain(11, [12]),
+        _plain(12, [11]),
+      ];
+      var victim = _npc(FactionClass.trader, 12, 811,
+          weapons: const {'main_forward': 1});
+      BountyBoard.global.post(
+        targetId: victim.id,
+        targetName: victim.pilotName,
+        targetFaction: victim.faction.name,
+        amount: 5000,
+        posterId: 'tester',
+        posterName: 'Tester',
+        reason: 'test mark',
+      );
+      final pack = [
+        hunterWithGoal(812, victim.id, 12),
+        hunterWithGoal(813, victim.id, 12),
+        hunterWithGoal(814, victim.id, 12),
+      ];
+      var extra = _npc(FactionClass.pirate, 11, 815,
+          personality: NpcPersonality.pirateHunter);
+      extra = extra.copyWith(
+          memory:
+              extra.memory.copyWith(visitedSectors: {11, 12}));
+
+      final roster = [...pack, victim, extra];
+      extra = NpcAiService.processTurn(extra, sectors, [], roster);
+      final targetId = victim.id;
+      expect(
+          extra.currentGoal?.type == NpcGoalType.attack &&
+              extra.currentGoal?.targetId == targetId,
+          isFalse);
+      BountyBoard.resetForTest();
+    });
+
+    test('hunts resume as the wing drains', () {
+      final sectors = [
+        _plain(11, [12]),
+        _plain(12, [11]),
+      ];
+      final victim = _npc(FactionClass.pirate, 12, 821,
+          weapons: const {'main_forward': 1});
+      // Only two inbound: room for one more.
+      final pack = [
+        hunterWithGoal(822, victim.id, 12),
+        hunterWithGoal(823, victim.id, 12),
+      ];
+      var holder = _npc(FactionClass.trader, 11, 824, credits: 0);
+      holder = holder.copyWith(
+        memory: holder.memory.withVendetta(
+          targetId: victim.id,
+          sectorId: 12,
+          grievanceBump: 90,
+        ),
+      );
+
+      final roster = [...pack, victim, holder];
+      holder = NpcAiService.processTurn(holder, sectors, [], roster);
+      expect(holder.currentGoal?.params['vendettaFor'], victim.id);
+    });
+  });
+
   group('C3 border holds', () {
     test('idle Duran post up next door to hostiles and sit', () {
       final sectors = [
@@ -296,8 +402,7 @@ void main() {
     });
   });
 
-  group('C3 bounty intercepts', () {
-    setUp(BountyBoard.resetForTest);
+  group('C3 bounty intercepts', () {    setUp(BountyBoard.resetForTest);
     tearDown(BountyBoard.resetForTest);
 
     List<Sector> triangle() => [
