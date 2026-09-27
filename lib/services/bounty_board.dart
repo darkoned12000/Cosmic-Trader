@@ -22,6 +22,11 @@ class BountyBoard extends ChangeNotifier {
   final List<PaidBounty> _paid = [];
   bool _loaded = false;
 
+  /// Lifetime payouts this universe (the `_paid` list itself caps at 20
+  /// for display). Answers "is it 20 again?" — yes, the window is full;
+  /// the lifetime count keeps score.
+  int paidLifetime = 0;
+
   /// Cap on live bounties (review batch 3, P3): only payKiller trims,
   /// so unclaimed marks on long-dead targets would pile up forever.
   /// Oldest evicts first.
@@ -62,10 +67,15 @@ class BountyBoard extends ChangeNotifier {
     _paid
       ..clear()
       ..addAll(data.paid);
+    paidLifetime = data.paidLifetime;
     notifyListeners();
   }
 
-  Future<void> _persist() => BountyStorage.instance.saveAll(_active, _paid);
+  Future<void> _persist() => BountyStorage.instance.saveAll(
+        _active,
+        _paid,
+        paidLifetime: paidLifetime,
+      );
 
   /// Clears the board for a fresh universe (soak-found bug: regen kept
   /// ~50 stale marks on dead NPC ids, and zero ever paid out against
@@ -73,6 +83,7 @@ class BountyBoard extends ChangeNotifier {
   Future<void> resetForNewUniverse() async {
     _active.clear();
     _paid.clear();
+    paidLifetime = 0;
     notifyListeners();
     await _persist();
   }
@@ -191,6 +202,7 @@ class BountyBoard extends ChangeNotifier {
     String killerFaction,
     int total,
   ) {
+    paidLifetime++;
     _paid.insert(
       0,
       PaidBounty(

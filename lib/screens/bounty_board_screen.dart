@@ -331,7 +331,8 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                 if (board.paid.isNotEmpty)
                   PanelCard(
                     icon: Icons.history_rounded,
-                    title: 'Recently paid (${board.paid.length})',
+                    title: 'Recently paid (${board.paid.length} shown · '
+                        '${board.paidLifetime} lifetime)',
                     children: [
                       DataTableShell(
                         headers: const ['Target', 'Killer', 'Amount'],

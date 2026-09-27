@@ -29,11 +29,33 @@ void main() {
     await board.resetForNewUniverse();
     expect(board.active, isEmpty);
     expect(board.paid, isEmpty);
+    expect(board.paidLifetime, 0);
     expect(board.totalFor('victim-1'), 0);
   });
 
-  test('paid factions round-trip through JSON with legacy defaults', () {
-    final paid = PaidBounty(
+  test('paid lifetime counts past the display cap', () {
+    final board = BountyBoard.global;
+    for (var i = 0; i < 25; i++) {
+      board.post(
+        targetId: 't$i',
+        targetName: 'T$i',
+        targetFaction: 'pirate',
+        amount: 100,
+        posterId: 'p',
+        posterName: 'P',
+        reason: 'cap',
+      );
+      board.payKiller(
+        targetId: 't$i',
+        killerName: 'K',
+        targetName: 'T$i',
+      );
+    }
+    expect(board.paid.length, 20);
+    expect(board.paidLifetime, 25);
+  });
+
+  test('paid factions round-trip through JSON with legacy defaults', () {    final paid = PaidBounty(
       targetName: 'T',
       targetFaction: 'pirate',
       killerName: 'K',

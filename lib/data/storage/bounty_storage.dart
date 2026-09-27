@@ -18,11 +18,12 @@ class BountyStorage {
     return File('${dir.path}/bounties.json');
   }
 
-  Future<({List<Bounty> active, List<PaidBounty> paid})> loadAll() async {
+  Future<({List<Bounty> active, List<PaidBounty> paid, int paidLifetime})>
+      loadAll() async {
     try {
       final file = await _file();
       if (!await file.exists()) {
-        return (active: <Bounty>[], paid: <PaidBounty>[]);
+        return (active: <Bounty>[], paid: <PaidBounty>[], paidLifetime: 0);
       }
       final json =
           jsonDecode(await file.readAsString()) as Map<String, dynamic>;
@@ -32,17 +33,25 @@ class BountyStorage {
       final paid = ((json['paid'] as List?) ?? [])
           .map((e) => PaidBounty.fromJson((e as Map).cast<String, dynamic>()))
           .toList();
-      return (active: active, paid: paid);
+      return (
+        active: active,
+        paid: paid,
+        paidLifetime: (json['paidLifetime'] as num?)?.toInt() ?? 0,
+      );
     } catch (e) {
       // Never silent: a failed load explains every "bounties vanished"
       // mystery that follows.
       debugPrint('[BountyStorage] Load failed: $e');
       GameEventLog.global.system('[BountyStorage] Load failed: $e');
-      return (active: <Bounty>[], paid: <PaidBounty>[]);
+      return (active: <Bounty>[], paid: <PaidBounty>[], paidLifetime: 0);
     }
   }
 
-  Future<void> saveAll(List<Bounty> active, List<PaidBounty> paid) async {
+  Future<void> saveAll(
+    List<Bounty> active,
+    List<PaidBounty> paid, {
+    int paidLifetime = 0,
+  }) async {
     try {
       final file = await _file();
       await FileSafe.writeString(
@@ -50,6 +59,7 @@ class BountyStorage {
         jsonEncode({
           'active': active.map((b) => b.toJson()).toList(),
           'paid': paid.map((b) => b.toJson()).toList(),
+          'paidLifetime': paidLifetime,
         }),
       );
     } catch (e) {
