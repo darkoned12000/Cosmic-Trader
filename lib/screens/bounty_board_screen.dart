@@ -61,6 +61,16 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
     return '${hours ~/ 24}d';
   }
 
+  /// Countdown to escrow expiry (future-aware sibling of [_age]).
+  static String _expiresIn(DateTime at) {
+    final mins = at.difference(DateTime.now()).inMinutes;
+    if (mins < 1) return 'expiring';
+    if (mins < 60) return '${mins}m left';
+    final hours = mins ~/ 60;
+    if (hours < 48) return '${hours}h left';
+    return '${hours ~/ 24}d left';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +158,21 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
       if (value.name == name) return factionColor(value);
     }
     return null;
+  }
+
+  /// Collects this pilot's lapsed escrow (expired/pruned/evicted marks
+  /// refund their debited posts; house-minted marks evaporate instead).
+  void _collectRefund() {
+    final amount = BountyBoard.global.takeRefund(widget.player.id);
+    if (amount <= 0) return;
+    widget.onPlayerUpdate(
+      widget.player.copyWith(credits: widget.player.credits + amount),
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Collected $amount cr lapsed escrow')),
+      );
+    }
   }
 
   void _claim(String targetId, String targetName) {
@@ -253,7 +278,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                                             color: _factionColorOf(
                                                 b.targetFaction))),
                                     Text(
-                                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)}',
+                                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)} · ${_expiresIn(b.expiresAt)}',
                                       style: TextStyle(
                                         fontSize: 10,
                                         color:
@@ -289,6 +314,18 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                if (board.pendingRefundFor(widget.player.id) > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: OutlinedButton.icon(
+                      onPressed: _collectRefund,
+                      icon: const Icon(Icons.savings_rounded, size: 16),
+                      label: Text(
+                        'Collect ${_commas(board.pendingRefundFor(widget.player.id))} cr lapsed escrow',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
                 PanelCard(
                   icon: Icons.add_alert_rounded,
                   title: 'Post a bounty',

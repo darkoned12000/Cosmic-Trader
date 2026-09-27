@@ -786,7 +786,17 @@ with automation-log lines + unit tests per the branch norm
     equipment), lifetime stats, multiplayer kill-trust hardening.
   Covered by 4 new bounty tests (poster caps/min/eviction, prune,
   self-post standing, lifetime) + updated cap tests.
-  Suite: 279 passing, analyze clean.
+- Bounty escrow/expiry (`test/bounty_board_test.dart`, +4 tests):
+  - 7-day wall-clock TTL on every mark (`expiresAt`, legacy backfill
+    from creation); expiry countdown on board rows.
+  - Lapsed marks refund: expiry, dead-target prune, and cap eviction
+    queue escrow per poster (house-minted Fed/Chroniclers money
+    evaporates — created from nothing). NPC matches settle in-tick
+    before the save; players collect via a board button showing the
+    pending total. Queue capped at 100 rows, cleared on regen.
+  - `pruneAbsent`/`pruneExpired` return the pruned marks; tick sweeps
+    both before Fed posts.
+  Suite: 293 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

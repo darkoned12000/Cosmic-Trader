@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:cosmic_trader/data/models/bounty.dart';
+import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/storage/bounty_storage.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 
@@ -59,19 +60,40 @@ class BountyBoard extends ChangeNotifier {
   }
 
   /// Removes live marks whose targets are gone from the world (bounty
-  /// review M2): neither on the NPC roster nor among players. Logs the
-  /// sweep; unclaimed poster credits lapse (escrow is roadmap).
-  void pruneAbsent(Set<String> liveIds) {
-    final before = _active.length;
-    _active.removeWhere((b) => !liveIds.contains(b.targetId));
-    final pruned = before - _active.length;
-    if (pruned > 0) {
-      GameEventLog.global.system(
-        '[Bounty] Pruned $pruned mark(s) on vanished targets',
-      );
-      notifyListeners();
-      _persist();
+  /// review M2): neither on the NPC roster nor among players. Lapsed
+  /// marks refund (escrow). Returns the pruned marks.
+  List<Bounty> pruneAbsent(Set<String> liveIds) {
+    final pruned = _active.where((b) => !liveIds.contains(b.targetId)).toList();
+    if (pruned.isEmpty) return const [];
+    for (final b in pruned) {
+      _active.remove(b);
+      _refund(b);
     }
+    GameEventLog.global.system(
+      '[Bounty] Pruned ${pruned.length} mark(s) on vanished targets '
+      '(escrow refunded)',
+    );
+    notifyListeners();
+    _persist();
+    return pruned;
+  }
+
+  /// Removes expired marks (bounty review escrow): 7-day wall-clock TTL
+  /// from posting. Lapsed marks refund. Returns the pruned marks.
+  List<Bounty> pruneExpired({DateTime? now}) {
+    final at = now ?? DateTime.now();
+    final pruned = _active.where((b) => !b.expiresAt.isAfter(at)).toList();
+    if (pruned.isEmpty) return const [];
+    for (final b in pruned) {
+      _active.remove(b);
+      _refund(b);
+    }
+    GameEventLog.global.system(
+      '[Bounty] ${pruned.length} mark(s) expired (escrow refunded)',
+    );
+    notifyListeners();
+    _persist();
+    return pruned;
   }
 
   /// Total active credits per target id (multiple posters stack).
@@ -114,9 +136,75 @@ class BountyBoard extends ChangeNotifier {
     _active.clear();
     _paid.clear();
     _paidIds.clear();
+    pendingRefunds.clear();
     paidLifetime = 0;
     notifyListeners();
     await _persist();
+  }
+
+  /// Pending escrow refunds (posterId → credits) for lapsed marks:
+  /// expiry, dead-target pruning, cap eviction. Minted house money
+  /// (Federation/Chroniclers) evaporates instead — it was created from
+  /// nothing. NPC matches settle in-tick ([settleNpcRefunds]); player
+  /// matches collect from the board screen ([takeRefund]).
+  final Map<String, int> pendingRefunds = {};
+
+  /// House posters whose refunds evaporate (minted, never debited).
+  static const housePosters = {'FEDERATION', 'CHRONICLERS'};
+
+  /// Cap on queued refund rows (deleted posters would otherwise linger;
+  /// regen clears the queue outright).
+  static const int maxPendingRefunds = 100;
+
+  /// Queues an escrow refund for a lapsed mark. House money evaporates.
+  void _refund(Bounty bounty) {
+    if (housePosters.contains(bounty.posterId)) return;
+    pendingRefunds.update(
+      bounty.posterId,
+      (v) => v + bounty.amount,
+      ifAbsent: () => bounty.amount,
+    );
+    while (pendingRefunds.length > maxPendingRefunds) {
+      pendingRefunds.remove(pendingRefunds.keys.first);
+    }
+  }
+
+  /// Pending refund total for one poster (0 when none).
+  int pendingRefundFor(String posterId) => pendingRefunds[posterId] ?? 0;
+
+  /// Takes and clears one poster's pending refunds. Returns credits.
+  int takeRefund(String posterId) {
+    final amount = pendingRefunds.remove(posterId) ?? 0;
+    if (amount > 0) {
+      GameEventLog.global.system(
+        '[Bounty] Refunded $amount cr lapsed escrow to $posterId',
+      );
+      notifyListeners();
+      _persist();
+    }
+    return amount;
+  }
+
+  /// Credits queued refunds to roster NPCs in place (tick-called; the
+  /// tick saves afterwards). Returns pilots paid.
+  int settleNpcRefunds(List<NpcShip> npcs) {
+    if (pendingRefunds.isEmpty) return 0;
+    var paid = 0;
+    for (var i = 0; i < npcs.length; i++) {
+      final npc = npcs[i];
+      final owed = pendingRefunds.remove(npc.id);
+      if (owed == null || owed <= 0) continue;
+      npcs[i] = npc.copyWith(credits: npc.credits + owed);
+      GameEventLog.global.system(
+        '[Bounty] Refunded $owed cr lapsed escrow to ${npc.pilotName}',
+      );
+      paid++;
+    }
+    if (paid > 0) {
+      notifyListeners();
+      _persist();
+    }
+    return paid;
   }
 
   /// Minimum postable amount (bounty review): dust marks are spam and
@@ -141,6 +229,7 @@ class BountyBoard extends ChangeNotifier {
     required String posterName,
     String posterFaction = '',
     String reason = '',
+    DateTime? expiresAt,
   }) {
     if (amount < minBountyAmount) return null;
     if (targetId.isEmpty) return null;
@@ -163,19 +252,22 @@ class BountyBoard extends ChangeNotifier {
       posterFaction: posterFaction,
       reason: reason,
       createdAt: DateTime.now(),
+      expiresAt: expiresAt ?? DateTime.now().add(Bounty.ttl),
     );
     _active.add(bounty);
     // Evict the cheapest mark first (bounty review): a flood of minimum
     // posts pushes out other minimum posts, never the high-value heads.
+    // Evictions refund (escrow): lapsed poster money comes back.
     while (_active.length > maxActiveBounties) {
       var cheapest = 0;
       for (var i = 1; i < _active.length; i++) {
         if (_active[i].amount < _active[cheapest].amount) cheapest = i;
       }
       final evicted = _active.removeAt(cheapest);
+      _refund(evicted);
       GameEventLog.global.system(
         '[Bounty] Board full — cheapest mark (${evicted.targetName} '
-        '${evicted.amount} cr) expired unclaimed',
+        '${evicted.amount} cr) expired unclaimed (refunded)',
       );
     }
     GameEventLog.global.system(

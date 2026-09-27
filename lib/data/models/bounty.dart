@@ -12,6 +12,14 @@ class Bounty {
   final String reason;
   final DateTime createdAt;
 
+  /// Wall-clock expiry for escrow (bounty review): unclaimed marks lapse
+  /// and the poster's credits refund instead of evaporating.
+  final DateTime expiresAt;
+
+  /// Standard mark lifetime. Long enough to be huntable, short enough
+  /// that dead targets stop squatting the board.
+  static const Duration ttl = Duration(days: 7);
+
   const Bounty({
     required this.id,
     required this.targetId,
@@ -24,6 +32,7 @@ class Bounty {
     this.posterFaction = '',
     required this.reason,
     required this.createdAt,
+    required this.expiresAt,
   });
 
   Map<String, dynamic> toJson() => {
@@ -38,23 +47,42 @@ class Bounty {
         'posterFaction': posterFaction,
         'reason': reason,
         'createdAt': createdAt.toIso8601String(),
+        'expiresAt': expiresAt.toIso8601String(),
       };
 
-  factory Bounty.fromJson(Map<String, dynamic> json) => Bounty(
-        id: json['id'] as String? ?? '',
-        targetId: json['targetId'] as String? ?? '',
-        targetName: json['targetName'] as String? ?? 'Unknown',
-        targetFaction: json['targetFaction'] as String? ?? '',
-        targetIsPlayer: json['targetIsPlayer'] as bool? ?? false,
-        amount: (json['amount'] as num?)?.toInt() ?? 0,
-        posterId: json['posterId'] as String? ?? '',
-        posterName: json['posterName'] as String? ?? 'Anonymous',
-        posterFaction: json['posterFaction'] as String? ?? '',
-        reason: json['reason'] as String? ?? '',
-        createdAt: json['createdAt'] != null
-            ? DateTime.parse(json['createdAt'] as String)
-            : DateTime.now(),
-      );
+  factory Bounty.fromJson(Map<String, dynamic> json) {
+    DateTime createdAt;
+    try {
+      createdAt = json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'] as String)
+          : DateTime.now();
+    } catch (_) {
+      createdAt = DateTime.now();
+    }
+    DateTime expiresAt;
+    try {
+      expiresAt = json['expiresAt'] != null
+          ? DateTime.parse(json['expiresAt'] as String)
+          // Legacy rows predate expiry: full TTL from creation.
+          : createdAt.add(Bounty.ttl);
+    } catch (_) {
+      expiresAt = createdAt.add(Bounty.ttl);
+    }
+    return Bounty(
+      id: json['id'] as String? ?? '',
+      targetId: json['targetId'] as String? ?? '',
+      targetName: json['targetName'] as String? ?? 'Unknown',
+      targetFaction: json['targetFaction'] as String? ?? '',
+      targetIsPlayer: json['targetIsPlayer'] as bool? ?? false,
+      amount: (json['amount'] as num?)?.toInt() ?? 0,
+      posterId: json['posterId'] as String? ?? '',
+      posterName: json['posterName'] as String? ?? 'Anonymous',
+      posterFaction: json['posterFaction'] as String? ?? '',
+      reason: json['reason'] as String? ?? '',
+      createdAt: createdAt,
+      expiresAt: expiresAt,
+    );
+  }
 }
 
 /// A paid-out bounty, kept for the board's recent history.

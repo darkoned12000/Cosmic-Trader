@@ -315,14 +315,17 @@ class GameTickService {
             .samplePopulation(RepopulationService.livingCounts(npcs));
       });
 
-      // Bounty hygiene (bounty review M2): drop marks on vanished
-      // targets before the Fed considers new posts.
+      // Bounty hygiene (bounty review M2 + escrow): drop marks on
+      // vanished targets and lapsed TTLs (both refund escrow), then pay
+      // queued refunds to roster NPCs before the save.
       DevProfiler.instance.trace('tick_bounty_prune', () {
         BountyBoard.global.pruneAbsent({
           for (final p in players) p.id,
           for (final n in npcs)
             if (!n.isDestroyed) n.id,
         });
+        BountyBoard.global.pruneExpired();
+        BountyBoard.global.settleNpcRefunds(npcs);
       });
 
       // Federation auto-posting (B4 enforcement): notorious pilots get

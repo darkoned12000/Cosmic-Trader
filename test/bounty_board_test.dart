@@ -137,6 +137,106 @@ void main() {
     board.pruneAbsent({'alive', 'player-1'});
     expect(board.totalFor('alive'), 500);
     expect(board.totalFor('gone'), 0);
+    // Pruned poster money queues as escrow, not vapor.
+    expect(board.pendingRefundFor('p'), 500);
+    expect(board.takeRefund('p'), 500);
+    expect(board.pendingRefundFor('p'), 0);
+  });
+
+  group('escrow and expiry', () {
+    test('expired marks lapse and refund', () {
+      final board = BountyBoard.global;
+      board.post(
+        targetId: 'old',
+        targetName: 'Old',
+        targetFaction: 'pirate',
+        amount: 1000,
+        posterId: 'p',
+        posterName: 'P',
+        expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+      );
+      board.post(
+        targetId: 'fresh',
+        targetName: 'Fresh',
+        targetFaction: 'pirate',
+        amount: 1000,
+        posterId: 'p',
+        posterName: 'P',
+      );
+      final pruned = board.pruneExpired();
+      expect(pruned.map((b) => b.targetId), ['old']);
+      expect(board.totalFor('old'), 0);
+      expect(board.totalFor('fresh'), 1000);
+      expect(board.pendingRefundFor('p'), 1000);
+    });
+
+    test('house-minted marks evaporate instead of refunding', () {
+      final board = BountyBoard.global;
+      board.post(
+        targetId: 'fed-mark',
+        targetName: 'Fed Mark',
+        targetFaction: 'pirate',
+        amount: 5000,
+        posterId: 'FEDERATION',
+        posterName: 'Federation Marshal',
+        expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+      );
+      expect(board.pruneExpired(), hasLength(1));
+      expect(board.pendingRefunds, isEmpty);
+    });
+
+    test('settleNpcRefunds credits roster pilots in place', () {
+      final board = BountyBoard.global;
+      board.post(
+        targetId: 'gone',
+        targetName: 'Gone',
+        targetFaction: 'pirate',
+        amount: 700,
+        posterId: 'npc-1',
+        posterName: 'Pilot',
+      );
+      board.pruneAbsent({'someone-else'});
+      var npc = NpcShip.create(
+        faction: FactionClass.trader,
+        shipDef: ShipDefinition.allShips.first,
+        currentSectorId: 11,
+        startingCredits: 1000,
+        seed: 5,
+      );
+      // Force the roster id to match the poster.
+      final roster = [
+        npc.copyWith(id: 'npc-1'),
+        NpcShip.create(
+          faction: FactionClass.pirate,
+          shipDef: ShipDefinition.allShips.first,
+          currentSectorId: 11,
+          startingCredits: 1000,
+          seed: 6,
+        ),
+      ];
+      expect(board.settleNpcRefunds(roster), 1);
+      expect(roster[0].credits, 1700);
+      expect(board.pendingRefundFor('npc-1'), 0);
+    });
+
+    test('posts default to a 7-day expiry; legacy rows backfill', () {
+      final board = BountyBoard.global;
+      final before = DateTime.now();
+      final posted = board.post(
+        targetId: 't',
+        targetName: 'T',
+        targetFaction: 'pirate',
+        amount: 500,
+        posterId: 'p',
+        posterName: 'P',
+      )!;
+      expect(posted.expiresAt.difference(before).inDays, 7);
+      final legacy = Bounty.fromJson({
+        'id': 'x',
+        'createdAt': DateTime.utc(2026, 1, 1).toIso8601String(),
+      });
+      expect(legacy.expiresAt, DateTime.utc(2026, 1, 1).add(Bounty.ttl));
+    });
   });
 
   test('self-posts pay out but mint no standing', () {
