@@ -85,6 +85,24 @@ class Bounty {
   }
 }
 
+/// One board target with its stacked marks, richest-group-first from
+/// [BountyBoard.groupedTargets]. Read-only view over live bounties.
+class BountyTargetGroup {
+  final String targetId;
+  final String targetName;
+  final String targetFaction;
+  final int total;
+  final List<Bounty> marks;
+
+  const BountyTargetGroup({
+    required this.targetId,
+    required this.targetName,
+    required this.targetFaction,
+    required this.total,
+    required this.marks,
+  });
+}
+
 /// A paid-out bounty, kept for the board's recent history.
 class PaidBounty {
   final String targetName;

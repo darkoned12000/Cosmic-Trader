@@ -797,6 +797,15 @@ with automation-log lines + unit tests per the branch norm
   - `pruneAbsent`/`pruneExpired` return the pruned marks; tick sweeps
     both before Fed posts.
   Suite: 293 passing, analyze clean.
+- Grouped bounty view (`test/bounty_board_test.dart`, +1 test):
+  - `groupedTargets()`: one entry per mark target, stacked total,
+    richest first (pure rollup, screen filters on top).
+  - Board shows one card per target: faction-colored name, stacked
+    total, mark count, nearest expiry, single Claim; expandable
+    per-poster breakdown (colored poster, amount, reason, age).
+  - Filters: Claimable toggle + All/each-faction chips; header reads
+    marks · targets honestly.
+  Suite: 294 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

@@ -254,6 +254,39 @@ void main() {
     expect(board.posterFactionsFor('mark', excludePosterId: 'me'), isEmpty);
   });
 
+  test('grouped targets stack totals richest-first', () {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'a',
+      targetName: 'A',
+      targetFaction: 'pirate',
+      amount: 1000,
+      posterId: 'p1',
+      posterName: 'P1',
+    );
+    board.post(
+      targetId: 'b',
+      targetName: 'B',
+      targetFaction: 'duran',
+      amount: 5000,
+      posterId: 'p2',
+      posterName: 'P2',
+    );
+    board.post(
+      targetId: 'a',
+      targetName: 'A',
+      targetFaction: 'pirate',
+      amount: 3000,
+      posterId: 'p3',
+      posterName: 'P3',
+    );
+    final groups = board.groupedTargets();
+    expect(groups.map((g) => g.targetId), ['b', 'a']);
+    expect(groups.last.total, 4000);
+    expect(groups.last.marks, hasLength(2));
+    expect(groups.last.targetFaction, 'pirate');
+  });
+
   test('paid factions round-trip through JSON with legacy defaults', () {
     final paid = PaidBounty(
       targetName: 'T',

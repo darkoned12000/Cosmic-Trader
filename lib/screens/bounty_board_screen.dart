@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:cosmic_trader/core/faction_colors.dart';
+import 'package:cosmic_trader/data/models/bounty.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
@@ -39,6 +40,8 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   // Autocomplete-owned search field (cleared on post, never disposed here).
   TextEditingController? _targetField;
   String? _formError;
+  bool _claimableOnly = false;
+  FactionClass? _factionFilter;
 
   /// Thousands separators for credit amounts (bounty review L1).
   static String _commas(int n) {
@@ -207,6 +210,86 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
     }
   }
 
+  /// One grouped target card: colored name, stacked total, per-poster
+  /// breakdown, single Claim. Claimable marks get the button; the rest
+  /// show the nearest expiry.
+  Widget _targetCard(BuildContext context, ColorScheme cs, BountyBoard board,
+      Set<String> kills, BountyTargetGroup g) {
+    final claimable = kills.contains(g.targetId);
+    final soonest =
+        g.marks.map((b) => b.expiresAt).reduce((a, b) => a.isBefore(b) ? a : b);
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: cs.outline.withValues(alpha: 0.4)),
+      ),
+      child: ExpansionTile(
+        dense: true,
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                g.targetName,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: _factionColorOf(g.targetFaction),
+                ),
+              ),
+            ),
+            Text(
+              _commas(g.total),
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        subtitle: Text(
+          '${g.targetFaction} · ${g.marks.length} mark${g.marks.length == 1 ? '' : 's'} · exp ${_expiresIn(soonest)}',
+          style: TextStyle(
+            fontSize: 11,
+            color: cs.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
+        trailing: claimable
+            ? TextButton(
+                onPressed: () => _claim(g.targetId, g.targetName),
+                child: const Text('Claim', style: TextStyle(fontSize: 12)),
+              )
+            : null,
+        children: [
+          for (final b in g.marks)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _factionColorOf(b.posterFaction) ??
+                            cs.onSurface.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _commas(b.amount),
+                    style:
+                        const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -225,11 +308,18 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
         builder: (context, _) {
           final board = BountyBoard.global;
           final kills = widget.player.recentKills.toSet();
-          // Richest marks first (bounty review L1); header counts both
-          // marks and distinct targets so stacking reads honestly.
-          final active = board.active.toList()
-            ..sort((a, b) => b.amount.compareTo(a.amount));
-          final targets = active.map((b) => b.targetId).toSet().length;
+          // Grouped richest-first (grouped-view rev); filters apply on
+          // top: claimable-only toggle + faction chips.
+          var groups = board.groupedTargets();
+          if (_claimableOnly) {
+            groups = groups.where((g) => kills.contains(g.targetId)).toList();
+          }
+          if (_factionFilter != null) {
+            groups = groups
+                .where((g) => g.targetFaction == _factionFilter!.name)
+                .toList();
+          }
+          final markCount = groups.fold(0, (a, g) => a + g.marks.length);
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -238,12 +328,42 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                 PanelCard(
                   icon: Icons.crisis_alert_rounded,
                   title:
-                      'Active bounties (${active.length} marks · $targets targets)',
+                      'Active bounties ($markCount marks · ${groups.length} targets)',
                   subtitle: 'Claim pays out for pilots you destroyed',
                   children: [
-                    if (active.isEmpty)
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        FilterChip(
+                          label: const Text('Claimable',
+                              style: TextStyle(fontSize: 12)),
+                          selected: _claimableOnly,
+                          onSelected: (v) => setState(() => _claimableOnly = v),
+                        ),
+                        ChoiceChip(
+                          label:
+                              const Text('All', style: TextStyle(fontSize: 12)),
+                          selected: _factionFilter == null,
+                          onSelected: (_) =>
+                              setState(() => _factionFilter = null),
+                        ),
+                        for (final f in FactionClass.values)
+                          ChoiceChip(
+                            label: Text(f.name,
+                                style: const TextStyle(fontSize: 12)),
+                            selected: _factionFilter == f,
+                            onSelected: (_) =>
+                                setState(() => _factionFilter = f),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (groups.isEmpty)
                       Text(
-                        'No open contracts. Survive an attack or post one.',
+                        _claimableOnly || _factionFilter != null
+                            ? 'No contracts match these filters.'
+                            : 'No open contracts. Survive an attack or post one.',
                         style: TextStyle(
                           fontSize: 12,
                           fontStyle: FontStyle.italic,
@@ -251,66 +371,8 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                         ),
                       )
                     else
-                      DataTableShell(
-                        zebra: true,
-                        headers: const [
-                          'Target',
-                          'Faction',
-                          'Amount',
-                          '',
-                        ],
-                        flexes: const [2, 1, 1, 1],
-                        itemCount: active.length,
-                        rowBuilder: (context, i) {
-                          final b = active[i];
-                          final claimable = kills.contains(b.targetId);
-                          return Row(
-                            children: [
-                              Expanded(
-                                flex: 2,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(b.targetName,
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: _factionColorOf(
-                                                b.targetFaction))),
-                                    Text(
-                                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)} · ${_expiresIn(b.expiresAt)}',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color:
-                                            cs.onSurface.withValues(alpha: 0.5),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Expanded(
-                                  child: Text(b.targetFaction,
-                                      style: const TextStyle(fontSize: 12))),
-                              Expanded(
-                                  child: Text(_commas(b.amount),
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          fontFamily: 'monospace'))),
-                              Expanded(
-                                child: claimable
-                                    ? TextButton(
-                                        onPressed: () =>
-                                            _claim(b.targetId, b.targetName),
-                                        child: const Text('Claim',
-                                            style: TextStyle(fontSize: 12)),
-                                      )
-                                    : const Text('—',
-                                        style: TextStyle(fontSize: 12)),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                      for (final g in groups)
+                        _targetCard(context, cs, board, kills, g),
                   ],
                 ),
                 const SizedBox(height: 12),

@@ -101,6 +101,30 @@ class BountyBoard extends ChangeNotifier {
       .where((b) => b.targetId == targetId)
       .fold(0, (a, b) => a + b.amount);
 
+  /// Targets grouped for the board view (grouped-view rev): one entry
+  /// per mark target with the stacked total and its posters, richest
+  /// first. Pure rollup over [_active] — no filtering here; the screen
+  /// filters claimable/faction on top.
+  List<BountyTargetGroup> groupedTargets() {
+    final map = <String, List<Bounty>>{};
+    for (final b in _active) {
+      (map[b.targetId] ??= []).add(b);
+    }
+    final groups = <BountyTargetGroup>[];
+    for (final entry in map.entries) {
+      final marks = entry.value;
+      groups.add(BountyTargetGroup(
+        targetId: entry.key,
+        targetName: marks.first.targetName,
+        targetFaction: marks.first.targetFaction,
+        total: marks.fold(0, (a, b) => a + b.amount),
+        marks: List.unmodifiable(marks),
+      ));
+    }
+    groups.sort((a, b) => b.total.compareTo(a.total));
+    return groups;
+  }
+
   List<Bounty> forTarget(String targetId) =>
       _active.where((b) => b.targetId == targetId).toList();
 
