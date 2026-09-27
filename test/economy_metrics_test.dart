@@ -34,6 +34,10 @@ void main() {
     expect(minerals.buyUnits, 10);
     expect(minerals.sellUnits, 5);
     expect(minerals.avgUnitPrice, 500 / 15);
+    // Side-split averages: buys below midpoint, sells above — never a
+    // blended "loss" from stockpiling buys.
+    expect(minerals.avgBuyUnitPrice, 20);
+    expect(minerals.avgSellUnitPrice, 60);
 
     final trader = m.perFaction['trader']!;
     expect(trader.buys, 1);

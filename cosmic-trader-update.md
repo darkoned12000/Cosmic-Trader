@@ -806,6 +806,27 @@ with automation-log lines + unit tests per the branch norm
   - Filters: Claimable toggle + All/each-faction chips; header reads
     marks · targets honestly.
   Suite: 294 passing, analyze clean.
+- Economy tuning (audit + visibility, no knob changes):
+  - Faucet/sink audit: faucets are spawn 10k (bounded rate), minted
+    Fed/hero bounties on kill, and 1%/day interest (negligible at soak
+    timescales). Sinks are 75% victim-wealth destruction per kill
+    (the dominant balancer — scales with war), upgrade/repair/port
+    costs, towing, lottery. Ports don't regen credits: trader wealth
+    is redistribution from rich ports, not printing. Nothing
+    overflows (int64) or breaks mechanically — big numbers are
+    cosmetic concentration, so no spreads were narrowed (that would
+    tax the player's fun identically).
+  - Ore −13.7% diagnosed as a metric artifact, not a pricing bug:
+    the blended average mixes cheap buys with rich sells, so a
+    stockpiling route reads as "trading at a loss". Fixed by
+    splitting the report into buy-vs-base and sell-vs-base columns
+    (`avgBuyUnitPrice`/`avgSellUnitPrice` on the stats object).
+  - If pacing still feels fast after this visibility lands, the
+    honest levers (with player-impact warnings) are: narrower
+    split-point spreads, lower replacement spawn credits, or an
+    interest cut — none taken without soak evidence.
+  Covered by extended metrics assertions (side-split averages).
+  Suite: 295 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

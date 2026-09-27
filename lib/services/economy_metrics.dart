@@ -13,6 +13,13 @@ class CommodityTradeStats {
   int get credits => buyCredits + sellCredits;
 
   double get avgUnitPrice => units <= 0 ? 0 : credits / units;
+
+  /// Side-split averages (economy tuning): the blended average mixes
+  /// cheap buys with rich sells, so a stockpiling route reads as
+  /// "trading at a loss" when it merely hasn't sold yet.
+  double get avgBuyUnitPrice => buyUnits <= 0 ? 0 : buyCredits / buyUnits;
+  double get avgSellUnitPrice =>
+      sellUnits <= 0 ? 0 : sellCredits / sellUnits;
 }
 
 /// Per-faction trade totals (actor side: who bought/sold).
