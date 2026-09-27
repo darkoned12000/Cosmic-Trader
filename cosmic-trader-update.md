@@ -1578,50 +1578,58 @@ Verify: `flutter analyze` → **No issues found!**, `dart format` clean,
 
 No runtime effect (file layout is compile-time only); purely maintenance.
 Do after the soak so behavior observations aren't confounded. Mechanism:
-Dart `part`/`part of` — all imports stay in the main file, every
-`_private` name keeps working untouched, tests import the same path.
-Verification: `flutter analyze` clean + full suite green, zero behavior
-change, own commit. Non-goals: no renames, no signature changes, no
-logic edits, no constant moves across seams (constants live with owners).
+Dart `part`/`part of` — all 23 imports stay in the main file (parts
+carry zero imports), every `_private` name keeps working. One subtlety
+found during the split: top-level part functions CANNOT call class
+statics unqualified (class scope ≠ library scope), so internal call
+sites read `NpcAiService._findSector(...)` etc. — mechanical, no
+behavior change. Members with external qualified callers (13:
+processTurn, shouldAttackPlayer, shouldRefuel, createRefuelGoal,
+intelSearchSector, fearedSectors, npcPortPrice, huntersOnTarget,
+maxDistressResponders, knownEmporiumSectors, _handleStranded,
+ownedPortIndex, safeZoneEnd) stay static on the class, as do all
+constants/fields.
+Verification: `flutter analyze` clean + full suite green after EACH
+file move (bisects fallout), zero behavior change, own commit.
+Non-goals: no renames, no signature changes, no logic edits.
 
-### 1. `npc_ai_service.dart` — orchestrator (~250 lines)
+### 1. `npc_ai_service.dart` — orchestrator (~500 lines)
 `processTurn`, `_isInterruptible` (+ policy table), `_isSafeZone` /
 `safeZoneEnd`, `_hasEnergy`, `_ownedSectors` / `ownedPortIndex`,
-`_isHostileFaction`, `_findSector`, `_findNpcById`, `_findAdjacentSector`.
-File header keeps ALL imports + `part` directives. Constants that stay:
-`safeZoneEnd`.
+`_isHostileFaction`, `_findSector`, `_findNpcById`, `_findAdjacentSector`,
+plus every member with external qualified callers
+(`clearSignalsForTest`, `shouldAttackPlayer`, `shouldRefuel`,
+`createRefuelGoal`, `knownEmporiumSectors`, `_handleStranded`,
+`intelSearchSector`, `fearedSectors`, `npcPortPrice`,
+`huntersOnTarget`, `maxDistressResponders`) and ALL constants/fields.
+File header keeps ALL imports + `part` directives.
 
-### 2. `npc_scanner.dart` — perception + memory upkeep (~250 lines)
+### 2. `npc_scanner.dart` — perception + memory upkeep (~155 lines)
 `_scanSector`, `_pruneDeadVendettas`, `_shareIntel`.
 
-### 3. `npc_goal_planner.dart` — selection + all creators (~1,100 lines)
-`DistressSignal` class, `_activeDistressSignals`, `clearSignalsForTest`,
-`maxDistressResponders`, `maxConvoyEscorts`, `maxHuntersPerTarget`,
-vendetta consts (`vendettaGrievanceThreshold`, `vendettaPursuitTtl`,
-`vendettaDryHoleEase`), `intelFreshTtl`, `huntersOnTarget`,
-`_huntersByTarget`, `intelSearchSector`, `fearedSectors`,
-`_needsNewGoal`, `_selectGoal`, `_isGoalViable`,
-`_hasUnvisitedSectors`, `_hasPortSectorReachable`, `_instantiateGoal`,
-`_createTradeRouteGoal`, `_createSellOnlyGoal`, `npcPortPrice`,
+### 3. `npc_goal_planner.dart` — selection + all creators (~1,000 lines)
+`DistressSignal` class, `_activeDistressSignals`, `maxConvoyEscorts`,
+`maxHuntersPerTarget`, `_huntersByTarget`, vendetta consts
+(`vendettaGrievanceThreshold`, `vendettaPursuitTtl`,
+`vendettaDryHoleEase`), `intelFreshTtl`, `_needsNewGoal`, `_selectGoal`,
+`_isGoalViable`, `_hasUnvisitedSectors`, `_hasPortSectorReachable`,
+`_instantiateGoal`, `_createTradeRouteGoal`, `_createSellOnlyGoal`,
 `_isPurchasable`, `_createBuyPortGoal`, `_createExploreGoal`,
-`_createConvoyGoal`, `_createWolfpackGoal`, `_createBorderHoldGoal`,
-`_createPatrolGoal`, `_respondToDistress`, `_createVendettaGoal`,
-`_createAttackGoal`, `_createRaidPortGoal`, `_createUpgradeGoal`,
-`shouldAttackPlayer` (read by planner + tick service).
+`_createConvoyGoal`, `_createWolfpackGoal`,
+`maxBorderHoldersPerSector`, `_createBorderHoldGoal`, `_createPatrolGoal`,
+`_respondToDistress`, `_createVendettaGoal`, `_createAttackGoal`,
+`_createRaidPortGoal`, `_createUpgradeGoal`.
 
-### 4. `npc_goal_executor.dart` — all execution (~1,100 lines)
-`_executeGoal`, `maxPatrolLegs`, `_failTrade`, `_executeTradeGoal`,
-`_executeRefuelGoal`, `_executeBankDepositGoal`,
-`_executeBankWithdrawGoal`, `_executeExploreGoal`, `_executePatrolGoal`,
-`_executeFleeGoal`, `_executeAttackGoal`, `_executeRaidPortGoal`,
-`_executeUpgradeGoal`, `_repairShip`, `_buyUpgrade`,
-`_manageOwnedPorts`, `_executeBuyPortGoal`, `npcSolarArrayCostCredits`.
+### 4. `npc_goal_executor.dart` — all execution (~1,300 lines)
+`_executeGoal`, `_failTrade`, `_executeTradeGoal`, `_executeRefuelGoal`,
+`_executeBankDepositGoal`, `_executeBankWithdrawGoal`,
+`_executeExploreGoal`, `_executePatrolGoal`, `_executeFleeGoal`,
+`_executeAttackGoal`, `_executeRaidPortGoal`, `_executeUpgradeGoal`,
+`_repairShip`, `_buyUpgrade`, `_manageOwnedPorts`, `_executeBuyPortGoal`.
 
-### 5. `npc_movement.dart` — movement + energy + flee (~450 lines)
-`_move`, `_handleStranded`, `shouldRefuel`, `knownEmporiumSectors`,
-`nearestEmporiumPath`, `createRefuelGoal`, `npcRefuelReserveHops`,
-`npcRefuelCheckFraction`, `npcRefuelFloorFraction`, `_evaluateThreat`,
-`_notorietyOf`, `_findLocalEnemies`, `_calculatePower`, `_setFleeGoal`.
+### 5. `npc_movement.dart` — movement + threat + flee (~230 lines)
+`nearestEmporiumPath`, `_move`, `_evaluateThreat`, `_notorietyOf`,
+`_findLocalEnemies`, `_calculatePower`, `_setFleeGoal`.
 
 ### Steps
 1. Add `part 'npc_scanner.dart'; ...` ×4 to main; add
