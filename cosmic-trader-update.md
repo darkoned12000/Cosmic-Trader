@@ -847,6 +847,17 @@ with automation-log lines + unit tests per the branch norm
   - Soak watch: vengeful wings converging on the player is intended;
     tuning lever is the 40-grievance witness bump if it feels unfair.
   Suite: 301 passing, analyze clean.
+- Phase C CLOSED 2026-09-27. Scope delivered: Step 0 + C1 (morale,
+  parity, reinforcements) + C2 (memory/vendettas/avoidance/gossip/
+  learning) + C4 (production/backups/legends/drift) + C3
+  (coordination) + C5 (measurement) + player vendettas + clone
+  reissue. Validated by 4 NPC soaks + 1 post-split parity soak, 3
+  external review batches, 5 soak-fix rounds. Deliberately out:
+  invasion combat, P2 full hunters map, snapshot filtering, P4
+  interface/strings, fleet ids, proximity gating, lifetime stats,
+  multiplayer trust, grouped-view follow-ups, economy knob changes.
+  Watchlist for future soaks: Duran K/D, hero steady-state rarity,
+  inflation pace, retreat sample size, vengeful-wing fairness.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide
