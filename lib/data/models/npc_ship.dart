@@ -95,8 +95,8 @@ class NpcShip {
 
   /// Victor's drift: +aggression, capped.
   NpcShip driftedForKill() => copyWith(
-        driftAggression:
-            (driftAggression + killAggressionStep).clamp(0.0, maxPersonalityDrift),
+        driftAggression: (driftAggression + killAggressionStep)
+            .clamp(0.0, maxPersonalityDrift),
       );
 
   /// Survivor's drift: +caution, capped.

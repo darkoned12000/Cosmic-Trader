@@ -285,8 +285,7 @@ class GameTickService {
         final built = RepopulationService.produce(sectors, npcs);
         if (built.isNotEmpty) {
           npcs.addAll(built);
-          log.system(
-              '${built.length} ship(s) rolled out from homeworld yards');
+          log.system('${built.length} ship(s) rolled out from homeworld yards');
         }
       });
 

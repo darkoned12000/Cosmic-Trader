@@ -279,16 +279,22 @@ void main() {
       }
     });
 
-    test('pirate yards do not exist, so no pirate legends', () {
-      final sectors = [
-        _homeworld(id: 11, faction: FactionClass.pirate, timer: 1),
-      ];
-      final built = RepopulationService.produce(
-        sectors,
-        [],
-        rng: math.Random(7),
-      );
-      expect(built, isEmpty);
+    test('pirates sail no legends (no lore table, no heroes)', () {
+      // Pirate yards build rank-and-file only: the hero roll hits the
+      // missing lore table and stands down every time.
+      for (var seed = 0; seed < 20; seed++) {
+        final sectors = [
+          _homeworld(id: 11, faction: FactionClass.pirate, timer: 1),
+        ];
+        final built = RepopulationService.produce(
+          sectors,
+          [],
+          rng: math.Random(seed),
+        );
+        for (final ship in built) {
+          expect(ship.heroName, isNull);
+        }
+      }
     });
 
     test('hero identity survives JSON round-trip', () {

@@ -54,6 +54,14 @@ class NpcAiService {
   /// 1–3 is a wing, not a migration.
   static const int maxDistressResponders = 3;
 
+  /// Max escorts trailing one convoy leader (C3). Leader plus two is a
+  /// wing: visible on the map, meaningful in a fight, not a migration.
+  static const int maxConvoyEscorts = 2;
+
+  /// Max hulls converging on one wolf-pack target (C3), matching the
+  /// distress wing size so combined arms never stack past it casually.
+  static const int maxWolfpackSize = 3;
+
   /// C2 vendetta pursuit bounds. A grudge at or above
   /// [vendettaGrievanceThreshold] (one witnessed kin-kill) funds a hunt
   /// when the pilot is otherwise idle — never by overwriting a committed
@@ -64,6 +72,36 @@ class NpcAiService {
   static const int vendettaGrievanceThreshold = 40;
   static const Duration vendettaPursuitTtl = Duration(minutes: 30);
   static const int vendettaDryHoleEase = 10;
+
+  /// Last-seen intel stays exact while fresh, then goes probabilistic
+  /// (C3): a stale sighting fans out to a random warp neighbor of where
+  /// the target was seen. Hunts chase the scent, not a pin.
+  static const Duration intelFreshTtl = Duration(minutes: 15);
+
+  /// Where to look for a remembered target: the sighting while fresh, a
+  /// random neighboring sector once the trail ages. Unknown ground
+  /// returns the sighting itself.
+  static int intelSearchSector(
+    VendettaRecord record,
+    List<Sector> sectors, {
+    int? nowMs,
+    math.Random? rng,
+  }) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    if (now - record.lastSeenMs < intelFreshTtl.inMilliseconds) {
+      return record.sectorId;
+    }
+    Sector? at;
+    for (final s in sectors) {
+      if (s.id == record.sectorId) {
+        at = s;
+        break;
+      }
+    }
+    final options = at?.warpRoutes ?? const <int>[];
+    if (options.isEmpty) return record.sectorId;
+    return options[(rng ?? _rng).nextInt(options.length)];
+  }
 
   @visibleForTesting
   static void clearSignalsForTest() => _activeDistressSignals.clear();
@@ -403,7 +441,7 @@ class NpcAiService {
 
     switch (goal.type) {
       case NpcGoalType.tradeRoute:
-        return _executeTradeGoal(npc, sectors, goal);
+        return _executeTradeGoal(npc, sectors, goal, allNpcs);
       case NpcGoalType.bankDeposit:
         return _executeBankDepositGoal(npc, sectors, goal);
       case NpcGoalType.bankWithdraw:
@@ -621,6 +659,7 @@ class NpcAiService {
     NpcShip npc,
     List<Sector> sectors,
     NpcGoal goal,
+    List<NpcShip> allNpcs,
   ) {
     final buyPortId = goal.buyPortId;
     final sellPortId = goal.sellPortId;
@@ -629,7 +668,44 @@ class NpcAiService {
       return npc.copyWith(clearGoal: true);
     }
 
-    final phase = goal.params['phase'] as String? ?? 'travel_to_buy';
+    // Convoy muster (C3): escorts scatter when the leader is gone, and
+    // fly solo when the leader's run is done or diverged. Leaders are
+    // traders flying their own route; the escort's legs stay valid alone.
+    final convoyLeader = goal.params['convoyLeader'] as String?;
+    var liveGoal = goal;
+    if (convoyLeader != null) {
+      NpcShip? leader;
+      for (final n in allNpcs) {
+        if (n.id == convoyLeader) {
+          leader = n;
+          break;
+        }
+      }
+      final leaderGoal = leader?.currentGoal;
+      if (leader == null || leader.isDestroyed) {
+        GameEventLog.global
+            .goal('[${npc.pilotName}] Convoy scattered — leader gone');
+        return npc.copyWith(clearGoal: true);
+      }
+      final sameRoute = leaderGoal != null &&
+          leaderGoal.type == NpcGoalType.tradeRoute &&
+          leaderGoal.status == NpcGoalStatus.travelling &&
+          leaderGoal.buyPortId == buyPortId &&
+          leaderGoal.sellPortId == sellPortId &&
+          leaderGoal.commodity == commodity;
+      if (!sameRoute) {
+        GameEventLog.global
+            .goal('[${npc.pilotName}] Convoy run over — flying solo');
+        final soloParams = Map<String, dynamic>.from(goal.params)
+          ..remove('convoyLeader');
+        liveGoal = goal.copyWith(params: soloParams);
+        npc = npc.copyWith(currentGoal: liveGoal);
+      }
+    }
+
+    final phase = liveGoal.params['phase'] as String? ?? 'travel_to_buy';
+    // From here the (possibly de-convoyed) goal is the live one.
+    goal = liveGoal;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
     // ── Phase: arrived at buy port ──
@@ -1038,6 +1114,16 @@ class NpcAiService {
           currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
         );
       }
+      // Border holds (C3) sit: the post is the patrol, not a waypoint.
+      // Hostile pressure is re-checked at the next selection cycle, so
+      // holds are sticky for a few legs, then re-evaluated, never eternal.
+      if (goal.params['borderHold'] != null) {
+        return npc.copyWith(
+          currentGoal: goal.copyWith(
+            params: {...goal.params, 'legs': legs},
+          ),
+        );
+      }
       // Pick a new random patrol target
       final current = _findSector(sectors, npc.currentSectorId);
       if (current == null || current.warpRoutes.isEmpty) {
@@ -1160,9 +1246,11 @@ class NpcAiService {
       // Dry hole on a vendetta hunt (C2a): the trail cools but the
       // memory keeps its window — no sighting refresh, so camping can't
       // hold a grudge open. Easing to zero drops the grudge outright.
+      // A live grudge widens the search (C3): intel moves next door,
+      // decay untouched — checking nearby is searching, not sighting.
       if (vendettaFor != null) {
         final before = npc.memory.vendettas[vendettaFor]?.grievance ?? 0;
-        final eased = npc.copyWith(
+        var eased = npc.copyWith(
           memory:
               npc.memory.withVendettaEased(vendettaFor, vendettaDryHoleEase),
           clearGoal: true,
@@ -1171,6 +1259,20 @@ class NpcAiService {
         GameEventLog.global.combat(
             '[${npc.pilotName}] Hunt for $vendettaFor came up empty in '
             'Sector ${npc.currentSectorId} (grudge $before → ${after ?? 0})');
+        if ((after ?? 0) >= vendettaGrievanceThreshold) {
+          final options =
+              _findSector(sectors, npc.currentSectorId)?.warpRoutes ??
+                  const <int>[];
+          if (options.isNotEmpty) {
+            final spread = options[_rng.nextInt(options.length)];
+            eased = eased.copyWith(
+              memory: eased.memory.withVendettaRelocated(vendettaFor, spread),
+            );
+            GameEventLog.global.combat(
+                '[${npc.pilotName}] Widening the search for $vendettaFor '
+                'to Sector $spread');
+          }
+        }
         return eased;
       }
       return npc.copyWith(clearGoal: true);
@@ -1857,6 +1959,16 @@ class NpcAiService {
     final vendetta = _createVendettaGoal(npc, sectors, allNpcs);
     if (vendetta != null) return vendetta;
 
+    // C3: fly together before flying rich — escorts and packmates join
+    // live runs (idle pilots only, same no-hijack guarantee as above),
+    // Duran post border holds. All bounded, all revalidated at execution.
+    final convoy = _createConvoyGoal(npc, sectors, allNpcs);
+    if (convoy != null) return convoy;
+    final wolfpack = _createWolfpackGoal(npc, sectors, allNpcs);
+    if (wolfpack != null) return wolfpack;
+    final borderHold = _createBorderHoldGoal(npc, sectors, allNpcs);
+    if (borderHold != null) return borderHold;
+
     // Collect viable goal types with their weights
     final candidates = <NpcGoalType>[];
     final weights = <double>[];
@@ -2266,6 +2378,172 @@ class NpcAiService {
     return _createPatrolGoal(npc, sectors);
   }
 
+  /// Convoy escort (C3): an idle trader falls in with a wingmate's live
+  /// trade run, copying its legs. Safety in numbers emerges — no
+  /// formation code, just shared destinations. Member leave-conditions
+  /// live in [_executeTradeGoal] (scatter on leader loss, solo on
+  /// divergence); leader death is the destroyed-leader case there.
+  static NpcGoal? _createConvoyGoal(
+    NpcShip npc,
+    List<Sector> sectors,
+    List<NpcShip> allNpcs,
+  ) {
+    if (npc.faction != FactionClass.trader) return null;
+    final maxDist = npc.personalityConfig.maxTravelDistance;
+    final legCost = EnergyService.npcWarpCost(npc);
+    for (final leader in allNpcs) {
+      if (leader.id == npc.id || leader.isDestroyed) continue;
+      if (leader.faction != FactionClass.trader) continue;
+      final run = leader.currentGoal;
+      if (run == null ||
+          run.type != NpcGoalType.tradeRoute ||
+          run.status != NpcGoalStatus.travelling ||
+          run.params.containsKey('convoyLeader') ||
+          run.buyPortId == null) {
+        continue;
+      }
+      // Room in the wing: leader plus fewer than maxConvoyEscorts.
+      var escorts = 0;
+      for (final n in allNpcs) {
+        if (n.id != leader.id &&
+            !n.isDestroyed &&
+            n.currentGoal?.params['convoyLeader'] == leader.id) {
+          escorts++;
+        }
+      }
+      if (escorts >= maxConvoyEscorts) continue;
+      final path = PathfindingService.findPath(
+          sectors, npc.currentSectorId, run.buyPortId!);
+      if (path == null || path.length - 1 > maxDist) continue;
+      if (npc.energy < (path.length - 1) * legCost + legCost) continue;
+      GameEventLog.global
+          .goal('[${npc.pilotName}] Falling in with ${leader.pilotName} convoy '
+              '(${run.commodity} ${run.buyPortId}>${run.sellPortId})');
+      return NpcGoal(
+        type: NpcGoalType.tradeRoute,
+        status: NpcGoalStatus.travelling,
+        createdAt: DateTime.now(),
+        params: {
+          ...run.params,
+          'targetSectorId': run.buyPortId,
+          'convoyLeader': leader.id,
+        },
+      );
+    }
+    return null;
+  }
+
+  /// Wolf-pack join (C3): an idle pirate piles onto a wingmate's live
+  /// attack run. Packs are bounded ([maxWolfpackSize] hulls per target,
+  /// distress wings counted separately) and dissolve through the normal
+  /// arrival paths — kills, dry holes, and stand-downs all clear legs.
+  static NpcGoal? _createWolfpackGoal(
+    NpcShip npc,
+    List<Sector> sectors,
+    List<NpcShip> allNpcs,
+  ) {
+    if (npc.faction != FactionClass.pirate) return null;
+    if (npc.totalWeaponPower <= 0) return null;
+    final maxDist = npc.personalityConfig.maxTravelDistance;
+    final legCost = EnergyService.npcWarpCost(npc);
+    for (final attacker in allNpcs) {
+      if (attacker.id == npc.id || attacker.isDestroyed) continue;
+      if (attacker.faction != FactionClass.pirate) continue;
+      final hunt = attacker.currentGoal;
+      final targetId = hunt?.targetId;
+      if (hunt == null ||
+          hunt.type != NpcGoalType.attack ||
+          hunt.status != NpcGoalStatus.travelling ||
+          targetId == null ||
+          hunt.targetSectorId == null) {
+        continue;
+      }
+      if (_isSafeZone(npc.currentSectorId) ||
+          _isSafeZone(hunt.targetSectorId!)) {
+        continue;
+      }
+      var pack = 0;
+      for (final n in allNpcs) {
+        if (!n.isDestroyed &&
+            n.currentGoal?.type == NpcGoalType.attack &&
+            n.currentGoal?.targetId == targetId) {
+          pack++;
+        }
+      }
+      if (pack >= maxWolfpackSize) continue;
+      final path = PathfindingService.findPath(
+          sectors, npc.currentSectorId, hunt.targetSectorId!);
+      if (path == null || path.length - 1 > maxDist) continue;
+      if (npc.energy < (path.length - 1) * legCost + legCost) continue;
+      GameEventLog.global
+          .combat('[${npc.pilotName}] Joining the pack on $targetId in Sector '
+              '${hunt.targetSectorId}');
+      return NpcGoal(
+        type: NpcGoalType.attack,
+        status: NpcGoalStatus.travelling,
+        createdAt: DateTime.now(),
+        params: {
+          'targetSectorId': hunt.targetSectorId,
+          'targetId': targetId,
+        },
+      );
+    }
+    return null;
+  }
+
+  /// Duran border hold (C3): an idle armed Duran posts at the nearest
+  /// sector neighboring live hostiles (Vinari or pirates). A patrol that
+  /// sits — the post is held for [maxPatrolLegs], then re-evaluated, so
+  /// holds track pressure instead of fossilizing.
+  static NpcGoal? _createBorderHoldGoal(
+    NpcShip npc,
+    List<Sector> sectors,
+    List<NpcShip> allNpcs,
+  ) {
+    if (npc.faction != FactionClass.duran) return null;
+    if (npc.totalWeaponPower <= 0) return null;
+    if (_isSafeZone(npc.currentSectorId)) return null;
+    final maxDist = npc.personalityConfig.maxTravelDistance;
+    final legCost = EnergyService.npcWarpCost(npc);
+    final hostileSectors = <int>{};
+    for (final n in allNpcs) {
+      if (n.id == npc.id || n.isDestroyed) continue;
+      if (!_isHostileFaction(FactionClass.duran, n.faction)) continue;
+      hostileSectors.add(n.currentSectorId);
+    }
+    if (hostileSectors.isEmpty) return null;
+
+    int? bestHold;
+    var bestDist = 1 << 30;
+    for (final s in sectors) {
+      if (_isSafeZone(s.id)) continue;
+      if (!s.warpRoutes.any(hostileSectors.contains)) continue;
+      final path =
+          PathfindingService.findPath(sectors, npc.currentSectorId, s.id);
+      if (path == null || path.length - 1 > maxDist) continue;
+      if (npc.energy < (path.length - 1) * legCost + legCost) continue;
+      if (path.length - 1 < bestDist) {
+        bestDist = path.length - 1;
+        bestHold = s.id;
+      }
+    }
+    if (bestHold == null) return null;
+    final threat = hostileSectors.length == 1 ? hostileSectors.first : -1;
+    GameEventLog.global.goal(
+        '[${npc.pilotName}] Holding the border at Sector $bestHold '
+        '(${threat == -1 ? 'hostiles next door' : 'hostiles in Sector $threat'})');
+    return NpcGoal(
+      type: NpcGoalType.patrol,
+      status: NpcGoalStatus.travelling,
+      createdAt: DateTime.now(),
+      params: {
+        'targetSectorId': bestHold,
+        'homeSector': npc.currentSectorId,
+        'borderHold': bestHold,
+      },
+    );
+  }
+
   static NpcGoal _createPatrolGoal(NpcShip npc, List<Sector> sectors) {
     final current = _findSector(sectors, npc.currentSectorId);
     final targetId = (current != null && current.warpRoutes.isNotEmpty)
@@ -2393,12 +2671,13 @@ class NpcAiService {
         }
       }
       if (target == null) continue;
-      // Destination is the intel (last-seen sector), not the real
+      // Destination is the intel (last-seen sector while fresh,
+      // probabilistic fan-out once stale — C3), not the real
       // position — except under our nose: co-located ships see each
       // other, so engage in place instead of flying to stale intel.
       final dest = target.currentSectorId == npc.currentSectorId
           ? npc.currentSectorId
-          : record.sectorId;
+          : intelSearchSector(record, sectors);
       if (_isSafeZone(dest)) continue;
       final path =
           PathfindingService.findPath(sectors, npc.currentSectorId, dest);
@@ -2523,6 +2802,30 @@ class NpcAiService {
 
     if (bestTarget == null && bestTargetSectorId == null) return null;
 
+    // BFS-intercept (C3): greedy hunters cut off bountied targets that
+    // are underway — destination is where they're going (read off the
+    // live roster, the same intent gossip would carry), when reachable.
+    // No heading, no bounty, or out of reach: hunt where they are.
+    if (bestTarget != null && greedy && bestTargetSectorId != null) {
+      final bounty = BountyBoard.global.totalFor(bestTarget.id);
+      final heading = bestTarget.currentGoal;
+      final dest = heading?.targetSectorId;
+      if (bounty > 0 &&
+          heading != null &&
+          heading.status == NpcGoalStatus.travelling &&
+          dest != null &&
+          dest != bestTarget.currentSectorId) {
+        final cut =
+            PathfindingService.findPath(sectors, npc.currentSectorId, dest);
+        if (cut != null && cut.length - 1 <= maxDist) {
+          GameEventLog.global
+              .combat('[${npc.pilotName}] Cutting off ${bestTarget.pilotName} '
+                  'at Sector $dest');
+          bestTargetSectorId = dest;
+        }
+      }
+    }
+
     return NpcGoal(
       type: NpcGoalType.attack,
       status: NpcGoalStatus.travelling,
@@ -2595,6 +2898,13 @@ class NpcAiService {
     final goal = npc.currentGoal;
     final steering =
         goal != null && goal.status == NpcGoalStatus.travelling ? goal : null;
+
+    // Arrived under a live goal (border holds standing their post):
+    // hold position instead of wandering off. Every other arrival
+    // either completes or retargets at execution, so only holds wait.
+    if (steering != null && steering.targetSectorId == npc.currentSectorId) {
+      return npc;
+    }
 
     // If we have a goal with a target, pathfind towards it
     if (steering != null &&

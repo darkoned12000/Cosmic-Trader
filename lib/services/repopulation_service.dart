@@ -29,11 +29,12 @@ class RepopulationService {
 
   /// Steady-state production ceilings per faction (C4a). Floors recover,
   /// production sustains — at or above the cap the yards stand down.
-  /// Pirates hold no homeworlds: floors cover them until C3 outposts.
+  /// Pirates build at their outposts (C3) under a leaner cap.
   static const Map<FactionClass, int> productionCaps = {
     FactionClass.trader: 8,
     FactionClass.duran: 8,
     FactionClass.vinari: 8,
+    FactionClass.pirate: 4,
   };
 
   /// Chance a yard rollout is a living legend (C4c).
@@ -114,7 +115,8 @@ class RepopulationService {
         );
         continue;
       }
-      // Pirates hold no homeworlds: random-sector fallback (outposts later).
+      // Pirates hold no homeworlds, only outposts (C3): random-sector
+      // fallback when every outpost is captured or destroyed.
       final sectorId = homeId ?? sectors[random.nextInt(sectors.length)].id;
       final ship = NpcShip.create(
         faction: entry.key,
@@ -178,8 +180,9 @@ class RepopulationService {
       }
       final faction = planet.homeworldOf!;
       final cap = productionCaps[faction];
-      if (cap == null) continue; // pirates: no yards (C3 outposts later)
-      if (planet.owner != null && planet.owner != faction) continue; // cold yards
+      if (cap == null) continue;
+      // Captured yards run cold.
+      if (planet.owner != null && planet.owner != faction) continue;
       if (planet.isBackupHomeworld && livePrimary(faction)) continue;
       planet.productionTimer--;
       if (planet.productionTimer > 0) continue;

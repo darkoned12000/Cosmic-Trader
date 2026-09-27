@@ -478,7 +478,7 @@ distress/reinforcement work composes with it directly. Each slice ships
 with automation-log lines + unit tests per the branch norm
 (analyze-clean, format-clean, full suite green, live numbers before/after).
 
-**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26, C4 ✅ done 2026-09-26):**
+**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26, C4 ✅ done 2026-09-26, C3 ✅ done 2026-09-26):**
 - `CombatOutcome` enum (attacker/defender victory, attacker/defender
   retreat, defender surrender, parley, ongoing) + `outcome`,
   `escapeCostEnergy`, `parleyCostCredits` on `CombatResult`
@@ -580,10 +580,37 @@ with automation-log lines + unit tests per the branch norm
     killers +0.02 aggression, survivors (incl. NPCs that live through
     player attacks — `CombatScreen` flee path) +0.02 caution.
   Suite: 219 passing, analyze clean.
-- C4 deltas: pirate production waits on C3 outposts (floors cover them);
-  planet destruction is model + regen-exclusion only, combat triggers
-  arrive with the invasion system; hero hail is dialog-only (no widget
-  test — same headless rationale as the parley UI).
+- C4 deltas: pirate production now live at C3 outposts (cap 4 — the
+  "waits on C3" note is retired); planet destruction is model +
+  regen-exclusion only, combat triggers arrive with the invasion
+  system; hero hail is dialog-only (no widget test — same headless
+  rationale as the parley UI).
+- C3 coordination (`test/coordination_test.dart`, 14 tests):
+  - Outposts — generator plants 2 pirate yards (flagged pirate
+    homeworlds, frontier-owned); floors + production serve from known
+    ground, random fallback only when all outposts fall; pirate cap 4.
+    Regional premiums unaffected (no pirate preferred good).
+  - Convoys — idle traders fall in with live trader runs (copy legs +
+    `convoyLeader`, wing cap leader+2); escorts scatter on leader loss,
+    fly solo on divergence/completion (legs stay valid). No formation
+    code — shared destinations ARE the formation.
+  - Wolf-packs — idle armed pirates join live pirate hunts (cap 3 per
+    target, energy/range/safe-zone gated); packs dissolve through
+    normal arrival paths.
+  - Border holds — idle armed Duran post at the nearest sector
+    neighboring live hostiles (patrol that sits: legs tick on post,
+    expire in 5, re-evaluated); `_move` holds arrived-live goals
+    instead of wandering off.
+  - Intercepts — greedy hunters (greed ≥ 0.7) cut off bountied targets
+    that are underway: destination becomes the mark's live goal sector
+    when reachable, else their current sector.
+  - Probabilistic intel — sightings exact while fresh (15 min), then
+    fan out to a random warp neighbor (`intelSearchSector`, used by
+    hunt targeting); dry holes on live grudges relocate intel next
+    door with decay untouched.
+  All three join behaviors run inside `_selectGoal` (idle pilots only —
+  the C2 no-hijack guarantee extends to coordination).
+  Suite: 233 passing, analyze clean.
   Suite: 202 passing, analyze clean.
 - Soak note (per review): behavior quality over time is judged by a
   30–60 min sim + log review in C5, not by unit tests alone. The log

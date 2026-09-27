@@ -428,6 +428,22 @@ class NpcMemory {
     return copyWith(vendettas: updated);
   }
 
+  /// Relocates a grudge's intel without touching grievance or the decay
+  /// window (C3 dry-hole search spread): checking next door is searching,
+  /// not sighting. Returns `this` when absent or unchanged.
+  NpcMemory withVendettaRelocated(String targetId, int sectorId) {
+    final existing = vendettas[targetId];
+    if (existing == null || existing.sectorId == sectorId) return this;
+    final updated = Map<String, VendettaRecord>.from(vendettas);
+    updated[targetId] = VendettaRecord(
+      sectorId: sectorId,
+      firstSeenMs: existing.firstSeenMs,
+      lastSeenMs: existing.lastSeenMs,
+      grievance: existing.grievance,
+    );
+    return copyWith(vendettas: updated);
+  }
+
   /// Drops grudges with no contact inside [vendettaMemory]. Returns `this`
   /// when nothing expired so callers can skip pointless saves.
   NpcMemory pruneVendettas({int? nowMs}) {

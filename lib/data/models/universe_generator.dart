@@ -1111,10 +1111,44 @@ class UniverseGenerator {
     for (final faction in factions) {
       _assignOneHomeworld(sectors, rng, faction, true);
     }
+    // Pirate outposts (C3): two frontier yards flagged as pirate
+    // homeworlds, so floors and production serve pirates from known
+    // ground instead of random-sector fallback. Unowned (frontier) —
+    // capture or destruction returns pirates to the random fallback.
+    _assignOutposts(sectors, rng);
   }
 
-  void _assignOneHomeworld(
-      List<Sector> sectors, math.Random rng, FactionClass faction, bool backup) {
+  /// Two pirate outpost worlds outside FedSpace. Skips gracefully on
+  /// tiny universes with no eligible ground.
+  void _assignOutposts(List<Sector> sectors, math.Random rng) {
+    var placed = 0;
+    final pool = sectors
+        .where((s) =>
+            s.id > settings.fedSpaceEnd &&
+            s.hasPlanet &&
+            s.planet != null &&
+            !s.planet!.isHomeworld)
+        .toList();
+    pool.shuffle(rng);
+    for (final s in pool) {
+      if (placed >= 2) break;
+      final p = s.planet!;
+      p.isHomeworld = true;
+      p.homeworldOf = FactionClass.pirate;
+      p.owner = null;
+      p.productionTimer = 5;
+      p.spawnInterval = 12;
+      placed++;
+    }
+    if (placed == 0) {
+      debugPrint('No pirate outpost sector available '
+          '(fedSpaceEnd ${settings.fedSpaceEnd} covers '
+          '${sectors.length} sectors)');
+    }
+  }
+
+  void _assignOneHomeworld(List<Sector> sectors, math.Random rng,
+      FactionClass faction, bool backup) {
     {
       // Faction homeworld type preferences
       final preferredTypes = _homeworldTypes(faction);
