@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/bounty.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
@@ -11,6 +12,319 @@ import 'package:cosmic_trader/services/npc_ai/npc_personality.dart';
 void main() {
   setUp(() => BountyBoard.resetForTest());
   tearDown(() => BountyBoard.resetForTest());
+
+  test('resetForNewUniverse clears marks and history', () async {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'victim-1',
+      targetName: 'Victim',
+      targetFaction: 'trader',
+      amount: 5000,
+      posterId: 'poster-1',
+      posterName: 'Poster',
+      reason: 'stale universe',
+    );
+    expect(board.totalFor('victim-1'), 5000);
+
+    await board.resetForNewUniverse();
+    expect(board.active, isEmpty);
+    expect(board.paid, isEmpty);
+    expect(board.paidLifetime, 0);
+    expect(board.totalFor('victim-1'), 0);
+  });
+
+  test('paid lifetime counts past the display cap', () {
+    final board = BountyBoard.global;
+    for (var i = 0; i < 25; i++) {
+      board.post(
+        targetId: 't$i',
+        targetName: 'T$i',
+        targetFaction: 'pirate',
+        amount: 100,
+        posterId: 'p$i',
+        posterName: 'P$i',
+        reason: 'cap',
+      );
+      board.payKiller(
+        targetId: 't$i',
+        killerName: 'K',
+        targetName: 'T$i',
+      );
+    }
+    expect(board.paid.length, 20);
+    expect(board.paidLifetime, 25);
+  });
+
+  test('poster cap, minimum amount, and cheapest-first eviction', () {
+    final board = BountyBoard.global;
+    // Dust amounts are refused outright.
+    expect(
+        board.post(
+          targetId: 'dust',
+          targetName: 'Dust',
+          targetFaction: 'pirate',
+          amount: 50,
+          posterId: 'poor',
+          posterName: 'Poor',
+        ),
+        isNull);
+    expect(board.totalFor('dust'), 0);
+    // Empty target ids are refused.
+    expect(
+        board.post(
+          targetId: '',
+          targetName: 'Nobody',
+          targetFaction: 'pirate',
+          amount: 500,
+          posterId: 'poor',
+          posterName: 'Poor',
+        ),
+        isNull);
+    // Ten live marks per poster, then refusal.
+    for (var i = 0; i < 11; i++) {
+      board.post(
+        targetId: 'c$i',
+        targetName: 'C$i',
+        targetFaction: 'pirate',
+        amount: 500,
+        posterId: 'spammer',
+        posterName: 'Spammer',
+      );
+    }
+    expect(board.active.where((b) => b.posterId == 'spammer').length,
+        BountyBoard.maxBountiesPerPoster);
+    // A flood of minimums evicts minimums, never the high-value head.
+    board.post(
+      targetId: 'whale',
+      targetName: 'Whale',
+      targetFaction: 'pirate',
+      amount: 50000,
+      posterId: 'rich',
+      posterName: 'Rich',
+    );
+    for (var i = 0; i < BountyBoard.maxActiveBounties; i++) {
+      board.post(
+        targetId: 'f$i',
+        targetName: 'F$i',
+        targetFaction: 'pirate',
+        amount: 100,
+        posterId: 'flood$i',
+        posterName: 'Flood$i',
+      );
+    }
+    expect(board.active.length, BountyBoard.maxActiveBounties);
+    expect(board.totalFor('whale'), 50000);
+  });
+
+  test('house posters are exempt from the per-poster cap', () {
+    final board = BountyBoard.global;
+    for (var i = 0; i < BountyBoard.maxBountiesPerPoster + 3; i++) {
+      expect(
+          board.post(
+            targetId: 'fed$i',
+            targetName: 'Fed$i',
+            targetFaction: 'pirate',
+            amount: 5000,
+            posterId: 'FEDERATION',
+            posterName: 'Federation Marshal',
+          ),
+          isNotNull);
+    }
+    expect(board.active.where((b) => b.posterId == 'FEDERATION').length,
+        BountyBoard.maxBountiesPerPoster + 3);
+  });
+
+  test('pruneAbsent drops vanished targets, keeps the living', () {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'alive',
+      targetName: 'Alive',
+      targetFaction: 'pirate',
+      amount: 500,
+      posterId: 'p',
+      posterName: 'P',
+    );
+    board.post(
+      targetId: 'gone',
+      targetName: 'Gone',
+      targetFaction: 'pirate',
+      amount: 500,
+      posterId: 'p',
+      posterName: 'P',
+    );
+    board.pruneAbsent({'alive', 'player-1'});
+    expect(board.totalFor('alive'), 500);
+    expect(board.totalFor('gone'), 0);
+    // Pruned poster money queues as escrow, not vapor.
+    expect(board.pendingRefundFor('p'), 500);
+    expect(board.takeRefund('p'), 500);
+    expect(board.pendingRefundFor('p'), 0);
+  });
+
+  group('escrow and expiry', () {
+    test('expired marks lapse and refund', () {
+      final board = BountyBoard.global;
+      board.post(
+        targetId: 'old',
+        targetName: 'Old',
+        targetFaction: 'pirate',
+        amount: 1000,
+        posterId: 'p',
+        posterName: 'P',
+        expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+      );
+      board.post(
+        targetId: 'fresh',
+        targetName: 'Fresh',
+        targetFaction: 'pirate',
+        amount: 1000,
+        posterId: 'p',
+        posterName: 'P',
+      );
+      final pruned = board.pruneExpired();
+      expect(pruned.map((b) => b.targetId), ['old']);
+      expect(board.totalFor('old'), 0);
+      expect(board.totalFor('fresh'), 1000);
+      expect(board.pendingRefundFor('p'), 1000);
+    });
+
+    test('house-minted marks evaporate instead of refunding', () {
+      final board = BountyBoard.global;
+      board.post(
+        targetId: 'fed-mark',
+        targetName: 'Fed Mark',
+        targetFaction: 'pirate',
+        amount: 5000,
+        posterId: 'FEDERATION',
+        posterName: 'Federation Marshal',
+        expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+      );
+      expect(board.pruneExpired(), hasLength(1));
+      expect(board.pendingRefunds, isEmpty);
+    });
+
+    test('settleNpcRefunds credits roster pilots in place', () {
+      final board = BountyBoard.global;
+      board.post(
+        targetId: 'gone',
+        targetName: 'Gone',
+        targetFaction: 'pirate',
+        amount: 700,
+        posterId: 'npc-1',
+        posterName: 'Pilot',
+      );
+      board.pruneAbsent({'someone-else'});
+      var npc = NpcShip.create(
+        faction: FactionClass.trader,
+        shipDef: ShipDefinition.allShips.first,
+        currentSectorId: 11,
+        startingCredits: 1000,
+        seed: 5,
+      );
+      // Force the roster id to match the poster.
+      final roster = [
+        npc.copyWith(id: 'npc-1'),
+        NpcShip.create(
+          faction: FactionClass.pirate,
+          shipDef: ShipDefinition.allShips.first,
+          currentSectorId: 11,
+          startingCredits: 1000,
+          seed: 6,
+        ),
+      ];
+      expect(board.settleNpcRefunds(roster), 1);
+      expect(roster[0].credits, 1700);
+      expect(board.pendingRefundFor('npc-1'), 0);
+    });
+
+    test('posts default to a 7-day expiry; legacy rows backfill', () {
+      final board = BountyBoard.global;
+      final before = DateTime.now();
+      final posted = board.post(
+        targetId: 't',
+        targetName: 'T',
+        targetFaction: 'pirate',
+        amount: 500,
+        posterId: 'p',
+        posterName: 'P',
+      )!;
+      expect(posted.expiresAt.difference(before).inDays, 7);
+      final legacy = Bounty.fromJson({
+        'id': 'x',
+        'createdAt': DateTime.utc(2026, 1, 1).toIso8601String(),
+      });
+      expect(legacy.expiresAt, DateTime.utc(2026, 1, 1).add(Bounty.ttl));
+    });
+  });
+
+  test('self-posts pay out but mint no standing', () {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'mark',
+      targetName: 'Mark',
+      targetFaction: 'pirate',
+      amount: 1000,
+      posterId: 'me',
+      posterName: 'Me',
+      posterFaction: 'trader',
+    );
+    expect(board.posterFactionsFor('mark'), ['trader']);
+    expect(board.posterFactionsFor('mark', excludePosterId: 'me'), isEmpty);
+  });
+
+  test('grouped targets stack totals richest-first', () {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'a',
+      targetName: 'A',
+      targetFaction: 'pirate',
+      amount: 1000,
+      posterId: 'p1',
+      posterName: 'P1',
+    );
+    board.post(
+      targetId: 'b',
+      targetName: 'B',
+      targetFaction: 'duran',
+      amount: 5000,
+      posterId: 'p2',
+      posterName: 'P2',
+    );
+    board.post(
+      targetId: 'a',
+      targetName: 'A',
+      targetFaction: 'pirate',
+      amount: 3000,
+      posterId: 'p3',
+      posterName: 'P3',
+    );
+    final groups = board.groupedTargets();
+    expect(groups.map((g) => g.targetId), ['b', 'a']);
+    expect(groups.last.total, 4000);
+    expect(groups.last.marks, hasLength(2));
+    expect(groups.last.targetFaction, 'pirate');
+  });
+
+  test('paid factions round-trip through JSON with legacy defaults', () {
+    final paid = PaidBounty(
+      targetName: 'T',
+      targetFaction: 'pirate',
+      killerName: 'K',
+      killerFaction: 'duran',
+      amount: 100,
+      paidAt: DateTime.utc(2026),
+    );
+    final restored = PaidBounty.fromJson(paid.toJson().cast<String, dynamic>());
+    expect(restored.targetFaction, 'pirate');
+    expect(restored.killerFaction, 'duran');
+    final legacy = PaidBounty.fromJson(const {
+      'targetName': 'T',
+      'killerName': 'K',
+      'amount': 100,
+    });
+    expect(legacy.targetFaction, '');
+    expect(legacy.killerFaction, '');
+  });
 
   test('post holds bounty; killer auto-collects; history kept', () {
     final board = BountyBoard.global;
@@ -43,11 +357,16 @@ void main() {
       killerName: 'Killer',
       targetName: 'Victim',
       verifiedKills: {'victim-1'},
+      killerFaction: 'duran',
+      targetFaction: 'pirate',
     );
     expect(paid, 8000);
     expect(board.active, isEmpty);
     expect(board.paid, hasLength(1));
     expect(board.paid.first.killerName, 'Killer');
+    // Factions ride along for the faction-colored board.
+    expect(board.paid.first.killerFaction, 'duran');
+    expect(board.paid.first.targetFaction, 'pirate');
 
     // Nothing owed twice — even with the kill still "verified".
     expect(
@@ -132,8 +451,8 @@ void main() {
         targetName: 'T$i',
         targetFaction: 'pirate',
         amount: 100,
-        posterId: 'p',
-        posterName: 'P',
+        posterId: 'p$i',
+        posterName: 'P$i',
       );
       board.payKiller(targetId: 't$i', killerName: 'K', targetName: 'T$i');
     }

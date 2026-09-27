@@ -420,6 +420,588 @@ meaningfully more dangerous as the player gets richer.
 
 ---
 
+## Phase C (`living-npcs`) — scope (2026-09-26, branch created)
+
+Goal: NPCs go from reactive to alive — memory with consequences, social
+structure, and mid-combat reactivity. Current-state assessment per item
+(code-read, not aspirational):
+
+**Done already (do not rebuild):** threat-gated flee, distress + capped
+armed response with revalidation, fear/hatred calculus, outfitting,
+repopulation floors, failed-route cooldowns, bounty post/hunt/collect,
+greedy hunter preference, owner management, guard rails on goal
+interruption. The "reacts" layer is solid.
+
+**C1 — Mid-combat intelligence (highest value, M–L).**
+- NPC-vs-NPC resolves instantly today: no damage-based break-off, no
+  surrender, no mid-fight reinforcement arrival (distress only fires
+  pre-engagement). Add per-round morale: break contact under
+  caution-scaled hull thresholds, gated by engine (disengage move).
+- Faction-flavored rules from lore: Duran (rarely flee), Vinari (usually
+  disengage), Traders (bribe/parley — credits-for-peace offer),
+  Pirates (fight cornered, flee overwhelmed). Verify: `Combat: broke off`
+  / `parley` lines + declining one-sided massacres in long runs.
+- Player-combat side: NPC opponents get the same morale (flee/parley
+  mid-fight in `CombatScreen`), so kills require commitment. Reinforcement
+  wing warps in 1–3 ticks after distress — finish-or-break decisions.
+
+**C2 — Memory & grudges (M).**
+- `knownThreatIds` is written but nothing reads it: wire encounter memory
+  (vendetta goal vs specific pilots, avoidance reroutes, gossip to
+  same-faction allies in range).
+- Route learning (positive mirror of the cooldown system): revisit
+  profitable routes, not just avoid dead ones.
+- Feed danger into `findBestTradeRoute` (avoidance-weighted profit).
+
+**C3 — Coordination & formations (L).**
+- Convoy (traders group + escort), wolf-pack ambush (pirates on
+  high-value lanes), border patrol holds (Duran map segments).
+- Shared intel: probabilistic "last seen" propagation; bounty hunters
+  predict destinations via BFS intercept (extends the greedy preference).
+- Pirate outposts (spawn fallback to replace random-sector spawn).
+
+**C4 — Living galaxy remainder (M).**
+- Production-timer spawning on homeworlds (replace/supplement floors),
+  backup homeworlds, planet-killer path to permanent removal.
+- Lore heroes from `notableHeroes`: rare spawns, better stats, bounty,
+  unique hail dialogue.
+- Personality drift: survivors +caution, victors +aggression (bounded).
+
+**C5 — Danger/tension curve (S–M, mostly tuning + verify).**
+- Pirates specifically target high-notoriety players; bounties attract
+  hunters at scale. Mostly exists (fear + Fed auto-post + greedy
+  hunters) — needs long-run measurement, not new systems.
+
+**Suggested build order:** C1 → C2 → C4 (production spawning) → C3 →
+C5-verify. C1 first: it changes every fight in the game, and the
+distress/reinforcement work composes with it directly. Each slice ships
+with automation-log lines + unit tests per the branch norm
+(analyze-clean, format-clean, full suite green, live numbers before/after).
+
+**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26, C4 ✅ done 2026-09-26, C3 ✅ done 2026-09-26, C5 ✅ done 2026-09-26):**
+- `CombatOutcome` enum (attacker/defender victory, attacker/defender
+  retreat, defender surrender, parley, ongoing) + `outcome`,
+  `escapeCostEnergy`, `parleyCostCredits` on `CombatResult`
+  (`outcomeFromDestruction` maps the destruction flags; mutual kill
+  scores attacker). `resolveCombat` sets it explicitly;
+  `PlayerCombatResult` carries it (defaults `ongoing`) for C1b.
+- `NpcMemory.vendettas` (stable pilot id → sector last seen, first/last
+  timestamps, grievance 0–100): `withVendetta` bumps + preserves first
+  sighting, 6h `pruneVendettas` (returns identical when clean),
+  JSON round-trip with legacy-safe default. Memory only — intent and
+  goals arrive in C2.
+- Interruption policy table formalized in comments at `_isInterruptible`.
+- Covered by `test/combat_contract_test.dart` (8 tests: outcome mapping,
+  defaults, live resolution, vendetta lifecycle/decay/serialization).
+- C1a morale (`CombatService.assessMorale`, three stages): faction hull
+  limits (Duran 0.25 — raised from 0.15 after the 2nd soak showed 43
+  deaths with 0 retreats: stubborn read as suicidal; still boldest by
+  far — versus pirate 0.30 / trader 0.40 / Vinari 0.55) ±
+  caution/aggression modifiers; outmatched-plus-exposed rule; pressing an
+  advantage and near-dead-foe suppressors; engine + energy eligibility;
+  surrender preempts the round (10% tribute, no damage); retreat applies
+  round damage first (destruction stands), deducts escape cost, skips
+  loot/kills/cargo-wipe; attacker never retreats from a corpse. Bonus
+  fix: attacker wrecks now flagged `isDestroyed` (0-hull attackers
+  previously stayed "alive" to the tick loop).
+- Covered by `test/combat_morale_test.dart` (9 tests: willingness,
+  eligibility, surrender tribute, lethal-round precedence, faction
+  tendencies).
+- C1b player parity (`CombatScreen`): NPC re-evaluates morale every round
+  post-exchange. Trader surrender surfaces an Accept/Refuse tribute UI
+  (accept: tribute transfers, no kill/loot/notoriety; refuse: fight on,
+  may re-offer); retreat resolves immediately via shared
+  `resolveRetreat` (interception is engine-relative, attempt always costs
+  energy; success warps the NPC out, failure logs the cut-off). New
+  `npcRetreated`/`parleyed` endings (no notoriety penalty).
+- C1c reinforcements-as-joins (`_executeAttackGoal`, distress system
+  unchanged at max-3/trip-budgets): arrival revalidation — a responder
+  whose target is gone checks the defender too; both gone clears the
+  signal (no further wings converge on nowhere) with an automation-log
+  line, defender present keeps it live (same-turn re-answer). Post-kill
+  retaliation intent — same-faction, same-sector, living witnesses
+  record the killer (`withVendetta`, grievance 40); bystanders, the dead,
+  and the killer itself untouched. Memory only, no goal hijack (C2
+  builds goals/pursuit on top through the interruption policy).
+- Covered by `test/combat_reinforcement_test.dart` (3 tests: empty-fight
+  clear with no distress re-answer, live-signal re-answer by responder +
+  fresh pilot, witness-only vendetta recording).
+- C2 vendettas (`test/combat_vendetta_test.dart`, 25 tests):
+  - C2a reacquisition — idle pilots check grudges before greed
+    (`_createVendettaGoal` runs first in `_selectGoal`, which only fires
+    when a new goal is needed, so committed goals are never hijacked):
+    grievance ≥ 40, living roster target, intel-sector destination
+    (in-place engage when co-located), in-range + in-tank + weaker-only
+    bounds, 30-min pursuit TTL with same-turn fresh-hunt re-issue, dry
+    holes ease 10 without refreshing the decay window.
+  - C2b resolution — kill settles (`withVendettaResolved` + log, either
+    payout path); crossed blades refresh the trail (sector + 10 bump);
+    `_pruneDeadVendettas` drops targets gone from roster + players each
+    turn; time decay enforced in `_scanSector` (no-op when clean).
+  - C2c avoidance — `fearedSectors` (stronger grudge-targets' last-seen
+    sectors); evaluator danger discount (½ per dangerous end, never
+    refuses the only money); sell-first two-pass (safe buyers win,
+    dangerous-only still flies, logged); `findPathAvoiding` (endpoints
+    exempt, falls back to shortest) wired into `_move` with next-hop
+    change-gated log lines.
+  - C2d gossip + route learning — `_shareIntel` merges sightings both
+    ways for co-located same-faction allies (own grievance kept,
+    strangers adopted at hearsay 10, only adoptions logged);
+    `profitableRoutes` (capped 10/route, JSON-persisted, legacy-safe)
+    recorded on profitable sales, boosting evaluator ranking +5%/win
+    (cap +25%).
+- C2 deltas from the plan: payment/parley resolution applies to NPC
+  kills only — player-id grudges are never recorded (C1c writes NPC
+  killers), so there is nothing player-side to resolve yet; pursuit
+  budgets cover time + energy, with credits bounded implicitly (trips
+  must fit the tank, hunts never buy anything). Restart persistence
+  holds by construction (vendettas + profitableRoutes serialize with
+  legacy-safe defaults through the existing whole-ship save).
+- C4 production spawning (`test/homeworld_production_test.dart`,
+  17 tests):
+  - C4a cadence — `RepopulationService.produce` ticks
+    `productionTimer` on controlled, intact homeworlds; at zero rolls
+    out one ship and resets to `spawnInterval` (timers mutate in place,
+    universe saves each tick). Captured yards freeze; caps
+    (8/8/8, pirates excluded) stand yards down with reset; wired into
+    the tick loop beside floors (`tick_produce`). Floors recover,
+    production sustains.
+  - C4b backups + planet-killer — `isBackupHomeworld` /
+    `isDestroyed` on `Planet` (JSON, legacy-safe) + `destroy()`
+    (clears homeworld/owner/colony/defenses — regen never resumes
+    there). Generator assigns a cold-standby capital per major faction;
+    selection prefers primaries, backup takes over on capture/destroy,
+    recapture idles it again; production skips idled backups.
+  - C4c legends — 5% of yard rollouts are lore heroes
+    (`Faction.notableHeroes`): roster-unique by name, pilot renamed,
+    hull/shields ×1.5, guns +1 level, notoriety 15, minted 15k Guild
+    bounty (Fed auto-post precedent), hero hail dialog (title/bio/
+    legend instead of generic lore).
+  - C4d drift — `driftAggression`/`driftCaution` (±0.15 cap) fold into
+    `personalityConfig` (zero-drift returns the archetype instance);
+    killers +0.02 aggression, survivors (incl. NPCs that live through
+    player attacks — `CombatScreen` flee path) +0.02 caution.
+  Suite: 219 passing, analyze clean.
+- C4 deltas: pirate production now live at C3 outposts (cap 4 — the
+  "waits on C3" note is retired); planet destruction is model +
+  regen-exclusion only, combat triggers arrive with the invasion
+  system; hero hail is dialog-only (no widget test — same headless
+  rationale as the parley UI).
+- C3 coordination (`test/coordination_test.dart`, 14 tests):
+  - Outposts — generator plants 2 pirate yards (flagged pirate
+    homeworlds, frontier-owned); floors + production serve from known
+    ground, random fallback only when all outposts fall; pirate cap 4.
+    Regional premiums unaffected (no pirate preferred good).
+  - Convoys — idle traders fall in with live trader runs (copy legs +
+    `convoyLeader`, wing cap leader+2); escorts scatter on leader loss,
+    fly solo on divergence/completion (legs stay valid). No formation
+    code — shared destinations ARE the formation.
+  - Wolf-packs — idle armed pirates join live pirate hunts (cap 3 per
+    target, energy/range/safe-zone gated); packs dissolve through
+    normal arrival paths.
+  - Border holds — idle armed Duran post at the nearest sector
+    neighboring live hostiles (patrol that sits: legs tick on post,
+    expire in 5, re-evaluated); `_move` holds arrived-live goals
+    instead of wandering off.
+  - Intercepts — greedy hunters (greed ≥ 0.7) cut off bountied targets
+    that are underway: destination becomes the mark's live goal sector
+    when reachable, else their current sector.
+  - Probabilistic intel — sightings exact while fresh (15 min), then
+    fan out to a random warp neighbor (`intelSearchSector`, used by
+    hunt targeting); dry holes on live grudges relocate intel next
+    door with decay untouched.
+  All three join behaviors run inside `_selectGoal` (idle pilots only —
+  the C2 no-hijack guarantee extends to coordination).
+- C5 measurement (`test/combat_metrics_test.dart`, 7 tests):
+  - `CombatMetrics` (session-scoped `ChangeNotifier`, resettable):
+    engagements/outcomes per faction (attacks, kills, deaths,
+    retreats, surrenders + tribute, failed escapes), retreat-hull
+    average, player kills/deaths/flees, NPC yields vs player, capped
+    population census (240 samples), and a paste-ready `summary()`
+    that composes per-faction loot from the economy side.
+  - Hooks: single choke point in `_executeAttackGoal` (every NPC
+    resolution); every `CombatScreen` ending (kill, death, flee,
+    NPC retreat success/failure, accepted parley); per-tick census
+    (`tick_census`) beside production.
+  - Automation console gains a live Combat report (summary + Copy +
+    Reset, no shell wiring needed) — before/after sim comparisons
+    are Reset → run → Copy. NPC retreats auto-succeed by design, so
+    failed escapes only occur vs the player (interception works).
+  Suite: 240 passing, analyze clean.
+- Review batch 1 (external AI pass — stampede findings, all fixed):
+  - Shared convergence cap: `maxHuntersPerTarget` (3) counted via
+    `huntersOnTarget` across ALL mechanisms — distress (unified onto
+    the shared counter), wolf-pack (refactored onto it), vendetta
+    reacquisition (skips magnet targets, grudge keeps), and greedy
+    bounty targeting in `_createAttackGoal` (both search loops).
+    Notorious targets no longer draw unbounded independent swarms.
+  - Legends earn their price: no minted bounty at spawn (newborn
+    heroes drew every greedy hull in range); a hero's kill posts the
+    15k Guild bounty when none is active (no stacking).
+  - Vendetta map cap (`maxVendettas` 20): the 6h time prune never
+    fires inside a soak, so overflow now forgets the coldest grudge
+    (lowest grievance, oldest sighting); refreshes never evict.
+  - No change (soak watchlist): Duran fight-to-5%-hull stubbornness
+    is intended flavor — judge "stubborn vs suicidal" in the logs.
+  Covered by 5 new tests (vendetta/bounty cap waits, drain-and-resume,
+  earned hero bounty + no-stack, map-cap eviction).
+- Review batch 2 (generator/model pass — all fixed):
+  - Backup names: reserves are labeled (`Kravos (Reserve)`) — no more
+    duplicate homeworld names across sectors.
+  - Last-resort fallback: filters to plantless sectors first, logs
+    loudly when none remain (was: one blind draw, silent skip).
+  - `destroy()` zeroes production timers (was: stale cadence on the
+    corpse for any future reader that skips the `isDestroyed` check).
+  - Credits floor is now production-grade: `copyWith`/`create` clamp
+    at zero (the assert is debug-only and stripped in release).
+  - Noted, no code: primary/backup minimum distance (invasion-system
+    work, when it lands); drift is a one-way ratchet — fine for soak
+    timescales, watch on very long saves (veterans converge toward
+    maxed drift on both axes).
+  Covered by 3 new tests (unique homeworld names + reserve labels +
+  outpost count; destroy timer hygiene; credits clamp).
+- Review batch 3 (npc_ai deep pass — fixed, verified, deferred):
+  - P0 deadlocks, both confirmed and fixed: array retract on charge
+    (`_move` furls and flies when energy covers a warp; trickle
+    resumes next stranding) and convoy sell-phase target (escorts aim
+    at the phase-appropriate port; empty holds fail fast normally).
+  - P1 verified and fixed: broke-with-cargo gate + sell-first routing;
+    sell-only `sell>` cooldown namespace (consulted at selection,
+    self-loops teach no route-learning); revenue no longer skipped
+    after upgrades (`continue`, not `break`); trade refuses wrecked/
+    hostile ports like refuel/upgrade; PortInfo snapshots + applies
+    owner overrides; scan no-op guards (+ `PortInfo ==`); dead threats
+    prune on scan; death check moved above gossip; no bounty on dead
+    aggressors.
+  - P2 (this round): per-call hunter/bounty memos, `removeAt(0)` →
+    index pointers in pathfinding. Deferred with rationale: full
+    per-tick indices, evaluator path reuse, sector-index threading —
+    the default 50-sector soak never touches those paths; revisit
+    with a scaling benchmark before raising sector caps. (Noted in
+    passing: an `ownedPortIndex` per-tick index already exists.)
+  - P3: discovered-ports cap (40, stalest evicted), failed-routes
+    prune-on-write + caps, profitable-route key cap, bounty board cap
+    (200, oldest out), per-record storage parse (skip-and-log) and
+    loud save failures. Deferred: destroyed-roster pruning (needs
+    death timestamps — long-session backlog).
+  - P4: dead `sellPrice` goal param removed, `NpcGoal.fromJson`
+    hardened (bad dates/params degrade). Deferred: Combatant
+    interface, magic-string params, service split (churn risk
+    outweighs soak value).
+  - Refuted with evidence: player-hunt `maxDist + 1` is identical
+    hops semantics, not an off-by-one. Design questions parked:
+    trade `lastRegenTime` reset (consistent with player trade);
+    supply/demand snapshot filtering (stale zeros would stall worse
+    than wasted trips, which self-correct via cooldown).
+  - P5 deferred to roadmap (NPC↔NPC trade, directional flee,
+    limp-to-port repairs, loss-triggered distress, chatter, fleets,
+    ActionLog proximity gating); P6 benchmark deferred with the
+    scaling backlog.
+  Covered by `test/review_batch3_test.dart` (17 tests: retract,
+  recovery, sell-phase join, broke sell-first, revenue, guards,
+  no-ops, corpse gossip/bounty, key namespaces, overrides, caps,
+  fromJson).
+- Soak instrumentation (`test/soak_instrumentation_test.dart`,
+  5 tests): drift milestones (`Veteran bolder/warier` per 0.05 tier,
+  epsilon-guarded edges), first-win route lines (`Learned profitable
+  route`, once per key), backup-yard launch tags on both spawners.
+  Extend the soak grep with `Veteran|Learned profitable|backup yards`.
+- Soak fix 1 (bounty reset): `generateWithSettings` clears the board
+  (persisted) + combat slate — regen had kept ~50 stale marks on dead
+  NPC ids with zero payouts. Covered by a reset test.
+- Soak fix 2 (passivity): Duran produced 0 attacks / ~0 trades in 36m
+  while pirates owned all 71 engagements. Two mechanisms: (a) uncapped
+  border holds starved Duran selection — every idle Duran held instead
+  of rolling attack/trade (holds now cap at 2 hulls per sector,
+  excess falls through to the lottery); (b) symmetric 1-hop movement
+  meant pursuits lagged one hop behind forever — all NPC pursuits
+  (spontaneous, vendetta, bounty) now cut off underway targets at
+  their live-goal sector when reachable (arrival-early hunters hold
+  and engage on arrival; stale cutoffs dissolve via dry holes).
+  Covered by 3 tests (unmarked cutoff, hold cap, vendetta cutoff).
+- Soak fix 3 (2nd run): Duran retreat threshold 0.15 → 0.25 (43 deaths,
+  0 retreats — the watchlist verdict is suicidal, not stubborn);
+  tick-end wreckage clearing (`clearWrecks` — 118 corpses vs 92 living
+  were riding every save; faction totals persist in CombatMetrics).
+  Covered by 1 test.
+- P2 scaling batch (`test/scaling_benchmark_test.dart`, 2 tests):
+  - Tick indices (`beginTick`/`endTick` around the NPC loop,
+    try/finally guarded): shared sector map (also feeding
+    `PathfindingService.sharedIndex`), co-located NPC lists, id map,
+    living set. Null outside ticks → scan fallbacks, so all 279 prior
+    tests pass unmodified. Documented staleness contract (topology
+    never stale; roster views nominate candidates only, writes
+    re-resolve live objects, death-prune re-checks).
+  - Consumers: scan threats/gossip/prune, attack same-sector + BFS
+    sectors, vendetta lookup, fearedSectors, threat sensing.
+  - `bfsParents` trees: trade evaluator O(m²)→O(m) BFS passes,
+    border holds O(S²)→O(S). Single-source BFS + index-pointer queues.
+  - Measured baseline: 200 NPC turns over 300 sectors in 53ms
+    (0.27ms/turn); 20× 30-port evaluations in 45ms. Generous
+    tripwire budgets (120s/60s) catch hangs/regressions, not SLAs.
+  - Deferred with rationale: full per-tick hunters map (per-call
+    memos already bound it; sharing would go stale against the cap),
+    movement-log gating (logs are soak instrumentation), evaluator
+    distance caching across ticks (universe mutates; per-call trees
+    suffice at measured rates).
+  Suite: 281 passing, analyze clean.
+- P5 aliveness batch (`test/p5_aliveness_test.dart`, 8 tests):
+  - NPC↔NPC barter: one deal per turn with co-located non-hostiles,
+    registry-midpoint pricing (zero-sum), both sides metered +
+    logged. Relieves stranded cargo, builds supply chains.
+  - Directional flee: threat vector (sector + heading) replaces the
+    boolean; exits scored by distance from where the threat is
+    going, ties safe-ward then random.
+  - Limp-home repairs: hurt hulls (<50%) with >15k seek yards early
+    (arrival already repairs first).
+  - Loss-triggered distress: bleeding defenders (<40% hull) call for
+    help at any odds, reusing capped responders.
+  - Combat taunts: aggression ≥ 0.6 attackers snarl per engagement
+    (faction corpus mirroring death cries).
+  - Deferred: persistent fleet ids (needs regroup design), ActionLog
+    proximity gating (needs player positions threaded into
+    executors), supply/demand snapshot filtering (stale-zero risk).
+  Suite: 289 passing, analyze clean.
+- Bounty review (external pass — fixed, verified, deferred):
+  - H1 player marks pay out: NPC killers collect on player death
+    (credited + logged); new Fed marks on the player raise an Action
+    Log warning (positions never revealed — your call, kept that way).
+  - H2 silent loss closed: player kills auto-claim at combat end
+    (credits + standing, mirroring the NPC instant path); the board
+    Claim stays as a harmless zero-balance fallback.
+  - H3 self-post exploit closed: completion standing excludes the
+    claimant's own posts (payouts still flow — the money was debited).
+  - M1 flood-proofing: 100cr minimum, 10 live marks per poster,
+    cheapest-first eviction (floods eat floods, never whale heads).
+  - M2 dead-target pruning per tick + `recentKills` cleared on regen;
+    unclaimed poster credits lapse (escrow is roadmap).
+  - M3 load race fixed by merge (session posts survive; paid ids
+    can't resurrect as zombies). M4 left as-is (crash-window only,
+    reset path awaits). M5 screen load failure now logs.
+  - L1 all done: sorted-by-richest board, marks/targets header,
+    separators, ages, cleared search field, `''` faction default,
+    empty-id refusal.
+  - Deferred: expiry/TTL + escrow + refunds, grouped target view,
+    hunter proximity UI (vetoed — stays behind hypothetical
+    equipment), lifetime stats, multiplayer kill-trust hardening.
+  Covered by 4 new bounty tests (poster caps/min/eviction, prune,
+  self-post standing, lifetime) + updated cap tests.
+- Bounty escrow/expiry (`test/bounty_board_test.dart`, +4 tests):
+  - 7-day wall-clock TTL on every mark (`expiresAt`, legacy backfill
+    from creation); expiry countdown on board rows.
+  - Lapsed marks refund: expiry, dead-target prune, and cap eviction
+    queue escrow per poster (house-minted Fed/Chroniclers money
+    evaporates — created from nothing). NPC matches settle in-tick
+    before the save; players collect via a board button showing the
+    pending total. Queue capped at 100 rows, cleared on regen.
+  - `pruneAbsent`/`pruneExpired` return the pruned marks; tick sweeps
+    both before Fed posts.
+  Suite: 293 passing, analyze clean.
+- Grouped bounty view (`test/bounty_board_test.dart`, +1 test):
+  - `groupedTargets()`: one entry per mark target, stacked total,
+    richest first (pure rollup, screen filters on top).
+  - Board shows one card per target: faction-colored name, stacked
+    total, mark count, nearest expiry, single Claim; expandable
+    per-poster breakdown (colored poster, amount, reason, age).
+  - Filters: Claimable toggle + All/each-faction chips; header reads
+    marks · targets honestly.
+  Suite: 294 passing, analyze clean.
+- Economy tuning (audit + visibility, no knob changes):
+  - Faucet/sink audit: faucets are spawn 10k (bounded rate), minted
+    Fed/hero bounties on kill, and 1%/day interest (negligible at soak
+    timescales). Sinks are 75% victim-wealth destruction per kill
+    (the dominant balancer — scales with war), upgrade/repair/port
+    costs, towing, lottery. Ports don't regen credits: trader wealth
+    is redistribution from rich ports, not printing. Nothing
+    overflows (int64) or breaks mechanically — big numbers are
+    cosmetic concentration, so no spreads were narrowed (that would
+    tax the player's fun identically).
+  - Ore −13.7% diagnosed as a metric artifact, not a pricing bug:
+    the blended average mixes cheap buys with rich sells, so a
+    stockpiling route reads as "trading at a loss". Fixed by
+    splitting the report into buy-vs-base and sell-vs-base columns
+    (`avgBuyUnitPrice`/`avgSellUnitPrice` on the stats object).
+  - If pacing still feels fast after this visibility lands, the
+    honest levers (with player-impact warnings) are: narrower
+    split-point spreads, lower replacement spawn credits, or an
+    interest cut — none taken without soak evidence.
+  Covered by extended metrics assertions (side-split averages).
+- Player vendettas + clone reissue (`test/combat_vendetta_test.dart`
+  +5, `test/player_respawn_test.dart` new):
+  - Witnesses: `noteWitnessedKill` shared by NPC kills (extracted from
+    the C1c kill path, same behavior) and player kills (both combat-end
+    handlers) — same-faction onlookers record the pilot at 40.
+  - Hunts: vendetta selection resolves player ids (power via player
+    firepower, intel/heading destinations); arrivals corner the mark
+    for the tick attack check (no easing — they're right there), dry
+    holes ease and spread normally. Convergence caps apply.
+  - Kill resolves the hunter's grudge; survivors refresh sightings
+    (flee/parley/retreat, existing entries only — contact never
+    creates grudges).
+  - No pilot permadeath: defeat reissues the faction starter with
+    starter fittings/holds/drones/energy/credits (mirrors
+    registration), waking at Terra Prime; bank/ports/standings/
+    notoriety/hacks/arrays/research survive. NPC permadeath already
+    held (destroyed stay destroyed, pruned, never resurrected —
+    floors mint new pilots, not resurrections).
+  - Soak watch: vengeful wings converging on the player is intended;
+    tuning lever is the 40-grievance witness bump if it feels unfair.
+  Suite: 301 passing, analyze clean.
+- Storage review batch (`test/storage_safety_test.dart`, 10 tests):
+  - C1 wipe closed: corrupt files quarantine aside (timestamped,
+    recoverable) with loud logs; patch paths refuse on failed loads
+    (`saveSectors`) or empty base; player/npc mutations refuse
+    (`updatePlayer`→bool, register throws unverifiable); sticky
+    failure flags with lifecycle handling — generation clears them
+    (caught live: poisoned flags blocked fresh writes).
+  - C2 coalesced: in-flight `ensureUniverse` guard (proven single
+    generation under overlap); `hasUniverse` requires non-empty.
+  - Regen completes: economy + exploration reset wired.
+  - Player records: uuid ids, null-not-throw find, loud login,
+    unknown-id signaling, dead cache fixed, `clearPlayer` stub
+    removed.
+  - Exploration per-player: nested schema, legacy migration to first
+    login, retry-safe loads, player-scoped galaxy map.
+  - NPC load outer catch loud; FileSafe mkdir + quarantine.
+  - Deferred: web adapter (aspirational target), write queue/
+    manifest transactions, SectorKnowledge persistence (no UI
+    writes it yet), destroyed-roster age pruning (done via
+    clearWrecks instead).
+  Suite: 311 passing, analyze clean.
+- Soak-response batch (7-min run): barter churn governors + Fed cap
+  fix (`test/p5_aliveness_test.dart` +2, `test/bounty_board_test.dart`
+  +1):
+  - 58k barter vs ~1.5k port trades was packmates swapping identical
+    loot every tick. Now: one barter per 5-min cooldown window, and
+    buyers top up nibs but never bulk up (bulk logistics stay at
+    ports). Relief still flows (empty-holder acquisitions).
+  - Federation hit its own 10/poster cap and stopped marking —
+    house posters (Federation/Chroniclers) are exempt as system
+    actors, not flooders.
+  - Also confirmed live: split buy/sell columns read correctly,
+    destroyed-port trade refusals firing, zero error ticks on split
+    code, `array_deploy` active.
+  Suite: 314 passing, analyze clean.
+- Phase C CLOSED 2026-09-27. Scope delivered: Step 0 + C1 (morale,
+  parity, reinforcements) + C2 (memory/vendettas/avoidance/gossip/
+  learning) + C4 (production/backups/legends/drift) + C3
+  (coordination) + C5 (measurement) + player vendettas + clone
+  reissue. Validated by 4 NPC soaks + 1 post-split parity soak, 3
+  external review batches, 5 soak-fix rounds. Deliberately out:
+  invasion combat, P2 full hunters map, snapshot filtering, P4
+  interface/strings, fleet ids, proximity gating, lifetime stats,
+  multiplayer trust, grouped-view follow-ups, economy knob changes.
+  Watchlist for future soaks: Duran K/D, hero steady-state rarity,
+  inflation pace, retreat sample size, vengeful-wing fairness.
+- Phase C complete. Soak protocol (user-run): fresh session → Reset
+  both reports → 30–60 min live (1s ticks for density) → Copy combat
+  + economy summaries + filtered log lines (`Hunting|Settled|wide
+  berth|Heard about|dangerous|Living legend|Convoy|pack|border|Cutting
+  off`) → paste to AI review.
+  Suite: 202 passing, analyze clean.
+- Soak note (per review): behavior quality over time is judged by a
+  30–60 min sim + log review in C5, not by unit tests alone. The log
+  lines above (hunts, settlements, eases, prunes, berths, hearsay,
+  dangerous-money) are the soak instrumentation — grep the combat/goal/
+  movement feeds for `Hunting|Settled|wide berth|Heard about|dangerous`.
+
+**Out of scope for C:** shipyard/hull swapping, quests/missions, chat AI,
+planet invasion (planet-phase2), multiplayer sync.
+
+---
+
+## Phase C build plan (agreed 2026-09-26, external review incorporated)
+
+Branch: `living-npcs` (created, green baseline: analyze clean, 152 tests).
+This section is the contract for the build — written before any C code so
+a dropped session loses no decisions.
+
+### Architecture decisions (locked)
+
+1. **Combat stays instantaneous (Option A).** No per-tick engagement store,
+   no round scheduler, no join-in-progress. Morale decides *before* damage
+   is applied, retreat *is* an outcome, reinforcements join pre-engagement
+   or retaliate post-kill. A persistent-engagement engine is a separate
+   branch with its own design doc if playtests ever demand it — not a side
+   effect of C1.
+2. **Vendetta is three layers, never a bare goal overwrite.** Memory
+   (`NpcMemory.vendettas`: target stable ID → last-seen sector, timestamp,
+   grievance 0–100 with decay) records what happened; intent derives from
+   it (revenge / avoid / demand); `NpcGoal` changes only through the
+   interruption policy below. Gossip shares *sightings* (low confidence,
+   fast expiry), never permanent hostility — no faction-wide cascades.
+3. **Interruption policy (formalized, replaces ad-hoc guards):**
+
+   | Current state | Vendetta/distress/bank event | Behavior |
+   |---|---|---|
+   | Idle / exploring | may select vendetta goal | allowed |
+   | Patrol (interruptible) | redirect | allowed |
+   | Trading (committed route) | any | preserve unless emergency/floor |
+   | Refueling (critical) | any | never abandon |
+   | Fleeing | any incl. revenge target visible | keep escaping |
+   | Actively fighting | reinforcement request | combat rules, not goal swap |
+   | Dead/completed/failed goal | any | clear/resolve first, then select |
+4. **No per-future-behavior fields on `NpcShip`.** New concepts live in
+   `NpcGoal` params (action lifecycle) or `NpcMemory` (knowledge
+   lifecycle). Group/convoy models wait for C3 proper.
+5. **Retreat costs.** Disengagement spends energy + takes parting damage;
+   cornered ships don't always escape. (Prevents trading unkillable
+   pirates for uncatchable cowards.)
+6. **Faction behavior = tendencies, not absolutes.** Duran resist retreat
+   until heavily damaged/outmatched; Vinari favor disengagement; Traders
+   prefer surrender/payment/escape; Pirates fight ahead, flee behind —
+   each modified by the individual pilot's caution/aggression within the
+   12 archetypes.
+
+### Milestones (each independently mergeable, each with log lines + tests)
+
+- **Step 0 — contracts.** Extend `CombatResult` with outcome enum
+  (victory/defeat/retreat/surrender/parley) + disengage details, produced
+  by both NPC resolution and `CombatScreen`. Add `NpcMemory.vendettas`
+  map with decay + serialization. Formalize the interruption table above
+  in code comments where guards live.
+- **C1a — NPC morale at resolution.** Trigger (willingness) → eligibility
+  (engine/energy/restrictions) → resolution (success, opponent
+  interception) as three distinct stages. Faction/personality modifiers.
+  Measure: outcome counters per faction, escape success rate.
+- **C1b — player-combat parity.** Same rules in `CombatScreen`: explicit
+  retreat attempt/success/failure, surrender and parley (credits-for-peace)
+  outcomes, player response to NPC retreat.
+- **C1c — reinforcements as joins.** Bounded (existing max-3 cap, trip
+  budgets, revalidation kept): pre-engagement arrival + post-kill
+  retaliation. No mid-fight interruption (follows from Option A).
+- **C2 — memory & vendettas.** Encounter memory with lifecycle
+  (creation criteria, restart persistence, decay, resolution via
+  kill/escape/payment/parley, dead-target handling, reacquisition
+  bounds, pursuit budgets in time/energy/credits). Avoidance reroutes +
+  danger-weighted trade evaluation. Route learning (positive mirror of
+  the cooldown system).- **C4 — production spawning.** Homeworld `productionTimer`/
+  `spawnInterval` drive spawning (supplement/replace floors), backup
+  homeworlds, planet-killer path to permanent removal. Lore heroes from
+  `notableHeroes` (rare, buffed, bountied, unique hail). Bounded
+  personality drift (survivors +caution, victors +aggression).
+- **C3 — coordination.** Convoy (trader group + escort, with member
+  leave-conditions and leader-death rules), wolf-pack ambush (pirates),
+  Duran border holds, probabilistic last-seen intel, BFS-intercept
+  bounty hunters, pirate outposts replacing random-sector fallback.
+- **C5 — verification.** Long-run measurement: engagements/outcomes per
+  faction, hull remaining at retreat, loot per faction, failed escapes,
+  player kills/escapes, population over time. Before/after sim summaries
+  via the automation console, not just log lines.
+
+### Standing decisions / non-goals
+
+- Combat simultaneity, shouldAttackPlayer/canWin consolidation, drones in
+  power math, weapon-slot map hardening: deferred, see C-branch notes in
+  prior review batches (no live defect attached).
+- Bounty-farming loop (survivor posts → ally collects): watch in live
+  numbers; throttle survivor posts if vengeance claims dominate pirate
+  income.
+- Interruption-matrix tests (goal-state × incoming-event table) ship with
+  the guard work; seeded RNG in sim tests for reproducibility.
+
+---
+
 ## Suggested plan (phases → branches)
 
 | Branch | Scope | Why first |
@@ -1134,3 +1716,70 @@ both `Player` and `NpcShip` and the game runs fully on energy.
 
 Verify: `flutter analyze` → **No issues found!**, `dart format` clean,
 `flutter test` → **41/41**, including the new `test/energy_service_test.dart`.
+---
+
+## Post-soak: `npc_ai_service.dart` split plan (3,174 lines → 5 files)
+
+No runtime effect (file layout is compile-time only); purely maintenance.
+Do after the soak so behavior observations aren't confounded. Mechanism:
+Dart `part`/`part of` — all 23 imports stay in the main file (parts
+carry zero imports), every `_private` name keeps working. One subtlety
+found during the split: top-level part functions CANNOT call class
+statics unqualified (class scope ≠ library scope), so internal call
+sites read `NpcAiService._findSector(...)` etc. — mechanical, no
+behavior change. Members with external qualified callers (13:
+processTurn, shouldAttackPlayer, shouldRefuel, createRefuelGoal,
+intelSearchSector, fearedSectors, npcPortPrice, huntersOnTarget,
+maxDistressResponders, knownEmporiumSectors, _handleStranded,
+ownedPortIndex, safeZoneEnd) stay static on the class, as do all
+constants/fields.
+Verification: `flutter analyze` clean + full suite green after EACH
+file move (bisects fallout), zero behavior change, own commit.
+Non-goals: no renames, no signature changes, no logic edits.
+
+### 1. `npc_ai_service.dart` — orchestrator (~500 lines)
+`processTurn`, `_isInterruptible` (+ policy table), `_isSafeZone` /
+`safeZoneEnd`, `_hasEnergy`, `_ownedSectors` / `ownedPortIndex`,
+`_isHostileFaction`, `_findSector`, `_findNpcById`, `_findAdjacentSector`,
+plus every member with external qualified callers
+(`clearSignalsForTest`, `shouldAttackPlayer`, `shouldRefuel`,
+`createRefuelGoal`, `knownEmporiumSectors`, `_handleStranded`,
+`intelSearchSector`, `fearedSectors`, `npcPortPrice`,
+`huntersOnTarget`, `maxDistressResponders`) and ALL constants/fields.
+File header keeps ALL imports + `part` directives.
+
+### 2. `npc_scanner.dart` — perception + memory upkeep (~155 lines)
+`_scanSector`, `_pruneDeadVendettas`, `_shareIntel`.
+
+### 3. `npc_goal_planner.dart` — selection + all creators (~1,000 lines)
+`DistressSignal` class, `_activeDistressSignals`, `maxConvoyEscorts`,
+`maxHuntersPerTarget`, `_huntersByTarget`, vendetta consts
+(`vendettaGrievanceThreshold`, `vendettaPursuitTtl`,
+`vendettaDryHoleEase`), `intelFreshTtl`, `_needsNewGoal`, `_selectGoal`,
+`_isGoalViable`, `_hasUnvisitedSectors`, `_hasPortSectorReachable`,
+`_instantiateGoal`, `_createTradeRouteGoal`, `_createSellOnlyGoal`,
+`_isPurchasable`, `_createBuyPortGoal`, `_createExploreGoal`,
+`_createConvoyGoal`, `_createWolfpackGoal`,
+`maxBorderHoldersPerSector`, `_createBorderHoldGoal`, `_createPatrolGoal`,
+`_respondToDistress`, `_createVendettaGoal`, `_createAttackGoal`,
+`_createRaidPortGoal`, `_createUpgradeGoal`.
+
+### 4. `npc_goal_executor.dart` — all execution (~1,300 lines)
+`_executeGoal`, `_failTrade`, `_executeTradeGoal`, `_executeRefuelGoal`,
+`_executeBankDepositGoal`, `_executeBankWithdrawGoal`,
+`_executeExploreGoal`, `_executePatrolGoal`, `_executeFleeGoal`,
+`_executeAttackGoal`, `_executeRaidPortGoal`, `_executeUpgradeGoal`,
+`_repairShip`, `_buyUpgrade`, `_manageOwnedPorts`, `_executeBuyPortGoal`.
+
+### 5. `npc_movement.dart` — movement + threat + flee (~230 lines)
+`nearestEmporiumPath`, `_move`, `_evaluateThreat`, `_notorietyOf`,
+`_findLocalEnemies`, `_calculatePower`, `_setFleeGoal`.
+
+### Steps
+1. Add `part 'npc_scanner.dart'; ...` ×4 to main; add
+   `part of 'npc_ai_service.dart';` to each new file (no other edits).
+2. Move blocks verbatim in the order above (planner last — it is
+   biggest and touches the most seams).
+3. `flutter analyze` + full suite after EACH file move (bisects fallout).
+4. Commit once, message `Post-soak: split npc_ai_service into parts
+   (no behavior change)`.

@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Hero;
 import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -10,6 +11,7 @@ import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/npc_trade_dialog.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
@@ -30,6 +32,9 @@ class SectorInteractionPanel extends StatefulWidget {
   final int fedSpaceEnd;
   final VoidCallback? onLandOnPlanet;
 
+  /// Universe settings for post-death clone reissue in player combat.
+  final GameSettings settings;
+
   const SectorInteractionPanel({
     super.key,
     required this.currentSector,
@@ -39,6 +44,7 @@ class SectorInteractionPanel extends StatefulWidget {
     this.onRefreshNpcs,
     this.fedSpaceEnd = 0,
     this.onLandOnPlanet,
+    required this.settings,
   });
 
   bool get isFedSpace =>
@@ -308,11 +314,20 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
         (f) => f.factionClass == npc.faction,
         orElse: () => Faction.allFactions().first,
       );
+      // Living legends (C4c) hail as themselves: title, bio, legend.
+      Hero? hero;
+      if (npc.heroName != null) {
+        for (final h in factionData.notableHeroes) {
+          if (h.name == npc.heroName) hero = h;
+        }
+      }
       if (!mounted) return;
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text('HAIL — ${npc.shipName}'),
+          title: Text(hero != null
+              ? 'HAIL — ${hero.name}, ${npc.heroTitle ?? hero.title}'
+              : 'HAIL — ${npc.shipName}'),
           content: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -320,12 +335,28 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
               children: [
                 _detailRow('Ship', npc.shipName),
                 _detailRow('Faction', factionData.name),
-                Text(
-                  factionData.background,
-                  style: const TextStyle(
-                      fontSize: 12, fontStyle: FontStyle.italic),
-                ),
-                const SizedBox(height: 12),
+                if (hero != null) ...[
+                  Text(
+                    hero.shortBio,
+                    style: const TextStyle(
+                        fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Legend: ${hero.notableAchievement}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.amber.shade200,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ] else
+                  Text(
+                    factionData.background,
+                    style: const TextStyle(
+                        fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                if (hero == null) const SizedBox(height: 12),
                 Text(
                   'Personality: ${npc.personality.name.toUpperCase().replaceAll('_', ' ')}',
                   style: TextStyle(
@@ -397,9 +428,22 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
             builder: (ctx) => CombatScreen(
               player: widget.player,
               npc: npc,
+              settings: widget.settings,
               onCombatEnd: (updatedPlayer, updatedNpc) async {
                 widget.onPlayerUpdate(updatedPlayer);
                 final allNpcs = await NpcStorage().loadAll();
+                // Player kills make witnesses (vendetta symmetry with C1c):
+                // same-faction onlookers record the pilot's id.
+                if (updatedNpc.isDestroyed) {
+                  NpcAiService.noteWitnessedKill(
+                    allNpcs: allNpcs,
+                    victimId: npc.id,
+                    victimFaction: npc.faction,
+                    sectorId: updatedNpc.currentSectorId,
+                    killerId: updatedPlayer.id,
+                    killerName: updatedPlayer.name,
+                  );
+                }
                 final updatedList = allNpcs
                     .map((n) => n.id == npc.id ? updatedNpc : n)
                     .toList();

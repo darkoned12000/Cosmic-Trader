@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 
 /// Settings → Automation log viewer (F1) plus dev controls (F2).
@@ -204,6 +205,71 @@ class _AutomationConsoleWidgetState extends State<AutomationConsoleWidget> {
     );
   }
 
+  /// C5 combat report: session outcomes per faction, retreat hull, player
+  /// endings, and population samples — with Copy for AI-review pastes and
+  /// Reset for before/after sim comparisons. Listens to [CombatMetrics]
+  /// directly, so it stays live without shell callbacks.
+  Widget _buildCombatReport(BuildContext context, ColorScheme cs) {
+    return ListenableBuilder(
+      listenable: CombatMetrics.global,
+      builder: (context, _) {
+        final metrics = CombatMetrics.global;
+        final summary = metrics.summary();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text('Combat report',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: summary));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Copied combat report summary')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy_rounded, size: 16),
+                  label:
+                      const Text('Copy report', style: TextStyle(fontSize: 12)),
+                ),
+                TextButton.icon(
+                  onPressed: () => metrics.reset(),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                  label: const Text('Reset', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxHeight: 220),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: cs.outline.withValues(alpha: 0.4),
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: SingleChildScrollView(
+                child: Text(
+                  summary,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -241,6 +307,8 @@ class _AutomationConsoleWidgetState extends State<AutomationConsoleWidget> {
                         _buildDevControls(context, cs),
                         const Divider(height: 24),
                       ],
+                      _buildCombatReport(context, cs),
+                      const Divider(height: 24),
                       TextField(
                         controller: _searchController,
                         decoration: InputDecoration(

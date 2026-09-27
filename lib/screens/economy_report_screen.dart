@@ -77,7 +77,7 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
           '(player ${m.playerTrades}, NPC ${m.npcTrades}, '
           'loot ${m.totalLoot} cr)',
       '',
-      '--- Commodities (units / volume cr / avg vs base) ---',
+      '--- Commodities (units / volume cr / buy vs base / sell vs base) ---',
     ];
     final commodities = m.perCommodity.keys.toList()..sort();
     if (commodities.isEmpty) {
@@ -86,10 +86,9 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
     for (final name in commodities) {
       final s = m.perCommodity[name]!;
       final base = CommodityRegistry.defaultsMap[name]?.splitPoint ?? 0;
-      final delta = base <= 0
-          ? '—'
-          : '${(((s.avgUnitPrice - base) / base) * 100).toStringAsFixed(1)}%';
-      lines.add('$name: ${s.units} units / ${s.credits} cr / $delta');
+      lines.add('$name: ${s.units} units / ${s.credits} cr / '
+          'buy ${_delta(s.avgBuyUnitPrice, base)} / '
+          'sell ${_delta(s.avgSellUnitPrice, base)}');
     }
     lines.add('');
     lines.add('--- Factions (buys / sells / net / loot / holdings est.) ---');
@@ -108,6 +107,10 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
       const SnackBar(content: Text('Economy report copied')),
     );
   }
+
+  /// Signed percent delta vs the base midpoint, or an em dash.
+  static String _delta(double avg, double base) =>
+      base <= 0 ? '—' : '${(((avg - base) / base) * 100).toStringAsFixed(1)}%';
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +193,7 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
                 PanelCard(
                   icon: Icons.inventory_2_rounded,
                   title: 'Commodities',
-                  subtitle: 'Avg unit price vs base midpoint',
+                  subtitle: 'Buy/sell unit prices vs base midpoint',
                   children: [
                     if (commodities.isEmpty)
                       Text(
@@ -208,9 +211,10 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
                           'Commodity',
                           'Units',
                           'Volume',
-                          'Avg vs base',
+                          'Buy v base',
+                          'Sell v base',
                         ],
-                        flexes: const [2, 1, 1, 1],
+                        flexes: const [2, 1, 1, 1, 1],
                         itemCount: commodities.length,
                         rowBuilder: (context, i) {
                           final name = commodities[i];
@@ -218,10 +222,6 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
                           final base =
                               CommodityRegistry.defaultsMap[name]?.splitPoint ??
                                   0;
-                          final avg = s.avgUnitPrice;
-                          final delta = base <= 0
-                              ? '—'
-                              : '${(((avg - base) / base) * 100).toStringAsFixed(0)}%';
                           return Row(
                             children: [
                               Expanded(
@@ -239,7 +239,12 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),
                               Expanded(
-                                  child: Text(delta,
+                                  child: Text(_delta(s.avgBuyUnitPrice, base),
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          fontFamily: 'monospace'))),
+                              Expanded(
+                                  child: Text(_delta(s.avgSellUnitPrice, base),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),

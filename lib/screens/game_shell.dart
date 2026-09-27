@@ -145,8 +145,19 @@ class _GameShellState extends State<GameShell> {
           player: event.player,
           npc: event.npc,
           sectorWarps: event.sectorWarps,
+          settings: _settings,
           onCombatEnd: (updatedPlayer, updatedNpc) {
             _updatePlayer(updatedPlayer);
+            if (updatedNpc.isDestroyed) {
+              NpcAiService.noteWitnessedKill(
+                allNpcs: _npcs,
+                victimId: updatedNpc.id,
+                victimFaction: updatedNpc.faction,
+                sectorId: updatedNpc.currentSectorId,
+                killerId: updatedPlayer.id,
+                killerName: updatedPlayer.name,
+              );
+            }
             final idx = _npcs.indexWhere((n) => n.id == updatedNpc.id);
             if (idx >= 0) {
               setState(() => _npcs[idx] = updatedNpc);
@@ -208,6 +219,9 @@ class _GameShellState extends State<GameShell> {
             shields: 100,
             cargo: const {},
             cargoUsed: 0,
+            // Bounty review M2: kill records from a dead universe must
+            // not validate claims in the new one.
+            recentKills: const [],
           );
         }
         _universeKey = UniqueKey();
@@ -452,7 +466,6 @@ class _GameShellState extends State<GameShell> {
 
   Future<void> _handleLogout() async {
     await PlayerStorage.instance.savePlayer(_player);
-    await PlayerStorage.instance.clearPlayer();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -581,12 +594,14 @@ class _GameShellState extends State<GameShell> {
                       onOpenPort: () => setState(() => _currentIndex = 4),
                       onOpenPlanet: _openPlanet,
                       fedSpaceEnd: _settings.fedSpaceEnd,
+                      settings: _settings,
                     ),
                     GalaxyMap(
                       key: _universeKey,
                       npcs: _npcs,
                       currentSectorId: _player.currentSectorId,
                       onSectorSelected: _onSectorSelected,
+                      playerId: _player.id,
                     ),
                     ShipStatusView(
                         player: _player, onPlayerUpdate: _updatePlayer),
@@ -846,12 +861,14 @@ class _GameShellState extends State<GameShell> {
                             onOpenPort: () => setState(() => _currentIndex = 4),
                             onOpenPlanet: _openPlanet,
                             fedSpaceEnd: _settings.fedSpaceEnd,
+                            settings: _settings,
                           ),
                           GalaxyMap(
                             key: _universeKey,
                             npcs: _npcs,
                             currentSectorId: _player.currentSectorId,
                             onSectorSelected: _onSectorSelected,
+                            playerId: _player.id,
                           ),
                           ShipStatusView(
                               player: _player, onPlayerUpdate: _updatePlayer),

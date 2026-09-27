@@ -76,8 +76,7 @@ void main() {
     );
   });
 
-  test('factions without any homeworld cannot spawn (pirates excepted)',
-      () {
+  test('factions without any homeworld cannot spawn (pirates excepted)', () {
     final sectors = [_sector(1), _sector(2)];
     final npcs = [
       _ship(FactionClass.trader),

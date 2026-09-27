@@ -15,6 +15,7 @@ import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/repopulation_service.dart';
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
 /// Describes an NPC-initated attack on a player during a tick.
@@ -50,6 +51,15 @@ class GameTickService {
   static void lockNpc(String npcId) => _lockedNpcIds.add(npcId);
   static void unlockNpc(String npcId) => _lockedNpcIds.remove(npcId);
   static bool isNpcLocked(String npcId) => _lockedNpcIds.contains(npcId);
+
+  /// Removes destroyed NPCs from [npcs] in place. Returns the count
+  /// cleared. Faction kill totals persist in CombatMetrics and bounties
+  /// live on the board — the roster itself keeps only the living.
+  static int clearWrecks(List<NpcShip> npcs) {
+    final before = npcs.length;
+    npcs.removeWhere((n) => n.isDestroyed);
+    return before - npcs.length;
+  }
 
   Timer? _timer;
   Duration tickInterval;
@@ -181,6 +191,11 @@ class GameTickService {
       // _manageOwnedPorts reads it; null (tests) falls back to scanning.
       NpcAiService.ownedPortIndex = _buildOwnerIndex(sectors);
 
+      // P2 roster + topology indices (same null-fallback contract).
+      // Built from the pre-tick roster; see the staleness contract on
+      // the index fields. try/finally: a throwing tick must never leak
+      // a stale index into the next one.
+      NpcAiService.beginTick(sectors, npcs);
       // Find NPCs with energy remaining and process them
       int processed = 0;
       int skipped = 0;
@@ -189,78 +204,82 @@ class GameTickService {
       int errored = 0;
       final log = ActionLogProvider.global;
 
-      DevProfiler.instance.trace('tick_npc_processing (${npcs.length} npcs)',
-          () {
-        for (int i = 0; i < npcs.length; i++) {
-          final npc = npcs[i];
-          if (npc.isDestroyed) {
-            destroyed++;
-            continue;
-          }
-          if (npc.energy <= 0) {
-            // Pre-tick reading: processTurn may resolve this same tick via
-            // the emergency-reserve path, so the counter can overcount
-            // relative to end-of-tick reality. Log-scale only.
-            stranded++;
-          }
-          if (isNpcLocked(npc.id)) {
-            skipped++;
-            continue;
-          }
+      try {
+        DevProfiler.instance.trace('tick_npc_processing (${npcs.length} npcs)',
+            () {
+          for (int i = 0; i < npcs.length; i++) {
+            final npc = npcs[i];
+            if (npc.isDestroyed) {
+              destroyed++;
+              continue;
+            }
+            if (npc.energy <= 0) {
+              // Pre-tick reading: processTurn may resolve this same tick via
+              // the emergency-reserve path, so the counter can overcount
+              // relative to end-of-tick reality. Log-scale only.
+              stranded++;
+            }
+            if (isNpcLocked(npc.id)) {
+              skipped++;
+              continue;
+            }
 
-          final before = npc;
-          try {
-            npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
-            _errorCounts.remove(npc.id);
-          } catch (e) {
-            // One bad NPC (bad data, failed assert) must never abort the
-            // whole tick — keep its pre-tick state and move on. After 3
-            // consecutive failures the goal is force-cleared so one
-            // corrupted goal can't freeze an NPC for the session.
-            errored++;
-            final strikes = (_errorCounts[npc.id] ?? 0) + 1;
-            _errorCounts[npc.id] = strikes;
-            GameEventLog.global
-                .system('[TickService] NPC error (${npc.pilotName}): $e');
-            if (strikes >= 3) {
+            final before = npc;
+            try {
+              npcs[i] = NpcAiService.processTurn(npc, sectors, players, npcs);
               _errorCounts.remove(npc.id);
-              npcs[i] = npc.copyWith(clearGoal: true);
+            } catch (e) {
+              // One bad NPC (bad data, failed assert) must never abort the
+              // whole tick — keep its pre-tick state and move on. After 3
+              // consecutive failures the goal is force-cleared so one
+              // corrupted goal can't freeze an NPC for the session.
+              errored++;
+              final strikes = (_errorCounts[npc.id] ?? 0) + 1;
+              _errorCounts[npc.id] = strikes;
               GameEventLog.global
-                  .system('[TickService] ${npc.pilotName}: goal reset after '
-                      '$strikes errors');
+                  .system('[TickService] NPC error (${npc.pilotName}): $e');
+              if (strikes >= 3) {
+                _errorCounts.remove(npc.id);
+                npcs[i] = npc.copyWith(clearGoal: true);
+                GameEventLog.global
+                    .system('[TickService] ${npc.pilotName}: goal reset after '
+                        '$strikes errors');
+              }
+              continue;
             }
-            continue;
-          }
-          final after = npcs[i];
-          processed++;
+            final after = npcs[i];
+            processed++;
 
-          // Log significant state changes (with proximity filter for non-combat)
-          if (after.isDestroyed && !before.isDestroyed) {
-            log.combat('${npc.pilotName} (${npc.shipName}) was destroyed');
-          } else if (after.currentSectorId != before.currentSectorId) {
-            // Only log movement if within 2 hops of player
-            if (_isNearPlayer(after.currentSectorId, closeSectors) ||
-                _isNearPlayer(before.currentSectorId, closeSectors)) {
-              log.movement(
-                  '${npc.pilotName} warped to sector #${after.currentSectorId}');
+            // Log significant state changes (with proximity filter for non-combat)
+            if (after.isDestroyed && !before.isDestroyed) {
+              log.combat('${npc.pilotName} (${npc.shipName}) was destroyed');
+            } else if (after.currentSectorId != before.currentSectorId) {
+              // Only log movement if within 2 hops of player
+              if (_isNearPlayer(after.currentSectorId, closeSectors) ||
+                  _isNearPlayer(before.currentSectorId, closeSectors)) {
+                log.movement(
+                    '${npc.pilotName} warped to sector #${after.currentSectorId}');
+              }
+            }
+            if (after.credits > before.credits + 5000) {
+              // Only log trade if within 2 hops of player
+              if (_isNearPlayer(after.currentSectorId, closeSectors)) {
+                log.trade(
+                    '${npc.pilotName} earned ${after.credits - before.credits} cr trading');
+              }
+            }
+            if (after.kills > before.kills) {
+              log.combat('${npc.pilotName} destroyed another vessel');
             }
           }
-          if (after.credits > before.credits + 5000) {
-            // Only log trade if within 2 hops of player
-            if (_isNearPlayer(after.currentSectorId, closeSectors)) {
-              log.trade(
-                  '${npc.pilotName} earned ${after.credits - before.credits} cr trading');
-            }
+          if (errored > 0) {
+            GameEventLog.global.system(
+                '[TickService] $errored NPC(s) errored this tick (state kept)');
           }
-          if (after.kills > before.kills) {
-            log.combat('${npc.pilotName} destroyed another vessel');
-          }
-        }
-        if (errored > 0) {
-          GameEventLog.global.system(
-              '[TickService] $errored NPC(s) errored this tick (state kept)');
-        }
-      });
+        });
+      } finally {
+        NpcAiService.endTick();
+      }
 
       // No turn replenishment: NPCs refuel at Hardware Emporiums, trickle-
       // charge via Solar Arrays, or take an emergency reserve when stranded
@@ -276,6 +295,37 @@ class GameTickService {
           log.system(
               '${spawned.length} replacement ship(s) launched from homeworlds');
         }
+      });
+
+      // Homeworld production (C4a): controlled yards build on cadence
+      // (productionTimer/spawnInterval) up to their caps. Floors recover,
+      // production sustains.
+      DevProfiler.instance.trace('tick_produce', () {
+        final built = RepopulationService.produce(sectors, npcs);
+        if (built.isNotEmpty) {
+          npcs.addAll(built);
+          log.system('${built.length} ship(s) rolled out from homeworld yards');
+        }
+      });
+
+      // Combat census (C5): population-over-time for the soak review.
+      // Capped ring — the steady state costs one count per tick.
+      DevProfiler.instance.trace('tick_census', () {
+        CombatMetrics.global
+            .samplePopulation(RepopulationService.livingCounts(npcs));
+      });
+
+      // Bounty hygiene (bounty review M2 + escrow): drop marks on
+      // vanished targets and lapsed TTLs (both refund escrow), then pay
+      // queued refunds to roster NPCs before the save.
+      DevProfiler.instance.trace('tick_bounty_prune', () {
+        BountyBoard.global.pruneAbsent({
+          for (final p in players) p.id,
+          for (final n in npcs)
+            if (!n.isDestroyed) n.id,
+        });
+        BountyBoard.global.pruneExpired();
+        BountyBoard.global.settleNpcRefunds(npcs);
       });
 
       // Federation auto-posting (B4 enforcement): notorious pilots get
@@ -305,6 +355,15 @@ class GameTickService {
             posterName: 'Federation Marshal',
             reason: 'notoriety ${notoriety.toStringAsFixed(0)}',
           );
+          // Bounty review: the player always learns their own mark —
+          // Action Log warning, never hunter positions (those stay
+          // behind an equipment upgrade, if ever).
+          if (isPlayer) {
+            ActionLogProvider.global.warning(
+              'WANTED: Federation Marshal posted $amount cr on your head — '
+              'hunters will come',
+            );
+          }
           posted++;
         }
 
@@ -359,7 +418,20 @@ class GameTickService {
         }
       });
 
-      // Save all updated NPCs (destroyed ones retained for stats/history)
+      // Wreckage clearing (soak fix, ex-P3#22): destroyed hulls used to
+      // accumulate in the roster and every save (118 corpses vs 92 living
+      // in one soak). All post-death consumers key off living ids and
+      // faction totals persist in CombatMetrics — nothing reads a corpse
+      // after its death tick.
+      DevProfiler.instance.trace('tick_clear_wrecks', () {
+        final cleared = GameTickService.clearWrecks(npcs);
+        if (cleared > 0) {
+          log.system('[TickService] Cleared $cleared wreck(s)');
+        }
+      });
+
+      // Save all updated NPCs (wrecks cleared just above, so the save
+      // only persists the living)
       await DevProfiler.instance
           .traceAsync('tick_save_npcs', () => NpcStorage().saveAll(npcs));
 

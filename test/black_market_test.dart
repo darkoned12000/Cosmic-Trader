@@ -68,9 +68,11 @@ void main() {
     final freeHolds = attacker.cargoHoldCapacity - attacker.cargoUsed;
     expect(freeHolds, greaterThan(0));
 
-    // Defenseless victim stuffed with contraband.
+    // Defenseless victim stuffed with contraband. A pirate (never
+    // surrenders — surrender is a trader-defender behavior) so the kill
+    // and cargo transfer actually execute.
     final victim = NpcShip.create(
-      faction: FactionClass.trader,
+      faction: FactionClass.pirate,
       shipDef: ShipDefinition.allShips.first,
       currentSectorId: 1,
       startingCredits: 1000,

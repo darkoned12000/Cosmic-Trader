@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:cosmic_trader/core/faction_colors.dart';
+import 'package:cosmic_trader/data/models/bounty.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
@@ -35,7 +37,42 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   NpcShip? _target;
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
+  // Autocomplete-owned search field (cleared on post, never disposed here).
+  TextEditingController? _targetField;
   String? _formError;
+  bool _claimableOnly = false;
+  FactionClass? _factionFilter;
+
+  /// Thousands separators for credit amounts (bounty review L1).
+  static String _commas(int n) {
+    final s = n.abs().toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return '${n < 0 ? '-' : ''}$buf';
+  }
+
+  /// Compact age for bounty rows (bounty review L1).
+  static String _age(DateTime at) {
+    final mins = DateTime.now().difference(at).inMinutes;
+    if (mins < 1) return 'now';
+    if (mins < 60) return '${mins}m';
+    final hours = mins ~/ 60;
+    if (hours < 48) return '${hours}h';
+    return '${hours ~/ 24}d';
+  }
+
+  /// Countdown to escrow expiry (future-aware sibling of [_age]).
+  static String _expiresIn(DateTime at) {
+    final mins = at.difference(DateTime.now()).inMinutes;
+    if (mins < 1) return 'expiring';
+    if (mins < 60) return '${mins}m left';
+    final hours = mins ~/ 60;
+    if (hours < 48) return '${hours}h left';
+    return '${hours ~/ 24}d left';
+  }
 
   @override
   void initState() {
@@ -59,7 +96,11 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
           _npcs = npcs.where((n) => !n.isDestroyed).toList();
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      // Never silent (repo convention): an empty target list with no
+      // explanation looks like "no bounties work".
+      debugPrint('[BountyBoardScreen] NPC load failed: $e');
+    }
   }
 
   void _post() {
@@ -105,19 +146,52 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
     }
     _amountController.clear();
     _reasonController.clear();
+    _targetField?.clear();
     setState(() {
       _target = null;
       _formError = null;
     });
   }
 
+  /// Faction color for a stored faction name (enum names on bounties),
+  /// or null when unknown (Federation posters, legacy rows) so the
+  /// default text style applies.
+  Color? _factionColorOf(String name) {
+    for (final value in FactionClass.values) {
+      if (value.name == name) return factionColor(value);
+    }
+    return null;
+  }
+
+  /// Collects this pilot's lapsed escrow (expired/pruned/evicted marks
+  /// refund their debited posts; house-minted marks evaporate instead).
+  void _collectRefund() {
+    final amount = BountyBoard.global.takeRefund(widget.player.id);
+    if (amount <= 0) return;
+    widget.onPlayerUpdate(
+      widget.player.copyWith(credits: widget.player.credits + amount),
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Collected $amount cr lapsed escrow')),
+      );
+    }
+  }
+
   void _claim(String targetId, String targetName) {
-    final factions = BountyBoard.global.posterFactionsFor(targetId);
+    // H3 guard: self-posted marks pay out (money was debited at post)
+    // but never mint reputation.
+    final factions = BountyBoard.global
+        .posterFactionsFor(targetId, excludePosterId: widget.player.id);
+    final targets =
+        BountyBoard.global.active.where((b) => b.targetId == targetId);
     final paid = BountyBoard.global.claim(
       targetId: targetId,
       targetName: targetName,
       killerName: widget.player.name,
       verifiedKills: widget.player.recentKills.toSet(),
+      killerFaction: widget.player.faction.name,
+      targetFaction: targets.isEmpty ? '' : targets.first.targetFaction,
     );
     if (paid <= 0) return;
     var updated = widget.player.copyWith(credits: widget.player.credits + paid);
@@ -134,6 +208,86 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
         SnackBar(content: Text('Claimed $paid cr for $targetName')),
       );
     }
+  }
+
+  /// One grouped target card: colored name, stacked total, per-poster
+  /// breakdown, single Claim. Claimable marks get the button; the rest
+  /// show the nearest expiry.
+  Widget _targetCard(BuildContext context, ColorScheme cs, BountyBoard board,
+      Set<String> kills, BountyTargetGroup g) {
+    final claimable = kills.contains(g.targetId);
+    final soonest =
+        g.marks.map((b) => b.expiresAt).reduce((a, b) => a.isBefore(b) ? a : b);
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: cs.outline.withValues(alpha: 0.4)),
+      ),
+      child: ExpansionTile(
+        dense: true,
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                g.targetName,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: _factionColorOf(g.targetFaction),
+                ),
+              ),
+            ),
+            Text(
+              _commas(g.total),
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        subtitle: Text(
+          '${g.targetFaction} · ${g.marks.length} mark${g.marks.length == 1 ? '' : 's'} · exp ${_expiresIn(soonest)}',
+          style: TextStyle(
+            fontSize: 11,
+            color: cs.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
+        trailing: claimable
+            ? TextButton(
+                onPressed: () => _claim(g.targetId, g.targetName),
+                child: const Text('Claim', style: TextStyle(fontSize: 12)),
+              )
+            : null,
+        children: [
+          for (final b in g.marks)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _factionColorOf(b.posterFaction) ??
+                            cs.onSurface.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _commas(b.amount),
+                    style:
+                        const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -154,6 +308,18 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
         builder: (context, _) {
           final board = BountyBoard.global;
           final kills = widget.player.recentKills.toSet();
+          // Grouped richest-first (grouped-view rev); filters apply on
+          // top: claimable-only toggle + faction chips.
+          var groups = board.groupedTargets();
+          if (_claimableOnly) {
+            groups = groups.where((g) => kills.contains(g.targetId)).toList();
+          }
+          if (_factionFilter != null) {
+            groups = groups
+                .where((g) => g.targetFaction == _factionFilter!.name)
+                .toList();
+          }
+          final markCount = groups.fold(0, (a, g) => a + g.marks.length);
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -161,12 +327,43 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
               children: [
                 PanelCard(
                   icon: Icons.crisis_alert_rounded,
-                  title: 'Active bounties (${board.active.length})',
+                  title:
+                      'Active bounties ($markCount marks · ${groups.length} targets)',
                   subtitle: 'Claim pays out for pilots you destroyed',
                   children: [
-                    if (board.active.isEmpty)
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        FilterChip(
+                          label: const Text('Claimable',
+                              style: TextStyle(fontSize: 12)),
+                          selected: _claimableOnly,
+                          onSelected: (v) => setState(() => _claimableOnly = v),
+                        ),
+                        ChoiceChip(
+                          label:
+                              const Text('All', style: TextStyle(fontSize: 12)),
+                          selected: _factionFilter == null,
+                          onSelected: (_) =>
+                              setState(() => _factionFilter = null),
+                        ),
+                        for (final f in FactionClass.values)
+                          ChoiceChip(
+                            label: Text(f.name,
+                                style: const TextStyle(fontSize: 12)),
+                            selected: _factionFilter == f,
+                            onSelected: (_) =>
+                                setState(() => _factionFilter = f),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (groups.isEmpty)
                       Text(
-                        'No open contracts. Survive an attack or post one.',
+                        _claimableOnly || _factionFilter != null
+                            ? 'No contracts match these filters.'
+                            : 'No open contracts. Survive an attack or post one.',
                         style: TextStyle(
                           fontSize: 12,
                           fontStyle: FontStyle.italic,
@@ -174,67 +371,23 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                         ),
                       )
                     else
-                      DataTableShell(
-                        zebra: true,
-                        headers: const [
-                          'Target',
-                          'Faction',
-                          'Amount',
-                          '',
-                        ],
-                        flexes: const [2, 1, 1, 1],
-                        itemCount: board.active.length,
-                        rowBuilder: (context, i) {
-                          final b = board.active[i];
-                          final claimable = kills.contains(b.targetId);
-                          return Row(
-                            children: [
-                              Expanded(
-                                flex: 2,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(b.targetName,
-                                        style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600)),
-                                    Text(
-                                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''}',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color:
-                                            cs.onSurface.withValues(alpha: 0.5),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Expanded(
-                                  child: Text(b.targetFaction,
-                                      style: const TextStyle(fontSize: 12))),
-                              Expanded(
-                                  child: Text('${b.amount}',
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          fontFamily: 'monospace'))),
-                              Expanded(
-                                child: claimable
-                                    ? TextButton(
-                                        onPressed: () =>
-                                            _claim(b.targetId, b.targetName),
-                                        child: const Text('Claim',
-                                            style: TextStyle(fontSize: 12)),
-                                      )
-                                    : const Text('—',
-                                        style: TextStyle(fontSize: 12)),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                      for (final g in groups)
+                        _targetCard(context, cs, board, kills, g),
                   ],
                 ),
                 const SizedBox(height: 12),
+                if (board.pendingRefundFor(widget.player.id) > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: OutlinedButton.icon(
+                      onPressed: _collectRefund,
+                      icon: const Icon(Icons.savings_rounded, size: 16),
+                      label: Text(
+                        'Collect ${_commas(board.pendingRefundFor(widget.player.id))} cr lapsed escrow',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
                 PanelCard(
                   icon: Icons.add_alert_rounded,
                   title: 'Post a bounty',
@@ -256,6 +409,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                       onSelected: (n) => setState(() => _target = n),
                       fieldViewBuilder:
                           (context, controller, focusNode, onSubmitted) {
+                        _targetField = controller;
                         if (controller.text.isEmpty && _target != null) {
                           controller.text =
                               '${_target!.pilotName} (${_target!.faction.name})';
@@ -313,7 +467,8 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                 if (board.paid.isNotEmpty)
                   PanelCard(
                     icon: Icons.history_rounded,
-                    title: 'Recently paid (${board.paid.length})',
+                    title: 'Recently paid (${board.paid.length} shown · '
+                        '${board.paidLifetime} lifetime)',
                     children: [
                       DataTableShell(
                         headers: const ['Target', 'Killer', 'Amount'],
@@ -326,13 +481,19 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                               Expanded(
                                   flex: 2,
                                   child: Text(p.targetName,
-                                      style: const TextStyle(fontSize: 12))),
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: _factionColorOf(
+                                              p.targetFaction)))),
                               Expanded(
                                   flex: 2,
                                   child: Text(p.killerName,
-                                      style: const TextStyle(fontSize: 12))),
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: _factionColorOf(
+                                              p.killerFaction)))),
                               Expanded(
-                                  child: Text('${p.amount}',
+                                  child: Text(_commas(p.amount),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 /// Crash-safe file writes.
 ///
 /// JSON storage rewrites whole game state files; a crash or forced kill
@@ -9,6 +11,34 @@ import 'dart:io';
 /// new content — never a partial one.
 class FileSafe {
   FileSafe._();
+
+  /// Ensures the parent directory exists (recursive). Storage callers
+  /// hit this on every write: the support-documents split means the
+  /// less-reliable directory may be absent on desktop, and web throws
+  /// UnsupportedError upstream (degrades loudly there, not silently).
+  static Future<void> ensureParent(File file) async {
+    try {
+      await file.parent.create(recursive: true);
+    } catch (e) {
+      debugPrint('[FileSafe] Cannot create ${file.parent.path}: $e');
+      rethrow;
+    }
+  }
+
+  /// Quarantines a corrupt file by renaming it aside (timestamped so
+  /// repeated failures never collide), preserving it for recovery.
+  /// Returns true when a file was actually moved.
+  static Future<bool> quarantine(File file) async {
+    try {
+      if (!await file.exists()) return false;
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      await file.rename('${file.path}.corrupt.$stamp');
+      return true;
+    } catch (e) {
+      debugPrint('[FileSafe] Cannot quarantine ${file.path}: $e');
+      return false;
+    }
+  }
 
   /// Writes [contents] to [file] atomically via a unique sibling temp file.
   ///
@@ -22,6 +52,7 @@ class FileSafe {
       '${file.path}.$pid.${DateTime.now().microsecondsSinceEpoch}.tmp',
     );
     try {
+      await file.parent.create(recursive: true);
       await tmp.writeAsString(contents, flush: true);
       try {
         await tmp.rename(file.path);

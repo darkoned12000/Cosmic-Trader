@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:crypto/crypto.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 
 /// Player model with ship stats for gameplay.
@@ -174,6 +175,50 @@ class Player {
       kills.removeLast();
     }
     return copyWith(recentKills: kills);
+  }
+
+  /// Clone reissue after death (no permadeath for pilots): the wreck
+  /// and its cargo/credits are gone, replaced by the faction starter
+  /// interceptor with starter fittings, holds, drones, energy, and
+  /// credits — mirroring registration exactly. Identity and assets
+  /// survive: name, faction, bank, ports, standings, notoriety, hack
+  /// record, deployed arrays, research. Wakes at Terra Prime (sector 1).
+  Player respawned(GameSettings settings) {
+    final shipDef = ShipDefinition.getDefaultInterceptor(faction);
+    final weaponTypes = <String, String>{};
+    final weaponSlots = <String, int>{};
+    for (int i = 0; i < shipDef.weaponSlots.length; i++) {
+      final slotName = shipDef.weaponSlots[i];
+      weaponTypes[slotName] = shipDef.preferredWeapons[i].name;
+      weaponSlots[slotName] = 1;
+    }
+    return copyWith(
+      currentSectorId: 1,
+      hull: shipDef.maxHullCapacity,
+      maxHull: shipDef.maxHullCapacity,
+      shields: shipDef.shields,
+      maxShields: shipDef.maxShields,
+      cargoUsed: 0,
+      maxCargo: shipDef.maxCargo,
+      cargoSize: shipDef.maxCargo,
+      shipDefinitionName: shipDef.name,
+      shipClass: ShipClassType.interceptor,
+      weaponTypes: weaponTypes,
+      weaponSlots: weaponSlots,
+      hullEquipment: shipDef.hullType.name,
+      shieldEquipment: shipDef.shieldType.name,
+      engineEquipment: shipDef.engineType.name,
+      hullEquipmentLevel: 1,
+      shieldEquipmentLevel: 1,
+      engineEquipmentLevel: 1,
+      cargo: const {},
+      drones: settings.initDrones,
+      maxDrones: settings.initDrones,
+      energy: settings.initEnergy,
+      maxEnergy: settings.initEnergy,
+      credits: settings.initCredits,
+      installedModules: const {},
+    );
   }
 
   bool ownsPort(String portName) => ownedPorts.contains(portName);

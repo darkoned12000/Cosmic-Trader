@@ -39,6 +39,13 @@ class TradeEvaluator {
   /// When [credits] is given, routes whose buy leg costs more than the
   /// whole bankroll for a single unit are filtered out (root-cause guard
   /// for buy-phase debt).
+  /// Sectors in [dangerSectors] (C2c: last-seen sectors of stronger
+  /// vendetta targets) discount ranking — a route touching danger at
+  /// either end scores half, both ends a quarter — so pilots prefer safe
+  /// money without ever refusing the only money on the table.
+  /// [preferredRoutes] (C2d: route keys with past profitable runs) boost
+  /// ranking +5% per remembered win (capped at +25%): pilots learn what
+  /// works, the positive mirror of the failed-route cooldown.
   static TradeRoute? findBestTradeRoute(
     int currentSectorId,
     Map<int, PortInfo> knownPorts,
@@ -48,14 +55,19 @@ class TradeEvaluator {
     double? credits,
     FactionClass? actorFaction,
     Map<String, int> standings = const {},
+    Set<int> dangerSectors = const {},
+    Map<String, int> preferredRoutes = const {},
   }) {
     if (knownPorts.length < 2) return null;
 
     final routes = <TradeRoute>[];
     final ports = knownPorts.entries.toList();
 
-    // Paths hoisted out of the inner loops: toBuy depends only on the buy
-    // port, toSell only on the pair — m + m² lookups, not m² × c.
+    // Paths hoisted out of the inner loops (P2): toBuy costs one BFS per
+    // buy port, and each buy port fans out ONE BFS tree answering every
+    // buy→sell distance — m + m BFS passes, not m + m² findPath calls.
+    // Trees are per-call locals: the universe mutates between ticks, so
+    // nothing is shared across selections.
     final toBuyHops = <int, int>{};
     for (final buySector in ports) {
       final toBuy =
@@ -63,6 +75,7 @@ class TradeEvaluator {
       if (toBuy == null) continue;
       toBuyHops[buySector.key] = toBuy.length - 1;
     }
+    final sellTrees = <int, Map<int, int>>{};
 
     for (int i = 0; i < ports.length; i++) {
       for (int j = 0; j < ports.length; j++) {
@@ -73,8 +86,11 @@ class TradeEvaluator {
         final toBuy = toBuyHops[buySector.key];
         if (toBuy == null) continue;
 
-        final toSell = PathfindingService.findPath(
-            universe, buySector.key, sellSector.key);
+        final tree = sellTrees.putIfAbsent(
+          buySector.key,
+          () => PathfindingService.bfsParents(universe, buySector.key),
+        );
+        final toSell = PathfindingService.distanceInTree(tree, sellSector.key);
         if (toSell == null) continue;
 
         final buyPort = buySector.value;
@@ -105,7 +121,7 @@ class TradeEvaluator {
           if (profitPerUnit <= 0) continue;
           if (credits != null && buyPrice > credits) continue;
 
-          final totalHops = toBuy + toSell.length - 1;
+          final totalHops = toBuy + toSell;
           if (totalHops > maxTravelDistance) continue;
 
           routes.add(TradeRoute(
@@ -123,7 +139,19 @@ class TradeEvaluator {
 
     if (routes.isEmpty) return null;
 
-    routes.sort((a, b) => b.profitPerHop.compareTo(a.profitPerHop));
+    double score(TradeRoute r) {
+      var s = r.profitPerHop;
+      if (dangerSectors.contains(r.buySectorId)) s *= 0.5;
+      if (dangerSectors.contains(r.sellSectorId)) s *= 0.5;
+      final wins = preferredRoutes[
+          NpcMemory.routeKey(r.buySectorId, r.sellSectorId, r.commodity)];
+      if (wins != null && wins > 0) {
+        s *= 1 + 0.05 * wins.clamp(1, 5);
+      }
+      return s;
+    }
+
+    routes.sort((a, b) => score(b).compareTo(score(a)));
     return routes.first;
   }
 

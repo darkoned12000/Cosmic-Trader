@@ -72,6 +72,53 @@ class NpcShip {
   /// Global reputation score (0.0 to 100.0).
   final double notoriety;
 
+  // ── Living legend (C4c) ──────────────────────────────────
+  /// Lore-hero name/title when this ship sails as a faction legend
+  /// (see [Faction.notableHeroes]). Null for rank-and-file pilots.
+  final String? heroName;
+  final String? heroTitle;
+
+  // ── Personality drift (C4d) ──────────────────────────────
+  /// Per-pilot trait drift, applied over the archetype baseline in
+  /// [personalityConfig]. Killers grow bolder (+aggression), survivors
+  /// grow warier (+caution) — bounded, so a veteran bends but never
+  /// becomes another archetype.
+  final double driftAggression;
+  final double driftCaution;
+
+  /// Hard bound on either drift axis.
+  static const double maxPersonalityDrift = 0.15;
+
+  /// Per-event drift steps.
+  static const double killAggressionStep = 0.02;
+  static const double surviveCautionStep = 0.02;
+
+  /// Victor's drift: +aggression, capped.
+  NpcShip driftedForKill() => copyWith(
+        driftAggression: (driftAggression + killAggressionStep)
+            .clamp(0.0, maxPersonalityDrift),
+      );
+
+  /// Survivor's drift: +caution, capped.
+  NpcShip driftedForSurvival() => copyWith(
+        driftCaution:
+            (driftCaution + surviveCautionStep).clamp(0.0, maxPersonalityDrift),
+      );
+
+  /// Tier width for drift milestone lines (soak instrumentation): one
+  /// log line per tier crossed, not per event.
+  static const double driftTierWidth = 0.05;
+
+  /// True when drift moved into a new milestone tier — the call sites
+  /// log exactly then, keeping veteran lines rare and meaningful.
+  /// Epsilon guards the tier edges (0.15 / 0.05 is 2.999… in floats).
+  static bool driftTierCrossed(double before, double after) {
+    if (after <= before) return false;
+    const eps = 1e-9;
+    return ((after + eps) / driftTierWidth).floor() >
+        ((before + eps) / driftTierWidth).floor();
+  }
+
   NpcShip({
     required this.id,
     required this.pilotName,
@@ -109,10 +156,30 @@ class NpcShip {
     this.totalDamageDealt = 0,
     this.totalDamageTaken = 0,
     this.notoriety = 0.0,
+    this.heroName,
+    this.heroTitle,
+    this.driftAggression = 0.0,
+    this.driftCaution = 0.0,
   }) : assert(credits >= 0, 'NpcShip credits must never go negative');
 
-  PersonalityConfig get personalityConfig =>
-      PersonalityConfig.all[personality]!;
+  /// Production-grade floor (review batch 2): the assert above is
+  /// debug-only (stripped in release), so every copy clamps too — the
+  /// invariant holds for players, not just devs.
+  static int _flooredCredits(int? value, int current) =>
+      math.max(0, value ?? current);
+
+  PersonalityConfig get personalityConfig {
+    final base = PersonalityConfig.all[personality]!;
+    if (driftAggression == 0 && driftCaution == 0) return base;
+    return PersonalityConfig(
+      goalWeights: base.goalWeights,
+      aggression: (base.aggression + driftAggression).clamp(0.0, 1.0),
+      greed: base.greed,
+      caution: (base.caution + driftCaution).clamp(0.0, 1.0),
+      explorationDrive: base.explorationDrive,
+      maxTravelDistance: base.maxTravelDistance,
+    );
+  }
 
   int get totalWeaponPower {
     int total = 0;
@@ -184,6 +251,10 @@ class NpcShip {
     int? totalDamageDealt,
     int? totalDamageTaken,
     double? notoriety,
+    String? heroName,
+    String? heroTitle,
+    double? driftAggression,
+    double? driftCaution,
   }) {
     return NpcShip(
       id: id ?? this.id,
@@ -191,7 +262,7 @@ class NpcShip {
       shipName: shipName ?? this.shipName,
       faction: faction ?? this.faction,
       shipDef: shipDef ?? this.shipDef,
-      credits: credits ?? this.credits,
+      credits: _flooredCredits(credits, this.credits),
       energy: energy ?? this.energy,
       maxEnergy: maxEnergy ?? this.maxEnergy,
       solarArrayLevel: solarArrayLevel ?? this.solarArrayLevel,
@@ -222,6 +293,10 @@ class NpcShip {
       totalDamageDealt: totalDamageDealt ?? this.totalDamageDealt,
       totalDamageTaken: totalDamageTaken ?? this.totalDamageTaken,
       notoriety: notoriety ?? this.notoriety,
+      heroName: heroName ?? this.heroName,
+      heroTitle: heroTitle ?? this.heroTitle,
+      driftAggression: driftAggression ?? this.driftAggression,
+      driftCaution: driftCaution ?? this.driftCaution,
     );
   }
 
@@ -261,6 +336,10 @@ class NpcShip {
       'totalDamageDealt': totalDamageDealt,
       'totalDamageTaken': totalDamageTaken,
       'notoriety': notoriety,
+      'heroName': heroName,
+      'heroTitle': heroTitle,
+      'driftAggression': driftAggression,
+      'driftCaution': driftCaution,
     };
   }
 
@@ -319,6 +398,10 @@ class NpcShip {
       totalDamageDealt: json['totalDamageDealt'] as int? ?? 0,
       totalDamageTaken: json['totalDamageTaken'] as int? ?? 0,
       notoriety: (json['notoriety'] as num?)?.toDouble() ?? 0.0,
+      heroName: json['heroName'] as String?,
+      heroTitle: json['heroTitle'] as String?,
+      driftAggression: (json['driftAggression'] as num?)?.toDouble() ?? 0.0,
+      driftCaution: (json['driftCaution'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -347,7 +430,7 @@ class NpcShip {
       shipName: NpcNameGenerator.generateShipName(seed: seed + 1),
       faction: faction,
       shipDef: shipDef,
-      credits: startingCredits,
+      credits: math.max(0, startingCredits),
       energy: 1000,
       maxEnergy: 1000,
       currentSectorId: currentSectorId,

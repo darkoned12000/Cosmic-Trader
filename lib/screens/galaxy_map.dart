@@ -22,11 +22,16 @@ class GalaxyMap extends StatefulWidget {
   final ValueChanged<int>? onSectorSelected;
   final List<NpcShip> npcs;
 
+  /// Owning player for per-player exploration isolation (storage
+  /// review H2). Empty scopes to the shared bucket (tests, early UI).
+  final String playerId;
+
   const GalaxyMap({
     super.key,
     required this.currentSectorId,
     this.onSectorSelected,
     this.npcs = const [],
+    this.playerId = '',
   });
 
   @override
@@ -108,7 +113,9 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
     // Fire-and-forget the disk write. Always stamp the timestamp, even on
     // revisits, so "Last Visited" reflects the most recent time the player
     // was actually in this sector.
-    PlayerExplorationStorage.instance.markVisited(sectorId);
+    PlayerExplorationStorage.instance
+      ..setActivePlayer(widget.playerId)
+      ..markVisited(sectorId);
   }
 
   @override
@@ -140,7 +147,9 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
 
   Future<void> _loadSectors() async {
     try {
-      // 1. Load persisted exploration data from disk
+      // 1. Load persisted exploration data from disk (scoped to this
+      // player — storage review H2).
+      PlayerExplorationStorage.instance.setActivePlayer(widget.playerId);
       await PlayerExplorationStorage.instance.load();
       _visitedSectors = Set.from(PlayerExplorationStorage.instance.visited);
 

@@ -2,11 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/services/game_event_log.dart';
 import 'file_safe.dart';
 
 /// Handles reading/writing players.json to the device's application directory.
@@ -16,8 +18,18 @@ class PlayerStorage {
   static PlayerStorage? _instance;
   static PlayerStorage get instance => _instance ??= PlayerStorage._();
 
-  String get _playersPath => _cachedPath ??= '';
   String? _cachedPath;
+
+  /// True when the last load hit a corrupt/unreadable file (storage
+  /// review C1). Mutations refuse while set (see [updatePlayer],
+  /// [register]): writing over a failed read would drop every other
+  /// account from players.json.
+  bool _lastLoadFailed = false;
+
+  /// Clears a sticky load failure: generation paths author new truth.
+  void clearLoadFailure() {
+    _lastLoadFailed = false;
+  }
 
   Future<String> _getBasePath() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -25,24 +37,38 @@ class PlayerStorage {
   }
 
   Future<String> get _filePath async {
-    if (_playersPath.isNotEmpty) return _playersPath;
+    final cached = _cachedPath;
+    if (cached != null) return cached;
     final basePath = await _getBasePath();
-    return '$basePath/players.json';
+    _cachedPath = '$basePath/players.json';
+    return _cachedPath!;
   }
 
-  /// Load all players from disk.
+  /// Load all players from disk. Corrupt files are quarantined aside
+  /// (recoverable) with a loud log instead of silently becoming an
+  /// empty roster that later writes would cement.
   Future<List<Player>> loadPlayers() async {
     try {
       final path = await _filePath;
       final file = File(path);
-      if (!await file.exists()) return [];
+      if (!await file.exists()) {
+        _lastLoadFailed = false;
+        return [];
+      }
       final content = await file.readAsString();
       final list = jsonDecode(content) as List;
-      return list
-          .map((e) => Player.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final players =
+          list.map((e) => Player.fromJson(e as Map<String, dynamic>)).toList();
+      _lastLoadFailed = false;
+      return players;
     } catch (e) {
       debugPrint('Error loading players: $e');
+      GameEventLog.global.system(
+          '[PlayerStorage] Load failed — quarantining players.json: $e');
+      try {
+        await FileSafe.quarantine(File(await _filePath));
+      } catch (_) {}
+      _lastLoadFailed = true;
       return [];
     }
   }
@@ -59,16 +85,20 @@ class PlayerStorage {
     }
   }
 
-  /// Find a player by username.
+  /// Find a player by username. Returns null when absent — never throws
+  /// for a missing name (storage review M2); corrupt files are already
+  /// quarantined loudly by [loadPlayers].
   Future<Player?> findPlayer(String username) async {
     final players = await loadPlayers();
-    return players.firstWhere(
-      (p) => p.username.toLowerCase() == username.toLowerCase(),
-      orElse: () => throw Exception('Player not found'),
-    );
+    for (final p in players) {
+      if (p.username.toLowerCase() == username.toLowerCase()) return p;
+    }
+    return null;
   }
 
   /// Register a new player. Ship stats derived from [shipName] template.
+  /// Refuses when the roster can't be verified (storage review C1): a
+  /// failed load must never let a duplicate username through.
   Future<Player> register(
     String username,
     String password, {
@@ -77,6 +107,9 @@ class PlayerStorage {
     GameSettings? settings,
   }) async {
     final players = await loadPlayers();
+    if (_lastLoadFailed) {
+      throw Exception('Player roster unavailable — refusing registration');
+    }
 
     if (players
         .any((p) => p.username.toLowerCase() == username.toLowerCase())) {
@@ -98,7 +131,7 @@ class PlayerStorage {
     }
 
     final player = Player(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: const Uuid().v4(),
       username: username,
       passwordHash: Player.hashPassword(password),
       createdAt: DateTime.now(),
@@ -135,27 +168,39 @@ class PlayerStorage {
     return player;
   }
 
-  /// Login: verify credentials and return the player.
+  /// Login: verify credentials and return the player (null when the
+  /// name is unknown or the password mismatches).
   Future<Player?> login(String username, String password) async {
-    try {
-      final player = await findPlayer(username);
-      if (player != null && player.verifyPassword(password)) {
-        return player;
-      }
-      return null;
-    } catch (_) {
-      return null;
+    final player = await findPlayer(username);
+    if (player != null && player.verifyPassword(password)) {
+      return player;
     }
+    debugPrint('[PlayerStorage] Login failed for "$username"');
+    return null;
   }
 
-  /// Update a player record.
-  Future<void> updatePlayer(Player player) async {
+  /// Update a player record. Returns false (loudly) when the roster
+  /// failed to load or the id is absent — never silently drops
+  /// accounts (storage review C1/M3).
+  Future<bool> updatePlayer(Player player) async {
     final players = await loadPlayers();
-    final index = players.indexWhere((p) => p.id == player.id);
-    if (index != -1) {
-      players[index] = player;
-      await savePlayers(players);
+    if (_lastLoadFailed) {
+      debugPrint('[PlayerStorage] updatePlayer refused (failed load)');
+      GameEventLog.global
+          .system('[PlayerStorage] update for ${player.username} refused — '
+              'roster failed to load');
+      return false;
     }
+    final index = players.indexWhere((p) => p.id == player.id);
+    if (index == -1) {
+      debugPrint('[PlayerStorage] updatePlayer: unknown id ${player.id}');
+      GameEventLog.global
+          .system('[PlayerStorage] update for unknown id ${player.id} ignored');
+      return false;
+    }
+    players[index] = player;
+    await savePlayers(players);
+    return true;
   }
 
   /// Load a single player by ID (for session restore).
@@ -169,13 +214,7 @@ class PlayerStorage {
   }
 
   /// Save a single player (shorthand for update).
-  Future<void> savePlayer(Player player) async {
-    await updatePlayer(player);
-  }
-
-  /// Clear session data (remove player from active session tracking).
-  Future<void> clearPlayer() async {
-    // Session clearing is handled by the app layer;
-    // this method exists as a placeholder for future session management.
+  Future<bool> savePlayer(Player player) async {
+    return updatePlayer(player);
   }
 }

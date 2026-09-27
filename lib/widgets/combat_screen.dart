@@ -3,11 +3,16 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cosmic_trader/core/faction_colors.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
+import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
@@ -22,11 +27,16 @@ class CombatScreen extends StatefulWidget {
   /// send the player (and NPC on flee) to a random adjacent sector.
   final List<int> sectorWarps;
 
+  /// Universe settings for post-death clone reissue (starter ship,
+  /// holds, credits). No pilot permadeath: the wreck is replaced.
+  final GameSettings settings;
+
   const CombatScreen({
     super.key,
     required this.player,
     required this.npc,
     required this.onCombatEnd,
+    required this.settings,
     this.sectorWarps = const [],
   });
 
@@ -49,6 +59,10 @@ class _CombatScreenState extends State<CombatScreen>
   int _dronesToSend = 0;
   int _dronesLost = 0;
   int _dronesReturned = 0;
+
+  /// Pending surrender tribute offered by the NPC (C1b parley). While set,
+  /// the action row offers Accept/Refuse instead of FIRE/FLEE.
+  int? _parleyOffer;
 
   static const _droneHp = 15;
 
@@ -287,19 +301,190 @@ class _CombatScreenState extends State<CombatScreen>
           'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
       ActionLogProvider.global
           .combat(NpcDeathCries.formatDeathCry(_npc.pilotName, _npc.faction));
+      // C5: the kill counts for pilot and faction alike.
+      CombatMetrics.global.recordPlayerKill();
+      CombatMetrics.global.recordNpc(
+        attackerFaction: _player.faction.name,
+        defenderFaction: _npc.faction.name,
+        outcome: CombatOutcome.attackerVictory,
+        attackerHullFraction:
+            CombatMetrics.fractionOf(playerHull, _player.maxHull),
+        defenderHullFraction: 0.0,
+      );
       _endCombat(victory: true);
       return;
     }
 
     if (playerDestroyed) {
       _combatLog.add('*** YOUR SHIP IS CRITICALLY DAMAGED ***');
+      // C5: pilot death and the faction-level loss.
+      CombatMetrics.global.recordPlayerDeath();
+      CombatMetrics.global.recordNpc(
+        attackerFaction: _player.faction.name,
+        defenderFaction: _npc.faction.name,
+        outcome: CombatOutcome.defenderVictory,
+        attackerHullFraction: 0.0,
+        defenderHullFraction: CombatMetrics.fractionOf(npcHull, _npc.maxHull),
+      );
+      // Bounty review H1: marks on the player pay the NPC killer —
+      // notoriety without collection was dead data on a public board.
+      final owed = BountyBoard.global.totalFor(_player.id);
+      if (owed > 0) {
+        final take = BountyBoard.global.payKiller(
+          targetId: _player.id,
+          killerName: _npc.pilotName,
+          targetName: _player.name,
+          killerFaction: _npc.faction.name,
+          targetFaction: _player.faction.name,
+        );
+        if (take > 0) {
+          setState(() {
+            _npc = _npc.copyWith(credits: _npc.credits + take);
+          });
+          _combatLog.add(
+              '>>> ${_npc.shipName} collects $take cr bounty on your head <<<');
+        }
+      }
+      // Vengeance satisfied: the killer's grudge against this pilot
+      // resolves with the kill (player-vendetta symmetry with C2b).
+      _npc = _npc.copyWith(
+        memory: _npc.memory.withVendettaResolved(_player.id),
+      );
+      // Clone reissue (no pilot permadeath): wreck and cargo gone,
+      // starter interceptor + fittings + holds + credits, identity and
+      // assets intact. Wakes at Terra Prime.
+      _player = _player.respawned(widget.settings);
+      _combatLog
+          .add('>>> Emergency clone activated — ${_player.shipDefinitionName} '
+              'reissued at Terra Prime <<<');
       _endCombat(victory: false);
+      return;
+    }
+
+    // C1b morale: the NPC re-evaluates willingness every round, on the
+    // post-exchange state both sides just produced.
+    final morale = CombatService.assessMorale(
+      self: _npc,
+      selfPower: _npcFirepower.toDouble(),
+      foePower: _playerFirepower.toDouble(),
+      foeHullFraction:
+          _player.maxHull <= 0 ? 0.0 : playerHull / _player.maxHull,
+      isDefender: true,
+    );
+    if (morale.outcome == CombatOutcome.defenderSurrender) {
+      final tribute = CombatService.surrenderTribute(_npc.credits);
+      if (tribute <= 0) {
+        // Broke traders run instead of offering nothing.
+        _attemptNpcRetreat();
+      } else {
+        setState(() => _parleyOffer = tribute);
+        _combatLog.add(
+            '>>> ${_npc.pilotName} offers surrender: $tribute cr tribute <<<');
+        _combatLog.add('>>> Accept the tribute or refuse and fight on <<<');
+      }
+      return;
+    }
+    if (morale.outcome == CombatOutcome.defenderRetreat) {
+      _attemptNpcRetreat();
       return;
     }
   }
 
+  /// Crossed blades with this pilot (C2b symmetry for player fights):
+  /// an EXISTING grudge against the player gets a fresh sighting and a
+  /// small bump. Never creates one — grudges are born from witnessed
+  /// kills only (see NpcAiService.noteWitnessedKill).
+  void _refreshGrudge() {
+    if (!_npc.memory.vendettas.containsKey(_player.id)) return;
+    setState(() {
+      _npc = _npc.copyWith(
+        memory: _npc.memory.withVendetta(
+          targetId: _player.id,
+          sectorId: _npc.currentSectorId,
+          grievanceBump: 10,
+        ),
+      );
+    });
+  }
+
+  /// NPC break-off attempt (C1b). Interception is engine-relative with the
+  /// tractor-beam hook reserved in [CombatService.resolveRetreat]; the
+  /// attempt costs energy whether it succeeds or not.
+  void _attemptNpcRetreat() {
+    final res = CombatService.resolveRetreat(
+      escapeeEngineLevel: _npc.engineEquipmentLevel,
+      pursuerEngineLevel: _player.effectiveEngineLevel,
+    );
+    setState(() {
+      _npc = _npc.copyWith(energy: math.max(0, _npc.energy - res.energyCost));
+    });
+    if (res.escaped) {
+      _combatLog.add('>>> ${_npc.shipName} breaks off and warps out <<<');
+      _refreshGrudge();
+      if (widget.sectorWarps.isNotEmpty) {
+        final rng = math.Random();
+        final dest = widget.sectorWarps[rng.nextInt(widget.sectorWarps.length)];
+        setState(() => _npc = _npc.copyWith(currentSectorId: dest));
+        _combatLog.add('>>> Enemy warped to sector #$dest <<<');
+      }
+      // C5: successful break-off, both tallies.
+      CombatMetrics.global.recordNpc(
+        attackerFaction: _player.faction.name,
+        defenderFaction: _npc.faction.name,
+        outcome: CombatOutcome.defenderRetreat,
+        attackerHullFraction:
+            CombatMetrics.fractionOf(_player.hull, _player.maxHull),
+        defenderHullFraction: CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
+      );
+      CombatMetrics.global.recordNpcYield(retreated: true, parleyed: false);
+      _endCombat(victory: false, npcRetreated: true);
+    } else {
+      _combatLog.add(
+          '>>> ${_npc.shipName} tried to break off — you cut them off <<<');
+      // C5: failed escapes count against the runner's faction.
+      CombatMetrics.global.recordFailedEscape(_npc.faction.name);
+    }
+  }
+
+  /// Player accepts the NPC's surrender: tribute transfers, fight ends.
+  /// No kill, no loot, no notoriety — they paid for their lives.
+  void _acceptParley() {
+    final tribute = _parleyOffer ?? 0;
+    setState(() {
+      _player = _player.copyWith(credits: _player.credits + tribute);
+      _npc = _npc.copyWith(credits: math.max(0, _npc.credits - tribute));
+      _parleyOffer = null;
+    });
+    _combatLog.add('>>> You accept $tribute cr tribute. Combat ends. <<<');
+    _refreshGrudge();
+    // C5: surrender with tribute paid, both tallies.
+    CombatMetrics.global.recordNpc(
+      attackerFaction: _player.faction.name,
+      defenderFaction: _npc.faction.name,
+      outcome: CombatOutcome.defenderSurrender,
+      attackerHullFraction:
+          CombatMetrics.fractionOf(_player.hull, _player.maxHull),
+      defenderHullFraction: CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
+      tribute: tribute,
+    );
+    CombatMetrics.global.recordNpcYield(retreated: false, parleyed: true);
+    _endCombat(victory: false, parleyed: true);
+  }
+
   void _flee() {
     _combatLog.add('>>> You fled from combat <<<');
+    // C5: the pilot lived to file the report.
+    CombatMetrics.global.recordPlayerFlee();
+    _refreshGrudge();
+
+    // The NPC lives through your guns (C4d drift): survivors grow warier.
+    // Milestone lines per tier crossed (soak instrumentation).
+    final warinessBefore = _npc.driftCaution;
+    setState(() => _npc = _npc.driftedForSurvival());
+    if (NpcShip.driftTierCrossed(warinessBefore, _npc.driftCaution)) {
+      _combatLog.add(
+          '>>> ${_npc.shipName} crew grows warier (caution ${_npc.driftCaution.toStringAsFixed(2)}) <<<');
+    }
 
     // Send player to a random adjacent sector; the NPC stays put.
     if (widget.sectorWarps.isNotEmpty) {
@@ -312,7 +497,11 @@ class _CombatScreenState extends State<CombatScreen>
     _endCombat(victory: false, fled: true);
   }
 
-  void _endCombat({required bool victory, bool fled = false}) {
+  void _endCombat(
+      {required bool victory,
+      bool fled = false,
+      bool npcRetreated = false,
+      bool parleyed = false}) {
     setState(() => _combatOver = true);
 
     int loot = 0;
@@ -356,6 +545,36 @@ class _CombatScreenState extends State<CombatScreen>
       );
       // Kill recorded for Bounty Board claims (payout happens via Claim).
       _player = _player.withKill(_npc.id);
+      // Bounty review H2: claims auto-pay at kill time (mirroring the NPC
+      // instant path) so the 50-kill ledger can never strand a payout.
+      // The board Claim stays as a harmless fallback (nothing left owed).
+      final bountyTake = BountyBoard.global.claim(
+        targetId: _npc.id,
+        targetName: _npc.pilotName,
+        killerName: _player.name,
+        verifiedKills: {_npc.id},
+        killerFaction: _player.faction.name,
+        targetFaction: _npc.faction.name,
+      );
+      var standingPlayer = _player;
+      if (bountyTake > 0) {
+        standingPlayer = standingPlayer.copyWith(
+          credits: standingPlayer.credits + bountyTake,
+        );
+        for (final faction in BountyBoard.global.posterFactionsFor(
+          _npc.id,
+          excludePosterId: _player.id,
+        )) {
+          for (final value in FactionClass.values) {
+            if (value.name == faction) {
+              standingPlayer =
+                  standingPlayer.withFactionStandingChange(value, 5);
+            }
+          }
+        }
+        _combatLog.add('>>> Bounty collected: $bountyTake cr <<<');
+      }
+      _player = standingPlayer;
       _npc = _npc.copyWith(
         credits: 0,
         cargo: {},
@@ -385,6 +604,12 @@ class _CombatScreenState extends State<CombatScreen>
     } else if (fled) {
       ActionLogProvider.global.combat(
           'Fled from ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
+    } else if (npcRetreated) {
+      ActionLogProvider.global.combat(
+          '${_npc.pilotName} (${_npc.shipName}) broke off in sector #${_npc.currentSectorId}');
+    } else if (parleyed) {
+      ActionLogProvider.global.combat(
+          'Accepted ${_npc.pilotName} (${_npc.shipName}) surrender in sector #${_npc.currentSectorId}');
     } else {
       ActionLogProvider.global.combat(
           'Disabled by ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
@@ -793,6 +1018,55 @@ class _CombatScreenState extends State<CombatScreen>
             padding: const EdgeInsets.symmetric(vertical: 14),
           ),
         ),
+      );
+    }
+
+    if (_parleyOffer != null) {
+      final offer = _parleyOffer!;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${_npc.pilotName} offers $offer cr to live',
+            style: const TextStyle(
+                fontFamily: 'monospace', color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _animating ? null : _acceptParley,
+                  icon: const Icon(Icons.handshake_rounded, size: 18),
+                  label: const Text('ACCEPT',
+                      style: TextStyle(fontFamily: 'monospace')),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.green.shade800,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _animating
+                    ? null
+                    : () => setState(() {
+                          _parleyOffer = null;
+                          _combatLog.add(
+                              '>>> You refuse. ${_npc.shipName} fights on <<<');
+                        }),
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('REFUSE',
+                    style: TextStyle(fontFamily: 'monospace')),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white70,
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ],
+          ),
+        ],
       );
     }
 

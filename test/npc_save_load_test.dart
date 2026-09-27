@@ -145,4 +145,19 @@ void main() {
     // Buy at P1 (tick 0→1) then sell at P2: credits must grow.
     expect(npc.credits, greaterThan(startCredits));
   });
+
+  // Review batch 2: the credits>=0 assert is debug-only (stripped in
+  // release), so copyWith clamps as the production-grade floor.
+  test('credits clamp at zero instead of going negative', () {
+    final npc = NpcShip.create(
+      faction: FactionClass.trader,
+      shipDef: ShipDefinition.allShips.first,
+      currentSectorId: 1,
+      startingCredits: 100,
+      seed: 7,
+    );
+    expect(npc.copyWith(credits: -50).credits, 0);
+    expect(npc.copyWith(credits: 0).credits, 0);
+    expect(npc.copyWith().credits, 100);
+  });
 }

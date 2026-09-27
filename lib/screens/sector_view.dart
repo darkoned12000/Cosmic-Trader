@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
@@ -22,6 +23,9 @@ class SectorView extends StatefulWidget {
   final VoidCallback? onRefreshNpcs;
   final int fedSpaceEnd;
 
+  /// Universe settings for post-death clone reissue in player combat.
+  final GameSettings settings;
+
   const SectorView({
     super.key,
     required this.player,
@@ -31,6 +35,7 @@ class SectorView extends StatefulWidget {
     this.npcs = const [],
     this.onRefreshNpcs,
     this.fedSpaceEnd = 0,
+    required this.settings,
   });
 
   @override
@@ -208,6 +213,7 @@ class _SectorViewState extends State<SectorView> {
             onPlayerUpdate: widget.onPlayerUpdate,
             onRefreshNpcs: widget.onRefreshNpcs,
             fedSpaceEnd: widget.fedSpaceEnd,
+            settings: widget.settings,
             onLandOnPlanet: widget.onOpenPlanet,
           ),
           const SizedBox(height: 12),
@@ -285,6 +291,7 @@ class _SectorViewState extends State<SectorView> {
                       onRefreshNpcs: widget.onRefreshNpcs,
                       fedSpaceEnd: widget.fedSpaceEnd,
                       onLandOnPlanet: widget.onOpenPlanet,
+                      settings: widget.settings,
                     ),
                   ],
                 ),
@@ -404,7 +411,8 @@ class _SectorViewState extends State<SectorView> {
                                 onPlayerUpdate: widget.onPlayerUpdate,
                                 onRefreshNpcs: widget.onRefreshNpcs,
                                 fedSpaceEnd: widget.fedSpaceEnd,
-                                onLandOnPlanet: widget.onOpenPlanet),
+                                onLandOnPlanet: widget.onOpenPlanet,
+                                settings: widget.settings),
                             const SizedBox(height: 12),
                             ShipStatusSummary(player: widget.player),
                           ],
