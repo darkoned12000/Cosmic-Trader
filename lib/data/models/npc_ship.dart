@@ -148,6 +148,12 @@ class NpcShip {
     this.driftCaution = 0.0,
   }) : assert(credits >= 0, 'NpcShip credits must never go negative');
 
+  /// Production-grade floor (review batch 2): the assert above is
+  /// debug-only (stripped in release), so every copy clamps too — the
+  /// invariant holds for players, not just devs.
+  static int _flooredCredits(int? value, int current) =>
+      math.max(0, value ?? current);
+
   PersonalityConfig get personalityConfig {
     final base = PersonalityConfig.all[personality]!;
     if (driftAggression == 0 && driftCaution == 0) return base;
@@ -242,7 +248,7 @@ class NpcShip {
       shipName: shipName ?? this.shipName,
       faction: faction ?? this.faction,
       shipDef: shipDef ?? this.shipDef,
-      credits: credits ?? this.credits,
+      credits: _flooredCredits(credits, this.credits),
       energy: energy ?? this.energy,
       maxEnergy: maxEnergy ?? this.maxEnergy,
       solarArrayLevel: solarArrayLevel ?? this.solarArrayLevel,
@@ -410,7 +416,7 @@ class NpcShip {
       shipName: NpcNameGenerator.generateShipName(seed: seed + 1),
       faction: faction,
       shipDef: shipDef,
-      credits: startingCredits,
+      credits: math.max(0, startingCredits),
       energy: 1000,
       maxEnergy: 1000,
       currentSectorId: currentSectorId,

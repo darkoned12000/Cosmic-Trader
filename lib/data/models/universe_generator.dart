@@ -1171,29 +1171,30 @@ class UniverseGenerator {
                   !(s.planet?.isHomeworld ?? false))
               .toList();
       if (pool.isEmpty) {
-        // Create a planet in a random non-FedSpace sector
-        final nonFed =
-            sectors.where((s) => s.id > settings.fedSpaceEnd).toList();
-        if (nonFed.isEmpty) {
-          // Entire universe is FedSpace (tiny dev/test config): no
-          // homeworld possible. Loud, since regionals depend on this.
-          debugPrint('No ${backup ? 'backup ' : ''}homeworld sector available '
-              'for ${faction.name} (fedSpaceEnd ${settings.fedSpaceEnd} covers '
-              '${sectors.length} sectors)');
+        // Create a planet in a random plantless non-FedSpace sector.
+        // (Review batch 2: the old code drew one random sector and
+        // silently did nothing when it already had a planet — an empty
+        // pool means planets are largely spoken for, so a blind draw
+        // usually misses. Filter first, log loudly when nothing is left.)
+        final plantless = sectors
+            .where((s) => s.id > settings.fedSpaceEnd && !s.hasPlanet)
+            .toList();
+        if (plantless.isEmpty) {
+          debugPrint('No plantless sector for ${backup ? 'backup ' : ''}'
+              'homeworld ${faction.name}: every non-FedSpace sector already '
+              'has a planet — homeworld skipped');
           return;
         }
-        final sector = nonFed[rng.nextInt(nonFed.length)];
-        if (!sector.hasPlanet) {
-          sector.hasPlanet = true;
-          sector.planet = _createPlanet(sector, rng);
-          final type = faction == FactionClass.duran
-              ? 'Lava'
-              : faction == FactionClass.vinari
-                  ? 'Terran'
-                  : 'Desert';
-          sector.planet =
-              _setupHomeworld(sector.planet!, faction, type, rng, backup);
-        }
+        final sector = plantless[rng.nextInt(plantless.length)];
+        sector.hasPlanet = true;
+        sector.planet = _createPlanet(sector, rng);
+        final type = faction == FactionClass.duran
+            ? 'Lava'
+            : faction == FactionClass.vinari
+                ? 'Terran'
+                : 'Desert';
+        sector.planet =
+            _setupHomeworld(sector.planet!, faction, type, rng, backup);
         return;
       }
       final chosen = pool[rng.nextInt(pool.length)];
@@ -1219,8 +1220,15 @@ class UniverseGenerator {
       Planet planet, FactionClass faction, String type, math.Random rng,
       [bool backup = false]) {
     final homeworldName = _homeworldName(faction);
+    // Review batch 2: a backup sharing the primary's exact name reads as
+    // a generation bug to players ("two Kravoses"). Reserves are labeled.
+    final name = homeworldName == null
+        ? planet.name
+        : backup
+            ? '$homeworldName (Reserve)'
+            : homeworldName;
     return Planet(
-      name: homeworldName ?? planet.name,
+      name: name,
       planetType: type,
       atmosphere: Planet.planetAtmospheres[type]?.atmosphere ?? 'Unknown',
       owner: faction,

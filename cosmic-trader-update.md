@@ -643,7 +643,22 @@ with automation-log lines + unit tests per the branch norm
     is intended flavor — judge "stubborn vs suicidal" in the logs.
   Covered by 5 new tests (vendetta/bounty cap waits, drain-and-resume,
   earned hero bounty + no-stack, map-cap eviction).
-  Suite: 245 passing, analyze clean.
+- Review batch 2 (generator/model pass — all fixed):
+  - Backup names: reserves are labeled (`Kravos (Reserve)`) — no more
+    duplicate homeworld names across sectors.
+  - Last-resort fallback: filters to plantless sectors first, logs
+    loudly when none remain (was: one blind draw, silent skip).
+  - `destroy()` zeroes production timers (was: stale cadence on the
+    corpse for any future reader that skips the `isDestroyed` check).
+  - Credits floor is now production-grade: `copyWith`/`create` clamp
+    at zero (the assert is debug-only and stripped in release).
+  - Noted, no code: primary/backup minimum distance (invasion-system
+    work, when it lands); drift is a one-way ratchet — fine for soak
+    timescales, watch on very long saves (veterans converge toward
+    maxed drift on both axes).
+  Covered by 3 new tests (unique homeworld names + reserve labels +
+  outpost count; destroy timer hygiene; credits clamp).
+  Suite: 247 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

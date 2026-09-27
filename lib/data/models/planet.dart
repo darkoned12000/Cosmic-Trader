@@ -130,6 +130,10 @@ class Planet {
     maxShield = 0;
     hull = 0;
     maxHull = 0;
+    // Review batch 2: stale timers on a corpse invite any future reader
+    // that forgets the isDestroyed check to schedule ghosts.
+    productionTimer = 0;
+    spawnInterval = 0;
   }
 
   String get dominantCommodity {

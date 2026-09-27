@@ -214,6 +214,9 @@ void main() {
       final dead = Planet.fromJson(planet.toJson().cast<String, dynamic>());
       expect(dead.isDestroyed, isTrue);
       expect(dead.isHomeworld, isFalse);
+      // Review batch 2: no stale timers on the corpse.
+      expect(dead.productionTimer, 0);
+      expect(dead.spawnInterval, 0);
       // Legacy saves default to live primaries.
       final legacy = Planet.fromJson(const {});
       expect(legacy.isDestroyed, isFalse);

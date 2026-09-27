@@ -39,8 +39,7 @@ void main() {
     expect(sectors, hasLength(20));
   });
 
-  test('generated universe invariants hold', () {
-    final gen = UniverseGenerator(_settings());
+  test('generated universe invariants hold', () {    final gen = UniverseGenerator(_settings());
     final sectors = gen.generate();
     final npcs = gen.generatedNpcs;
 
@@ -107,6 +106,36 @@ void main() {
         }
       }
     }
+  });
+
+  test('homeworld names are unique; backups read as reserves', () {
+    final gen = UniverseGenerator(GameSettings.defaults().copyWith(
+      totalSectors: 60,
+      fedSpaceEnd: 5,
+      seed: 42,
+      rawSeed: '42',
+    ));
+    final sectors = gen.generate();
+
+    final names = <String>[];
+    var backups = 0;
+    var outposts = 0;
+    for (final s in sectors) {
+      final p = s.planet;
+      if (p == null || !p.isHomeworld || p.homeworldOf == null) continue;
+      // No two Kravoses: every homeworld name is distinct.
+      expect(names, isNot(contains(p.name)), reason: p.name);
+      names.add(p.name);
+      if (p.homeworldOf == FactionClass.pirate) {
+        outposts++;
+      } else if (p.isBackupHomeworld) {
+        backups++;
+        expect(p.name, contains('(Reserve)'));
+      }
+    }
+    // One backup per major faction, two pirate outposts.
+    expect(backups, 3);
+    expect(outposts, 2);
   });
 
   test('fresh NPCs survive ten ticks with non-negative credits', () {
