@@ -1528,3 +1528,62 @@ both `Player` and `NpcShip` and the game runs fully on energy.
 
 Verify: `flutter analyze` → **No issues found!**, `dart format` clean,
 `flutter test` → **41/41**, including the new `test/energy_service_test.dart`.
+---
+
+## Post-soak: `npc_ai_service.dart` split plan (3,174 lines → 5 files)
+
+No runtime effect (file layout is compile-time only); purely maintenance.
+Do after the soak so behavior observations aren't confounded. Mechanism:
+Dart `part`/`part of` — all imports stay in the main file, every
+`_private` name keeps working untouched, tests import the same path.
+Verification: `flutter analyze` clean + full suite green, zero behavior
+change, own commit. Non-goals: no renames, no signature changes, no
+logic edits, no constant moves across seams (constants live with owners).
+
+### 1. `npc_ai_service.dart` — orchestrator (~250 lines)
+`processTurn`, `_isInterruptible` (+ policy table), `_isSafeZone` /
+`safeZoneEnd`, `_hasEnergy`, `_ownedSectors` / `ownedPortIndex`,
+`_isHostileFaction`, `_findSector`, `_findNpcById`, `_findAdjacentSector`.
+File header keeps ALL imports + `part` directives. Constants that stay:
+`safeZoneEnd`.
+
+### 2. `npc_scanner.dart` — perception + memory upkeep (~250 lines)
+`_scanSector`, `_pruneDeadVendettas`, `_shareIntel`.
+
+### 3. `npc_goal_planner.dart` — selection + all creators (~1,100 lines)
+`DistressSignal` class, `_activeDistressSignals`, `clearSignalsForTest`,
+`maxDistressResponders`, `maxConvoyEscorts`, `maxHuntersPerTarget`,
+vendetta consts (`vendettaGrievanceThreshold`, `vendettaPursuitTtl`,
+`vendettaDryHoleEase`), `intelFreshTtl`, `huntersOnTarget`,
+`_huntersByTarget`, `intelSearchSector`, `fearedSectors`,
+`_needsNewGoal`, `_selectGoal`, `_isGoalViable`,
+`_hasUnvisitedSectors`, `_hasPortSectorReachable`, `_instantiateGoal`,
+`_createTradeRouteGoal`, `_createSellOnlyGoal`, `npcPortPrice`,
+`_isPurchasable`, `_createBuyPortGoal`, `_createExploreGoal`,
+`_createConvoyGoal`, `_createWolfpackGoal`, `_createBorderHoldGoal`,
+`_createPatrolGoal`, `_respondToDistress`, `_createVendettaGoal`,
+`_createAttackGoal`, `_createRaidPortGoal`, `_createUpgradeGoal`,
+`shouldAttackPlayer` (read by planner + tick service).
+
+### 4. `npc_goal_executor.dart` — all execution (~1,100 lines)
+`_executeGoal`, `maxPatrolLegs`, `_failTrade`, `_executeTradeGoal`,
+`_executeRefuelGoal`, `_executeBankDepositGoal`,
+`_executeBankWithdrawGoal`, `_executeExploreGoal`, `_executePatrolGoal`,
+`_executeFleeGoal`, `_executeAttackGoal`, `_executeRaidPortGoal`,
+`_executeUpgradeGoal`, `_repairShip`, `_buyUpgrade`,
+`_manageOwnedPorts`, `_executeBuyPortGoal`, `npcSolarArrayCostCredits`.
+
+### 5. `npc_movement.dart` — movement + energy + flee (~450 lines)
+`_move`, `_handleStranded`, `shouldRefuel`, `knownEmporiumSectors`,
+`nearestEmporiumPath`, `createRefuelGoal`, `npcRefuelReserveHops`,
+`npcRefuelCheckFraction`, `npcRefuelFloorFraction`, `_evaluateThreat`,
+`_notorietyOf`, `_findLocalEnemies`, `_calculatePower`, `_setFleeGoal`.
+
+### Steps
+1. Add `part 'npc_scanner.dart'; ...` ×4 to main; add
+   `part of 'npc_ai_service.dart';` to each new file (no other edits).
+2. Move blocks verbatim in the order above (planner last — it is
+   biggest and touches the most seams).
+3. `flutter analyze` + full suite after EACH file move (bisects fallout).
+4. Commit once, message `Post-soak: split npc_ai_service into parts
+   (no behavior change)`.
