@@ -57,9 +57,8 @@ class PlayerStorage {
       }
       final content = await file.readAsString();
       final list = jsonDecode(content) as List;
-      final players = list
-          .map((e) => Player.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final players =
+          list.map((e) => Player.fromJson(e as Map<String, dynamic>)).toList();
       _lastLoadFailed = false;
       return players;
     } catch (e) {
@@ -187,16 +186,16 @@ class PlayerStorage {
     final players = await loadPlayers();
     if (_lastLoadFailed) {
       debugPrint('[PlayerStorage] updatePlayer refused (failed load)');
-      GameEventLog.global.system(
-          '[PlayerStorage] update for ${player.username} refused — '
-          'roster failed to load');
+      GameEventLog.global
+          .system('[PlayerStorage] update for ${player.username} refused — '
+              'roster failed to load');
       return false;
     }
     final index = players.indexWhere((p) => p.id == player.id);
     if (index == -1) {
       debugPrint('[PlayerStorage] updatePlayer: unknown id ${player.id}');
-      GameEventLog.global.system(
-          '[PlayerStorage] update for unknown id ${player.id} ignored');
+      GameEventLog.global
+          .system('[PlayerStorage] update for unknown id ${player.id} ignored');
       return false;
     }
     players[index] = player;

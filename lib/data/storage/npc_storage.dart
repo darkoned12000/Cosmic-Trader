@@ -63,8 +63,8 @@ class NpcStorage {
       // Loud, matching this file's stated convention (storage review
       // M5): the old silent catch hid total roster loss.
       debugPrint('[NpcStorage] Load failed: $e');
-      GameEventLog.global.system(
-          '[NpcStorage] Load failed — quarantining npcs.json: $e');
+      GameEventLog.global
+          .system('[NpcStorage] Load failed — quarantining npcs.json: $e');
       try {
         await FileSafe.quarantine(await _getFile());
       } catch (_) {}
@@ -86,8 +86,8 @@ class NpcStorage {
     // and the next successful load clears the flag.
     if (_lastLoadFailed) {
       debugPrint('[NpcStorage] saveAll refused (failed load)');
-      GameEventLog.global.system(
-          '[NpcStorage] saveAll refused — last load failed');
+      GameEventLog.global
+          .system('[NpcStorage] saveAll refused — last load failed');
       return;
     }
     try {

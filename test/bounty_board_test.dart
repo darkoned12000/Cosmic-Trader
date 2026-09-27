@@ -116,6 +116,24 @@ void main() {
     expect(board.totalFor('whale'), 50000);
   });
 
+  test('house posters are exempt from the per-poster cap', () {
+    final board = BountyBoard.global;
+    for (var i = 0; i < BountyBoard.maxBountiesPerPoster + 3; i++) {
+      expect(
+          board.post(
+            targetId: 'fed$i',
+            targetName: 'Fed$i',
+            targetFaction: 'pirate',
+            amount: 5000,
+            posterId: 'FEDERATION',
+            posterName: 'Federation Marshal',
+          ),
+          isNotNull);
+    }
+    expect(board.active.where((b) => b.posterId == 'FEDERATION').length,
+        BountyBoard.maxBountiesPerPoster + 3);
+  });
+
   test('pruneAbsent drops vanished targets, keeps the living', () {
     final board = BountyBoard.global;
     board.post(

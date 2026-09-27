@@ -868,6 +868,20 @@ with automation-log lines + unit tests per the branch norm
     writes it yet), destroyed-roster age pruning (done via
     clearWrecks instead).
   Suite: 311 passing, analyze clean.
+- Soak-response batch (7-min run): barter churn governors + Fed cap
+  fix (`test/p5_aliveness_test.dart` +2, `test/bounty_board_test.dart`
+  +1):
+  - 58k barter vs ~1.5k port trades was packmates swapping identical
+    loot every tick. Now: one barter per 5-min cooldown window, and
+    buyers top up nibs but never bulk up (bulk logistics stay at
+    ports). Relief still flows (empty-holder acquisitions).
+  - Federation hit its own 10/poster cap and stopped marking —
+    house posters (Federation/Chroniclers) are exempt as system
+    actors, not flooders.
+  - Also confirmed live: split buy/sell columns read correctly,
+    destroyed-port trade refusals firing, zero error ticks on split
+    code, `array_deploy` active.
+  Suite: 314 passing, analyze clean.
 - Phase C CLOSED 2026-09-27. Scope delivered: Step 0 + C1 (morale,
   parity, reinforcements) + C2 (memory/vendettas/avoidance/gossip/
   learning) + C4 (production/backups/legends/drift) + C3

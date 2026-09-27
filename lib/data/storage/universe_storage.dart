@@ -67,9 +67,8 @@ class UniverseStorage {
       }
       final content = await file.readAsString();
       final list = jsonDecode(content) as List;
-      final sectors = list
-          .map((e) => Sector.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final sectors =
+          list.map((e) => Sector.fromJson(e as Map<String, dynamic>)).toList();
       _lastLoadFailed = false;
       return sectors;
     } catch (e) {
@@ -215,8 +214,8 @@ class UniverseStorage {
         final reason = _lastLoadFailed ? 'failed load' : 'empty universe';
         debugPrint('[UniverseStorage] saveSectors refused ($reason) — '
             'not overwriting the file');
-        GameEventLog.global.system(
-            '[UniverseStorage] saveSectors refused ($reason)');
+        GameEventLog.global
+            .system('[UniverseStorage] saveSectors refused ($reason)');
         return;
       }
       for (final updated in updatedSectors) {

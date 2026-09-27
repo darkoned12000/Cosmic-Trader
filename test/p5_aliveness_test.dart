@@ -65,15 +65,16 @@ void main() {
           .copyWith(cargo: const {'minerals': 10}, cargoUsed: 10);
       final cap = seller.cargoHoldCapacity;
       var buyer = _npc(FactionClass.trader, 11, 1102, credits: 5000);
-      // Buyer room: nearly full holds leave exactly 5 open.
-      buyer = buyer.copyWith(cargo: {'minerals': cap - 5}, cargoUsed: cap - 5);
+      // Buyer room: other-cargo holds leave exactly 5 open, and no
+      // minerals aboard (bulk holders never bulk up — soak fix).
+      buyer = buyer.copyWith(cargo: {'food': cap - 5}, cargoUsed: cap - 5);
 
       final roster = [seller, buyer];
       seller = NpcAiService.processTurn(seller, sectors, [], roster);
 
       // minerals split-point (10+75)/2 = 42.5 → 43 per unit;
       // 5 units move into the 5 open holds.
-      final moved = roster[1].cargo['minerals']! - (cap - 5);
+      final moved = roster[1].cargo['minerals'] ?? 0;
       expect(moved, 5);
       expect(roster[1].credits, lessThan(5000));
       expect(roster[0].credits, greaterThan(5000));
@@ -84,6 +85,38 @@ void main() {
           .toList();
       expect(lines, hasLength(1));
       expect(lines[0], contains('minerals'));
+    });
+
+    test('bulk holders never bulk up (churn governor)', () {
+      final sectors = _sectors();
+      var seller = _npc(FactionClass.trader, 11, 1106, credits: 5000)
+          .copyWith(cargo: const {'minerals': 10}, cargoUsed: 10);
+      final cap = seller.cargoHoldCapacity;
+      // Buyer sits on a bulk pile of the same good with room to spare.
+      final buyer = _npc(FactionClass.trader, 11, 1107, credits: 5000)
+          .copyWith(cargo: {'minerals': cap - 5}, cargoUsed: cap - 5);
+
+      final roster = [seller, buyer];
+      seller = NpcAiService.processTurn(seller, sectors, [], roster);
+      expect(roster[0].cargo['minerals'], 10);
+      expect(roster[1].cargo['minerals'], cap - 5);
+      expect(GameEventLog.global.query(query: 'Bartered').map((e) => e.message),
+          isEmpty);
+    });
+
+    test('one barter per cooldown window', () {
+      final sectors = _sectors();
+      var seller = _npc(FactionClass.trader, 11, 1108, credits: 5000).copyWith(
+          cargo: const {'minerals': 10},
+          cargoUsed: 10,
+          memory: const NpcMemory().copyWith(lastTradeTime: DateTime.now()));
+      final buyer = _npc(FactionClass.trader, 11, 1109, credits: 5000);
+
+      final roster = [seller, buyer];
+      seller = NpcAiService.processTurn(seller, sectors, [], roster);
+      expect(roster[0].cargo['minerals'], 10);
+      expect(GameEventLog.global.query(query: 'Bartered').map((e) => e.message),
+          isEmpty);
     });
 
     test('hostiles do not trade', () {

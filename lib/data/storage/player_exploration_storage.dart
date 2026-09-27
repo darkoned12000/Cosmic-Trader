@@ -41,8 +41,7 @@ class PlayerExplorationStorage {
     }
   }
 
-  Map<int, int> get _active =>
-      _byPlayer.putIfAbsent(_activePlayerId, () => {});
+  Map<int, int> get _active => _byPlayer.putIfAbsent(_activePlayerId, () => {});
 
   /// Returns an unmodifiable view of the active player's visited sector
   /// ids. Call [load] first.
@@ -72,21 +71,17 @@ class PlayerExplorationStorage {
           _byPlayer = {};
           for (final entry in players.entries) {
             final inner = (entry.value as Map?)?.cast<String, dynamic>() ?? {};
-            final raw = (inner['lastVisited'] as Map?)
-                    ?.cast<String, dynamic>() ??
-                {};
+            final raw =
+                (inner['lastVisited'] as Map?)?.cast<String, dynamic>() ?? {};
             _byPlayer[entry.key] = raw.map(
-              (key, value) =>
-                  MapEntry(int.parse(key), (value as num).toInt()),
+              (key, value) => MapEntry(int.parse(key), (value as num).toInt()),
             );
           }
         } else if (data['lastVisited'] is Map) {
           // Legacy flat format: adopt on first setActivePlayer.
-          final raw =
-              (data['lastVisited'] as Map).cast<String, dynamic>();
+          final raw = (data['lastVisited'] as Map).cast<String, dynamic>();
           _legacyFlat = raw.map(
-            (key, value) =>
-                MapEntry(int.parse(key), (value as num).toInt()),
+            (key, value) => MapEntry(int.parse(key), (value as num).toInt()),
           );
         } else if (data['visited'] is List) {
           // Older legacy: {"visited": [1, 2, 3]}. Migrate ids over;

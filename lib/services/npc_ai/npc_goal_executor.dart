@@ -1349,6 +1349,15 @@ NpcShip _executeBuyPortGoal(
 /// the caller's live entry re-read by id (counterparties write back
 /// in place; indexed copies go stale mid-tick).
 NpcShip _barterWithNpc(NpcShip npc, List<NpcShip> allNpcs) {
+  // Churn governor (soak fix): one barter per cooldown window. A 7-min
+  // soak showed 58k barter trades vs ~1.5k port trades — mostly
+  // packmates swapping identical loot every tick. Shared clock with
+  // port trade: busy traders barter less, which is exactly right.
+  final lastTrade = npc.memory.lastTradeTime;
+  if (lastTrade != null &&
+      DateTime.now().difference(lastTrade) < NpcMemory.routeCooldown) {
+    return npc;
+  }
   final mates = NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
   for (final mate in mates) {
     if (mate.id == npc.id || mate.isDestroyed) continue;
@@ -1385,6 +1394,11 @@ bool _barterLeg({
   if (config == null) return false;
   final unitPrice = config.splitPoint.round();
   if (unitPrice <= 0) return false;
+  // Buyers top up nibs, never bulk up (soak fix): bulk holders
+  // accumulating more of the same loot was the churn engine. Empty and
+  // small holders consolidate normally; bulk logistics stay at ports.
+  final nibCap = (buyer.cargoHoldCapacity * 0.25).floor();
+  if ((buyer.cargo[commodity] ?? 0) >= nibCap) return false;
   final sellerQty = seller.cargo[commodity] ?? 0;
   final buyerRoom = buyer.cargoHoldCapacity - buyer.cargoUsed;
   final affordable = buyer.credits ~/ unitPrice;

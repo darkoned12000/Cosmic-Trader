@@ -14,8 +14,7 @@ import 'package:cosmic_trader/data/storage/universe_storage.dart';
 // per-player exploration isolation, concurrent generation coalescing.
 // path_provider is pointed at a real temp folder (game_shell_test
 // pattern) so the stores complete their I/O headlessly.
-const _pathProviderChannel =
-    MethodChannel('plugins.flutter.io/path_provider');
+const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
 
 Future<Directory> _freshDocs() async {
   final dir = await Directory.systemTemp.createTemp('ct_storage_safety');
@@ -45,8 +44,7 @@ Future<void> _cleanFiles(Directory dir) async {
   }
 }
 
-GameSettings _tinySettings({int seed = 0}) =>
-    GameSettings.defaults().copyWith(
+GameSettings _tinySettings({int seed = 0}) => GameSettings.defaults().copyWith(
       totalSectors: 8,
       fedSpaceEnd: 2,
       seed: seed,
@@ -98,10 +96,8 @@ void main() {
       expect(await UniverseStorage.instance.hasUniverse(), isFalse);
     });
 
-    test('corrupt players quarantine; updatePlayer refuses the wipe',
-        () async {
-      await File('${docs.path}/players.json')
-          .writeAsString('not json at all');
+    test('corrupt players quarantine; updatePlayer refuses the wipe', () async {
+      await File('${docs.path}/players.json').writeAsString('not json at all');
       final ghost = await PlayerStorage.instance.loadPlayers();
       expect(ghost, isEmpty);
       expect(
@@ -112,14 +108,12 @@ void main() {
           hasLength(1));
 
       // Unknown id and refused-write both report false, never throw.
-      final fail =
-          await PlayerStorage.instance.updatePlayer(_ghostPlayer());
+      final fail = await PlayerStorage.instance.updatePlayer(_ghostPlayer());
       expect(fail, isFalse);
       expect(File('${docs.path}/players.json').existsSync(), isFalse);
     });
 
-    test('corrupt roster quarantines; tick-save refuses the wipe',
-        () async {
+    test('corrupt roster quarantines; tick-save refuses the wipe', () async {
       await File('${docs.path}/npcs.json').writeAsString('[oops');
       expect(await NpcStorage().loadAll(), isEmpty);
       await NpcStorage().saveAll([]);
@@ -132,8 +126,7 @@ void main() {
       expect(await PlayerStorage.instance.findPlayer('nobody'), isNull);
     });
 
-    test('register mints uuid ids; unknown updates report false',
-        () async {
+    test('register mints uuid ids; unknown updates report false', () async {
       final player = await PlayerStorage.instance.register(
         'captain',
         'password',
@@ -171,8 +164,7 @@ void main() {
   });
 
   group('failure-flag lifecycle (C1)', () {
-    test('generation clears sticky failures and writes fresh truth',
-        () async {
+    test('generation clears sticky failures and writes fresh truth', () async {
       // Poison every flag first, the way a corrupt session would.
       await File('${docs.path}/universe.json').writeAsString('{{{');
       await File('${docs.path}/npcs.json').writeAsString('{{{');

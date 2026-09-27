@@ -257,8 +257,12 @@ class BountyBoard extends ChangeNotifier {
   }) {
     if (amount < minBountyAmount) return null;
     if (targetId.isEmpty) return null;
+    // House posters (Federation/Chroniclers) are system actors, not
+    // flooders — exempt from the per-poster cap (soak fix: the Fed hit
+    // its own cap and stopped marking notorious pilots entirely).
     final posterCount = _active.where((b) => b.posterId == posterId).length;
-    if (posterCount >= maxBountiesPerPoster) {
+    if (!housePosters.contains(posterId) &&
+        posterCount >= maxBountiesPerPoster) {
       GameEventLog.global.system(
         '[Bounty] $posterName at poster cap — mark on $targetName refused',
       );
