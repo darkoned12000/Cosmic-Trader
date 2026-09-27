@@ -717,7 +717,7 @@ with automation-log lines + unit tests per the branch norm
   their live-goal sector when reachable (arrival-early hunters hold
   and engage on arrival; stale cutoffs dissolve via dry holes).
   Covered by 3 tests (unmarked cutoff, hold cap, vendetta cutoff).
-  Suite: 273 passing, analyze clean.
+  Suite: 274 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide
