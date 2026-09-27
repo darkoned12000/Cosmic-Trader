@@ -7,6 +7,8 @@ import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/universe_generator.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'file_safe.dart';
 
 /// Handles reading/writing universe.json to persistent storage.
@@ -123,6 +125,10 @@ class UniverseStorage {
     // NPC persistence is awaited HERE (not fire-and-forget inside the
     // generator) so post-generation ticks can never load a partial roster.
     await NpcStorage().saveAll(generator.generatedNpcs);
+    // Fresh world, fresh board + combat slate (soak-found bug): bounties
+    // reference dead-universe NPC ids and never pay out against them.
+    await BountyBoard.global.resetForNewUniverse();
+    CombatMetrics.global.reset();
     logSectorStats(sectors);
     debugPrint('Universe generated: ${sectors.length} sectors saved.');
     return actualSettings;

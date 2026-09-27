@@ -12,6 +12,25 @@ void main() {
   setUp(() => BountyBoard.resetForTest());
   tearDown(() => BountyBoard.resetForTest());
 
+  test('resetForNewUniverse clears marks and history', () async {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'victim-1',
+      targetName: 'Victim',
+      targetFaction: 'trader',
+      amount: 5000,
+      posterId: 'poster-1',
+      posterName: 'Poster',
+      reason: 'stale universe',
+    );
+    expect(board.totalFor('victim-1'), 5000);
+
+    await board.resetForNewUniverse();
+    expect(board.active, isEmpty);
+    expect(board.paid, isEmpty);
+    expect(board.totalFor('victim-1'), 0);
+  });
+
   test('post holds bounty; killer auto-collects; history kept', () {
     final board = BountyBoard.global;
     final posted = board.post(

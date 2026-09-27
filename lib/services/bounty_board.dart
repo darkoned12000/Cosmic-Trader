@@ -67,6 +67,16 @@ class BountyBoard extends ChangeNotifier {
 
   Future<void> _persist() => BountyStorage.instance.saveAll(_active, _paid);
 
+  /// Clears the board for a fresh universe (soak-found bug: regen kept
+  /// ~50 stale marks on dead NPC ids, and zero ever paid out against
+  /// them). Persists the empty board so restarts stay clean too.
+  Future<void> resetForNewUniverse() async {
+    _active.clear();
+    _paid.clear();
+    notifyListeners();
+    await _persist();
+  }
+
   /// Posts a bounty. Returns null when [amount] is not positive. The
   /// caller deducts the credits (player wallet or NPC bankroll).
   Bounty? post({
