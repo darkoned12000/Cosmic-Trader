@@ -50,12 +50,10 @@ class BountyBoard extends ChangeNotifier {
   /// standing). Empty factions (Federation Marshal) carry no standing.
   /// [excludePosterId] drops self-posts (bounty review H3): posting on
   /// your own mark must never mint reputation.
-  List<String> posterFactionsFor(String targetId,
-      {String? excludePosterId}) {
+  List<String> posterFactionsFor(String targetId, {String? excludePosterId}) {
     return {
       for (final b in forTarget(targetId))
-        if (b.posterFaction.isNotEmpty &&
-            b.posterId != excludePosterId)
+        if (b.posterFaction.isNotEmpty && b.posterId != excludePosterId)
           b.posterFaction,
     }.toList();
   }
@@ -146,8 +144,7 @@ class BountyBoard extends ChangeNotifier {
   }) {
     if (amount < minBountyAmount) return null;
     if (targetId.isEmpty) return null;
-    final posterCount =
-        _active.where((b) => b.posterId == posterId).length;
+    final posterCount = _active.where((b) => b.posterId == posterId).length;
     if (posterCount >= maxBountiesPerPoster) {
       GameEventLog.global.system(
         '[Bounty] $posterName at poster cap — mark on $targetName refused',
@@ -209,9 +206,7 @@ class BountyBoard extends ChangeNotifier {
     _recordPaid(
       targetId,
       targetName,
-      targetFaction.isNotEmpty
-          ? targetFaction
-          : owed.first.targetFaction,
+      targetFaction.isNotEmpty ? targetFaction : owed.first.targetFaction,
       killerName,
       killerFaction,
       total,

@@ -86,8 +86,7 @@ void main() {
       sw.stop();
       NpcAiService.endTick();
 
-      debugPrint(
-          'P2 benchmark: ${out.length} NPC turns over ${sectors.length} '
+      debugPrint('P2 benchmark: ${out.length} NPC turns over ${sectors.length} '
           'sectors in ${sw.elapsedMilliseconds}ms '
           '(${(sw.elapsedMilliseconds / out.length).toStringAsFixed(2)}ms/turn)');
       expect(out, hasLength(npcs.length));

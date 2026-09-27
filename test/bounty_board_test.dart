@@ -91,8 +91,7 @@ void main() {
         posterName: 'Spammer',
       );
     }
-    expect(
-        board.active.where((b) => b.posterId == 'spammer').length,
+    expect(board.active.where((b) => b.posterId == 'spammer').length,
         BountyBoard.maxBountiesPerPoster);
     // A flood of minimums evicts minimums, never the high-value head.
     board.post(
@@ -152,8 +151,7 @@ void main() {
       posterFaction: 'trader',
     );
     expect(board.posterFactionsFor('mark'), ['trader']);
-    expect(
-        board.posterFactionsFor('mark', excludePosterId: 'me'), isEmpty);
+    expect(board.posterFactionsFor('mark', excludePosterId: 'me'), isEmpty);
   });
 
   test('paid factions round-trip through JSON with legacy defaults', () {
@@ -165,8 +163,7 @@ void main() {
       amount: 100,
       paidAt: DateTime.utc(2026),
     );
-    final restored =
-        PaidBounty.fromJson(paid.toJson().cast<String, dynamic>());
+    final restored = PaidBounty.fromJson(paid.toJson().cast<String, dynamic>());
     expect(restored.targetFaction, 'pirate');
     expect(restored.killerFaction, 'duran');
     final legacy = PaidBounty.fromJson(const {

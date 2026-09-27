@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -248,14 +249,18 @@ class NpcAiService {
     // its own execution has no death rattle to share.
     updated = _shareIntel(updated, allNpcs);
 
+    // 2d — Co-located barter (P5): holds meet holds, one deal per turn.
+    updated = _barterWithNpc(updated, allNpcs);
+
     // 2b — Manage owned ports: collect revenue, buy upgrades. Runs
     // independent of the active goal (paperwork needs no travel).
     updated = _manageOwnedPorts(updated, sectors);
 
-    // 3 — Evaluate threats → flee immediately if outmatched
-    if (_hasEnergy(updated) &&
-        _evaluateThreat(updated, sectors, players, allNpcs)) {
-      updated = _setFleeGoal(updated, sectors);
+    // 3 — Evaluate threats → flee directionally if outmatched
+    final threat = _threatVector(updated, sectors, players, allNpcs);
+    if (_hasEnergy(updated) && threat != null) {
+      updated = _setFleeGoal(updated, sectors,
+          threatSector: threat.sector, threatHeading: threat.heading);
     }
 
     // 3b — Respond to nearby distress signals (override interruptible

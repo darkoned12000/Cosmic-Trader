@@ -189,7 +189,12 @@ bool _isGoalViable(
     case NpcGoalType.upgradeEquipment:
       // Mid-wealth threshold: cheapest upgrades run ~15k, so NPCs start
       // outfitting (repairs + level 2) well before array money (75k+).
-      return npc.credits + npc.bankBalance > 25000;
+      // Limp-home rule (P5): battered hulls (under half) head for the
+      // yards early — arrival repairs first (see _executeUpgradeGoal),
+      // so survivors stop flying wounded.
+      final funds = npc.credits + npc.bankBalance;
+      return funds > 25000 ||
+          (npc.maxHull > 0 && npc.hull < npc.maxHull * 0.5 && funds > 15000);
     case NpcGoalType.buyPort:
       // Serious money only; affordability re-checked at execution.
       return npc.credits + npc.bankBalance > 100000;
@@ -551,7 +556,8 @@ NpcGoal? _createWolfpackGoal(
         NpcAiService._isSafeZone(hunt.targetSectorId!)) {
       continue;
     }
-    if (NpcAiService.huntersOnTarget(allNpcs, targetId) >= maxHuntersPerTarget) {
+    if (NpcAiService.huntersOnTarget(allNpcs, targetId) >=
+        maxHuntersPerTarget) {
       continue;
     }
     final path = PathfindingService.findPath(
@@ -873,8 +879,7 @@ NpcGoal? _createAttackGoal(
   // indexed copy, but execution re-resolves the live object by id.
   NpcShip? bestTarget;
   int? bestTargetSectorId;
-  final locals =
-      NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  final locals = NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
   for (final other in locals) {
     if (other.id == npc.id || other.isDestroyed) continue;
     if (other.currentSectorId != npc.currentSectorId) continue;

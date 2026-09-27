@@ -90,8 +90,7 @@ class TradeEvaluator {
           buySector.key,
           () => PathfindingService.bfsParents(universe, buySector.key),
         );
-        final toSell =
-            PathfindingService.distanceInTree(tree, sellSector.key);
+        final toSell = PathfindingService.distanceInTree(tree, sellSector.key);
         if (toSell == null) continue;
 
         final buyPort = buySector.value;

@@ -46,17 +46,20 @@ List<int>? nearestEmporiumPath(
 // Step 3 — Threat evaluation
 // ────────────────────────────────────────────────────────────────
 
-bool _evaluateThreat(
+/// Threat vector for directional fleeing (P5): the sector of the first
+/// overwhelming enemy plus where THEY are headed, if anywhere. Null
+/// when nothing outmatches the pilot (aggressors never flee).
+({int sector, int? heading})? _threatVector(
   NpcShip npc,
   List<Sector> sectors,
   List<Player> players,
   List<NpcShip> allNpcs,
 ) {
   // Aggressive NPCs never flee
-  if (npc.personalityConfig.aggression > 0.7) return false;
+  if (npc.personalityConfig.aggression > 0.7) return null;
 
   final enemies = _findLocalEnemies(npc, players, allNpcs);
-  if (enemies.isEmpty) return false;
+  if (enemies.isEmpty) return null;
 
   final myPower = _calculatePower(npc);
   for (final enemy in enemies) {
@@ -64,9 +67,21 @@ bool _evaluateThreat(
     // Fear: notoriety inflates perceived power. Infamous pilots clear
     // sectors by reputation — weaker ships leave rather than provoke.
     theirPower = (theirPower * (1 + _notorietyOf(enemy) / 200)).round();
-    if (theirPower > myPower * 1.3) return true;
+    if (theirPower > myPower * 1.3) {
+      int? heading;
+      if (enemy is NpcShip) {
+        final goal = enemy.currentGoal;
+        if (goal != null &&
+            goal.status == NpcGoalStatus.travelling &&
+            goal.targetSectorId != null &&
+            goal.targetSectorId != enemy.currentSectorId) {
+          heading = goal.targetSectorId;
+        }
+      }
+      return (sector: enemy.currentSectorId as int, heading: heading);
+    }
   }
-  return false;
+  return null;
 }
 
 double _notorietyOf(dynamic entity) {
@@ -89,8 +104,7 @@ List<dynamic> _findLocalEnemies(
     }
   }
   // Co-located candidates from the tick index when present (P2).
-  final locals =
-      NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  final locals = NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
   for (final other in locals) {
     if (other.id != npc.id &&
         other.currentSectorId == npc.currentSectorId &&
@@ -113,12 +127,41 @@ int _calculatePower(dynamic entity) {
   return 0;
 }
 
-NpcShip _setFleeGoal(NpcShip npc, List<Sector> sectors) {
+NpcShip _setFleeGoal(
+  NpcShip npc,
+  List<Sector> sectors, {
+  required int threatSector,
+  int? threatHeading,
+}) {
   final current = NpcAiService._findSector(sectors, npc.currentSectorId);
   if (current == null || current.warpRoutes.isEmpty) return npc;
 
-  final targetId =
-      current.warpRoutes[NpcAiService._rng.nextInt(current.warpRoutes.length)];
+  // Directional flee (P5): run from where the threat is GOING, not
+  // where it stands — everything adjacent is 1 hop from here, so
+  // raw distance-from-threat can't discriminate. Ties break
+  // safe-zone-ward (sanctuary), then random.
+  final awayFrom = threatHeading ?? threatSector;
+  var best = -2;
+  final top = <int>[];
+  for (final w in current.warpRoutes) {
+    final d = PathfindingService.distance(sectors, w, awayFrom);
+    final dd = d >= 9999 ? -1 : d;
+    if (dd > best) {
+      best = dd;
+      top
+        ..clear()
+        ..add(w);
+    } else if (dd == best) {
+      top.add(w);
+    }
+  }
+  final pool = top.isEmpty ? current.warpRoutes : top;
+  final sanctuary = pool.where((w) {
+    final s = NpcAiService._findSector(sectors, w);
+    return s != null && NpcAiService._isSafeZone(s.id);
+  }).toList();
+  final options = sanctuary.isNotEmpty ? sanctuary : pool;
+  final targetId = options[NpcAiService._rng.nextInt(options.length)];
 
   GameEventLog.global.goal('[${npc.pilotName}] Flee: Evading threat in Sector '
       '${npc.currentSectorId} → Sector $targetId');

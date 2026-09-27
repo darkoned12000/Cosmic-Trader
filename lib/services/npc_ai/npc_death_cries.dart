@@ -107,3 +107,63 @@ class NpcDeathCries {
     FactionClass.pirate: _pirateCries,
   };
 }
+
+/// Combat taunts (P5): hot-blooded attackers (aggression ≥ 0.6) talk
+/// before they finish the job. Same corpus pattern as death cries —
+/// flavor only, one line per engagement.
+class NpcTaunts {
+  NpcTaunts._();
+
+  static final _rng = math.Random();
+
+  static String getTaunt(FactionClass faction) {
+    final list = _taunts[faction] ?? _defaultTaunts;
+    return list[_rng.nextInt(list.length)];
+  }
+
+  static String formatTaunt(String pilotName, FactionClass faction) {
+    return '$pilotName snarls: "${getTaunt(faction)}"';
+  }
+
+  static const _duranTaunts = [
+    'Kneel, whelp, and I may leave you scrap!',
+    'The Hegemony does not miss twice!',
+    'Your hull offends me. I will remove it!',
+    'Run home and tell them Kravos is coming!',
+  ];
+
+  static const _vinariTaunts = [
+    'The currents already carry you away, little one.',
+    'We offered harmony. You chose debris.',
+    'Your trajectory ends here — we have seen it.',
+    'Drift apart, and trouble us no more.',
+  ];
+
+  static const _traderTaunts = [
+    'That cargo is worth more than your life. Hand it over!',
+    'You picked the wrong manifest to rob!',
+    'My insurers will hear about this. So will my guns!',
+    'Time is money, and you are wasting both!',
+  ];
+
+  static const _pirateTaunts = [
+    'Heave to, pretty, and nobody gets vented!',
+    'Your hold or your hull — pick one!',
+    'The void provides... starting with you!',
+    'I love it when they run. Saves me aiming!',
+  ];
+
+  static const _defaultTaunts = [
+    'You should not have come here!',
+    'This sector is mine now!',
+    'Last chance to run, spacer!',
+    'Come on then, let us dance!',
+  ];
+
+  static const Map<FactionClass, List<String>> _taunts = {
+    FactionClass.duran: _duranTaunts,
+    FactionClass.vinari: _vinariTaunts,
+    FactionClass.trader: _traderTaunts,
+    FactionClass.pirate: _pirateTaunts,
+  };
+}

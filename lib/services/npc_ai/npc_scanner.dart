@@ -70,8 +70,7 @@ NpcShip _scanSector(
   // candidates come from the tick index when present (P2); the write
   // path below still resolves live objects, so stale refs only ever
   // nominate, never act.
-  final mates =
-      NpcAiService.npcsBySector?[sector.id] ?? allNpcs;
+  final mates = NpcAiService.npcsBySector?[sector.id] ?? allNpcs;
   final aliveIds = <String>{npc.id};
   for (final player in players) {
     aliveIds.add(player.id);
@@ -115,8 +114,7 @@ NpcShip _shareIntel(NpcShip npc, List<NpcShip> allNpcs) {
   // Candidacy from the tick index when present (P2); write-back always
   // resolves the live list slot by id, since indexed copies go stale as
   // turns run.
-  final mates =
-      NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  final mates = NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
   for (final mate in mates) {
     if (mate.id == npc.id || mate.isDestroyed) continue;
     if (mate.faction != npc.faction) continue;

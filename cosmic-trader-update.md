@@ -745,6 +745,23 @@ with automation-log lines + unit tests per the branch norm
     distance caching across ticks (universe mutates; per-call trees
     suffice at measured rates).
   Suite: 281 passing, analyze clean.
+- P5 aliveness batch (`test/p5_aliveness_test.dart`, 8 tests):
+  - NPC↔NPC barter: one deal per turn with co-located non-hostiles,
+    registry-midpoint pricing (zero-sum), both sides metered +
+    logged. Relieves stranded cargo, builds supply chains.
+  - Directional flee: threat vector (sector + heading) replaces the
+    boolean; exits scored by distance from where the threat is
+    going, ties safe-ward then random.
+  - Limp-home repairs: hurt hulls (<50%) with >15k seek yards early
+    (arrival already repairs first).
+  - Loss-triggered distress: bleeding defenders (<40% hull) call for
+    help at any odds, reusing capped responders.
+  - Combat taunts: aggression ≥ 0.6 attackers snarl per engagement
+    (faction corpus mirroring death cries).
+  - Deferred: persistent fleet ids (needs regroup design), ActionLog
+    proximity gating (needs player positions threaded into
+    executors), supply/demand snapshot filtering (stale-zero risk).
+  Suite: 289 passing, analyze clean.
 - Bounty review (external pass — fixed, verified, deferred):
   - H1 player marks pay out: NPC killers collect on player death
     (credited + logged); new Fed marks on the player raise an Action

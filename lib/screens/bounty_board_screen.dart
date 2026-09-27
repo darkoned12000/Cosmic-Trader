@@ -153,8 +153,8 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   void _claim(String targetId, String targetName) {
     // H3 guard: self-posted marks pay out (money was debited at post)
     // but never mint reputation.
-    final factions = BountyBoard.global.posterFactionsFor(targetId,
-        excludePosterId: widget.player.id);
+    final factions = BountyBoard.global
+        .posterFactionsFor(targetId, excludePosterId: widget.player.id);
     final targets =
         BountyBoard.global.active.where((b) => b.targetId == targetId);
     final paid = BountyBoard.global.claim(
@@ -163,8 +163,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
       killerName: widget.player.name,
       verifiedKills: widget.player.recentKills.toSet(),
       killerFaction: widget.player.faction.name,
-      targetFaction:
-          targets.isEmpty ? '' : targets.first.targetFaction,
+      targetFaction: targets.isEmpty ? '' : targets.first.targetFaction,
     );
     if (paid <= 0) return;
     var updated = widget.player.copyWith(credits: widget.player.credits + paid);
@@ -205,8 +204,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
           // marks and distinct targets so stacking reads honestly.
           final active = board.active.toList()
             ..sort((a, b) => b.amount.compareTo(a.amount));
-          final targets =
-              active.map((b) => b.targetId).toSet().length;
+          final targets = active.map((b) => b.targetId).toSet().length;
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(

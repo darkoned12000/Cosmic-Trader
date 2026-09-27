@@ -744,8 +744,12 @@ NpcShip _executeAttackGoal(
   final targetPower = CombatService.calculateFirepower(target);
   final log = ActionLogProvider.global;
 
-  // ── Distress call: unfair fight ──
-  if (myPower > targetPower * 2.0) {
+  // ── Distress call: unfair fight, or any fight the defender is
+  // losing badly (P5: hull under 40% calls for help regardless of the
+  // opening odds — reinforcements reuse the capped responder path).
+  final defenderBleeding =
+      target.maxHull > 0 && target.hull < target.maxHull * 0.4;
+  if (myPower > targetPower * 2.0 || defenderBleeding) {
     log.info(
       '${target.pilotName} (${target.shipName}) sends a distress signal '
       'from sector #${npc.currentSectorId}!',
@@ -909,6 +913,12 @@ NpcShip _executeAttackGoal(
         '[${result.attacker.pilotName}] Combat: Engaged ${target.pilotName} '
         '(dealt ${result.result.damageToDefender}, '
         'took ${result.result.damageToAttacker})');
+    // Hot blood talks (P5): aggressive attackers taunt on contact.
+    // Cool heads fight silent — one line per engagement, never spam.
+    if (result.attacker.personalityConfig.aggression >= 0.6) {
+      GameEventLog.global.combat(NpcTaunts.formatTaunt(
+          result.attacker.pilotName, result.attacker.faction));
+    }
     // Survivor posts a bounty on the aggressor from its own bankroll
     // (flat 5000 when affordable) — hits fund the board that pays hits.
     // Debit first: post() is infallible for validated amounts, so the
@@ -1325,4 +1335,109 @@ NpcShip _executeBuyPortGoal(
     credits: npc.credits - price,
     currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
   );
+}
+
+// ────────────────────────────────────────────────────────────────
+// Step 2d — Co-located barter (P5 living economy)
+// ────────────────────────────────────────────────────────────────
+
+/// NPC↔NPC trade when hulls share a sector (P5): one deal per turn.
+/// The NPC sells what it carries (registry order) to the first
+/// non-hostile, living, co-located buyer with room and credits — or
+/// buys when its own holds are the empty ones. Price is the registry
+/// split-point midpoint: fair middle, zero-sum, no money printed.
+/// Recorded on both sides in EconomyMetrics like port legs. Returns
+/// the caller's live entry re-read by id (counterparties write back
+/// in place; indexed copies go stale mid-tick).
+NpcShip _barterWithNpc(NpcShip npc, List<NpcShip> allNpcs) {
+  final mates = NpcAiService.npcsBySector?[npc.currentSectorId] ?? allNpcs;
+  for (final mate in mates) {
+    if (mate.id == npc.id || mate.isDestroyed) continue;
+    if (mate.currentSectorId != npc.currentSectorId) continue;
+    if (NpcAiService._isHostileFaction(npc.faction, mate.faction)) continue;
+    // Direction 1: I sell, they buy.
+    for (final name in CommodityRegistry.names) {
+      if ((npc.cargo[name] ?? 0) <= 0) continue;
+      if (_barterLeg(
+          seller: npc, buyer: mate, commodity: name, allNpcs: allNpcs)) {
+        return allNpcs.firstWhere((n) => n.id == npc.id, orElse: () => npc);
+      }
+    }
+    // Direction 2: they sell, I buy (my holds were the empty ones).
+    for (final name in CommodityRegistry.names) {
+      if ((mate.cargo[name] ?? 0) <= 0) continue;
+      if (_barterLeg(
+          seller: mate, buyer: npc, commodity: name, allNpcs: allNpcs)) {
+        return allNpcs.firstWhere((n) => n.id == npc.id, orElse: () => npc);
+      }
+    }
+  }
+  return npc;
+}
+
+/// One barter leg. Writes both sides back by id; true on success.
+bool _barterLeg({
+  required NpcShip seller,
+  required NpcShip buyer,
+  required String commodity,
+  required List<NpcShip> allNpcs,
+}) {
+  final config = CommodityRegistry.defaultsMap[commodity];
+  if (config == null) return false;
+  final unitPrice = config.splitPoint.round();
+  if (unitPrice <= 0) return false;
+  final sellerQty = seller.cargo[commodity] ?? 0;
+  final buyerRoom = buyer.cargoHoldCapacity - buyer.cargoUsed;
+  final affordable = buyer.credits ~/ unitPrice;
+  var units = sellerQty;
+  if (buyerRoom < units) units = buyerRoom;
+  if (affordable < units) units = affordable;
+  if (seller.cargoUsed < units) units = seller.cargoUsed;
+  if (units <= 0) return false;
+  final total = units * unitPrice;
+
+  final sellerCargo = Map<String, int>.from(seller.cargo);
+  sellerCargo[commodity] = sellerQty - units;
+  if (sellerCargo[commodity]! <= 0) sellerCargo.remove(commodity);
+  final buyerCargo = Map<String, int>.from(buyer.cargo);
+  buyerCargo[commodity] = (buyerCargo[commodity] ?? 0) + units;
+
+  final now = DateTime.now();
+  final si = allNpcs.indexWhere((n) => n.id == seller.id);
+  final bi = allNpcs.indexWhere((n) => n.id == buyer.id);
+  if (si == -1 || bi == -1) return false;
+  allNpcs[si] = seller.copyWith(
+    credits: seller.credits + total,
+    cargo: sellerCargo,
+    cargoUsed: seller.cargoUsed - units,
+    memory: seller.memory.copyWith(lastTradeTime: now),
+  );
+  allNpcs[bi] = buyer.copyWith(
+    credits: buyer.credits - total,
+    cargo: buyerCargo,
+    cargoUsed: buyer.cargoUsed + units,
+    memory: buyer.memory.copyWith(lastTradeTime: now),
+  );
+
+  EconomyMetrics.global.recordTrade(
+    commodity: commodity,
+    units: units,
+    credits: total,
+    actorFaction: seller.faction.name,
+    isPlayer: false,
+    isBuy: false,
+  );
+  EconomyMetrics.global.recordTrade(
+    commodity: commodity,
+    units: units,
+    credits: total,
+    actorFaction: buyer.faction.name,
+    isPlayer: false,
+    isBuy: true,
+  );
+  GameEventLog.global.trade(
+    '[${seller.pilotName}] Bartered $units $commodity to '
+    '[${buyer.pilotName}] for $total cr',
+  );
+  return true;
 }

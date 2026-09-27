@@ -404,10 +404,10 @@ void main() {
               'borderHold': 12,
             },
           );
-      final h1 = _npc(FactionClass.duran, 11, 772)
-          .copyWith(currentGoal: holdAt12());
-      final h2 = _npc(FactionClass.duran, 11, 773)
-          .copyWith(currentGoal: holdAt12());
+      final h1 =
+          _npc(FactionClass.duran, 11, 772).copyWith(currentGoal: holdAt12());
+      final h2 =
+          _npc(FactionClass.duran, 11, 773).copyWith(currentGoal: holdAt12());
       var newcomer = _npc(FactionClass.duran, 11, 774);
 
       final roster = [h1, h2, vinari, newcomer];
@@ -417,7 +417,8 @@ void main() {
           isFalse);
     });
 
-    test('no hostiles, no hold', () {      final sectors = [
+    test('no hostiles, no hold', () {
+      final sectors = [
         _plain(11, [12]),
         _plain(12, [11]),
       ];
@@ -514,7 +515,8 @@ void main() {
       expect(hunter.currentGoal?.params['targetSectorId'], 14);
     });
 
-    test('no mark, no heading, no cutoff', () {      final sectors = triangle();
+    test('no mark, no heading, no cutoff', () {
+      final sectors = triangle();
       final target = _npc(FactionClass.trader, 12, 781,
           weapons: const {'main_forward': 1});
       var hunter = _npc(FactionClass.pirate, 11, 782,

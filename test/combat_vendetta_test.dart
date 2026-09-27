@@ -110,12 +110,12 @@ void main() {
             status: NpcGoalStatus.travelling,
             createdAt: DateTime.now(),
             params: const {
-              'targetSectorId': 14,
-              'buyPortId': 14,
-              'sellPortId': 14,
-              'commodity': 'minerals',
-              'phase': 'travel_to_buy',
-            }));
+          'targetSectorId': 14,
+          'buyPortId': 14,
+          'sellPortId': 14,
+          'commodity': 'minerals',
+          'phase': 'travel_to_buy',
+        }));
     var holder = _holderWithGrudge(
       _ship(
         faction: FactionClass.trader,
