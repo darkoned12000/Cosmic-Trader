@@ -2637,6 +2637,13 @@ class NpcAiService {
   /// sector neighboring live hostiles (Vinari or pirates). A patrol that
   /// sits — the post is held for [maxPatrolLegs], then re-evaluated, so
   /// holds track pressure instead of fossilizing.
+  ///
+  /// Capped per sector (soak fix): uncapped holds starved the whole
+  /// Duran faction — every idle Duran near hostiles held instead of
+  /// entering the lottery, so 45 ships produced 0 attacks and ~0 trades
+  /// in 36 minutes. Past [maxBorderHoldersPerSector], idle pilots fall
+  /// through to trade/attack.
+  static const int maxBorderHoldersPerSector = 2;
   static NpcGoal? _createBorderHoldGoal(
     NpcShip npc,
     List<Sector> sectors,
@@ -2670,6 +2677,14 @@ class NpcAiService {
       }
     }
     if (bestHold == null) return null;
+    // Per-sector cap (soak fix): a fully-manned post frees the rest of
+    // the faction for trade and war instead of stacking holders.
+    final hold = bestHold;
+    final holders = allNpcs.where((n) =>
+        !n.isDestroyed &&
+        n.currentGoal?.type == NpcGoalType.patrol &&
+        n.currentGoal?.params['borderHold'] == hold);
+    if (holders.length >= maxBorderHoldersPerSector) return null;
     final threat = hostileSectors.length == 1 ? hostileSectors.first : -1;
     GameEventLog.global.goal(
         '[${npc.pilotName}] Holding the border at Sector $bestHold '
@@ -2816,13 +2831,32 @@ class NpcAiService {
       if ((hunters[target.id] ?? 0) >= maxHuntersPerTarget) {
         continue;
       }
-      // Destination is the intel (last-seen sector while fresh,
-      // probabilistic fan-out once stale — C3), not the real
-      // position — except under our nose: co-located ships see each
-      // other, so engage in place instead of flying to stale intel.
-      final dest = target.currentSectorId == npc.currentSectorId
-          ? npc.currentSectorId
-          : intelSearchSector(record, sectors);
+      // Destination is the live heading when the target is underway
+      // (soak fix: same cutoff logic as spontaneous hunts — chase where
+      // they're going, wait there, engage on arrival), else the intel
+      // (last-seen sector while fresh, probabilistic fan-out once stale)
+      // — except under our nose: co-located ships see each other, so
+      // engage in place instead of flying to stale intel.
+      int dest;
+      if (target.currentSectorId == npc.currentSectorId) {
+        dest = npc.currentSectorId;
+      } else {
+        dest = intelSearchSector(record, sectors);
+        final heading = target.currentGoal;
+        final hd = heading?.targetSectorId;
+        if (heading != null &&
+            heading.status == NpcGoalStatus.travelling &&
+            hd != null &&
+            hd != target.currentSectorId &&
+            !_isSafeZone(hd)) {
+          final cut =
+              PathfindingService.findPath(sectors, npc.currentSectorId, hd);
+          if (cut != null && cut.length - 1 <= maxDist) {
+            dest = hd;
+          }
+        }
+      }
+      if (_isSafeZone(dest)) continue;
       if (_isSafeZone(dest)) continue;
       final path =
           PathfindingService.findPath(sectors, npc.currentSectorId, dest);
@@ -2961,19 +2995,23 @@ class NpcAiService {
 
     if (bestTarget == null && bestTargetSectorId == null) return null;
 
-    // BFS-intercept (C3): greedy hunters cut off bountied targets that
-    // are underway — destination is where they're going (read off the
-    // live roster, the same intent gossip would carry), when reachable.
-    // No heading, no bounty, or out of reach: hunt where they are.
-    if (bestTarget != null && greedy && bestTargetSectorId != null) {
-      final bounty = bountyOf(bestTarget.id);
+    // Heading cutoff (C3 generalized, soak fix): pursue where an underway
+    // target is GOING, not where it was seen. Symmetric 1-hop movement
+    // means chasing current positions almost never connects — arrivals
+    // lag one hop behind forever. Cutoff hunters arrive early, hold
+    // (arrived-live goals don't wander), and engage when the mark walks
+    // in; stale cutoffs dissolve through the normal dry-hole paths.
+    // Falls back to the sighting when unreachable, safe-zoned, or the
+    // mark is stationary. Bounty preference stays in prefers(); the
+    // destination no longer needs a bounty or greed to cut off.
+    if (bestTarget != null && bestTargetSectorId != null) {
       final heading = bestTarget.currentGoal;
       final dest = heading?.targetSectorId;
-      if (bounty > 0 &&
-          heading != null &&
+      if (heading != null &&
           heading.status == NpcGoalStatus.travelling &&
           dest != null &&
-          dest != bestTarget.currentSectorId) {
+          dest != bestTarget.currentSectorId &&
+          !_isSafeZone(dest)) {
         final cut =
             PathfindingService.findPath(sectors, npc.currentSectorId, dest);
         if (cut != null && cut.length - 1 <= maxDist) {

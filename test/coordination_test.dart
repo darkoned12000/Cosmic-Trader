@@ -387,8 +387,37 @@ void main() {
       expect(holder.currentGoal?.params['borderHold'], 12);
     });
 
-    test('no hostiles, no hold', () {
+    test('full posts free the rest of the faction (soak fix)', () {
       final sectors = [
+        _plain(11, [12]),
+        _plain(12, [11, 13]),
+        _plain(13, [12]),
+      ];
+      final vinari = _npc(FactionClass.vinari, 13, 771);
+      NpcGoal holdAt12() => NpcGoal(
+            type: NpcGoalType.patrol,
+            status: NpcGoalStatus.travelling,
+            createdAt: DateTime.now(),
+            params: const {
+              'targetSectorId': 12,
+              'homeSector': 11,
+              'borderHold': 12,
+            },
+          );
+      final h1 = _npc(FactionClass.duran, 11, 772)
+          .copyWith(currentGoal: holdAt12());
+      final h2 = _npc(FactionClass.duran, 11, 773)
+          .copyWith(currentGoal: holdAt12());
+      var newcomer = _npc(FactionClass.duran, 11, 774);
+
+      final roster = [h1, h2, vinari, newcomer];
+      newcomer = NpcAiService.processTurn(newcomer, sectors, [], roster);
+      // Two hulls already hold 12: no third — lottery instead.
+      expect(newcomer.currentGoal?.params.containsKey('borderHold') ?? false,
+          isFalse);
+    });
+
+    test('no hostiles, no hold', () {      final sectors = [
         _plain(11, [12]),
         _plain(12, [11]),
       ];
@@ -456,8 +485,36 @@ void main() {
       expect(hunter.currentGoal?.params['targetSectorId'], 14);
     });
 
-    test('no mark, no heading, no cutoff', () {
+    test('unmarked but underway still cuts off (soak fix)', () {
       final sectors = triangle();
+      final target =
+          _npc(FactionClass.trader, 12, 791, weapons: const {'main_forward': 1})
+              .copyWith(
+                  currentGoal: NpcGoal(
+                      type: NpcGoalType.tradeRoute,
+                      status: NpcGoalStatus.travelling,
+                      createdAt: DateTime.now(),
+                      params: const {
+            'targetSectorId': 14,
+            'buyPortId': 14,
+            'sellPortId': 14,
+            'commodity': 'minerals',
+            'phase': 'travel_to_buy',
+          }));
+      // No bounty posted: the cutoff no longer needs one.
+      var hunter = _npc(FactionClass.pirate, 11, 792,
+          personality: NpcPersonality.pirateHunter);
+      hunter = hunter.copyWith(
+          memory: hunter.memory.copyWith(visitedSectors: {11, 12, 14}));
+
+      final roster = [hunter, target];
+      hunter = NpcAiService.processTurn(hunter, sectors, [], roster);
+      expect(hunter.currentGoal?.type, NpcGoalType.attack);
+      expect(hunter.currentGoal?.params['targetId'], target.id);
+      expect(hunter.currentGoal?.params['targetSectorId'], 14);
+    });
+
+    test('no mark, no heading, no cutoff', () {      final sectors = triangle();
       final target = _npc(FactionClass.trader, 12, 781,
           weapons: const {'main_forward': 1});
       var hunter = _npc(FactionClass.pirate, 11, 782,

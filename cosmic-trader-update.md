@@ -704,7 +704,20 @@ with automation-log lines + unit tests per the branch norm
   epsilon-guarded edges), first-win route lines (`Learned profitable
   route`, once per key), backup-yard launch tags on both spawners.
   Extend the soak grep with `Veteran|Learned profitable|backup yards`.
-  Suite: 269 passing, analyze clean.
+- Soak fix 1 (bounty reset): `generateWithSettings` clears the board
+  (persisted) + combat slate — regen had kept ~50 stale marks on dead
+  NPC ids with zero payouts. Covered by a reset test.
+- Soak fix 2 (passivity): Duran produced 0 attacks / ~0 trades in 36m
+  while pirates owned all 71 engagements. Two mechanisms: (a) uncapped
+  border holds starved Duran selection — every idle Duran held instead
+  of rolling attack/trade (holds now cap at 2 hulls per sector,
+  excess falls through to the lottery); (b) symmetric 1-hop movement
+  meant pursuits lagged one hop behind forever — all NPC pursuits
+  (spontaneous, vendetta, bounty) now cut off underway targets at
+  their live-goal sector when reachable (arrival-early hunters hold
+  and engage on arrival; stale cutoffs dissolve via dry holes).
+  Covered by 3 tests (unmarked cutoff, hold cap, vendetta cutoff).
+  Suite: 273 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

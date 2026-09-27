@@ -92,6 +92,56 @@ void main() {
     expect(holder.currentSectorId, 11);
   });
 
+  test('vendetta hunts cut off underway targets (soak fix)', () {
+    final sectors = [
+      Sector(id: 11, name: 'A', x: 0, y: 0, warpRoutes: const [12]),
+      Sector(id: 12, name: 'B', x: 1, y: 0, warpRoutes: const [11, 14]),
+      Sector(id: 14, name: 'D', x: 2, y: 0, warpRoutes: const [12]),
+    ];
+    final target = _ship(
+      faction: FactionClass.pirate,
+      personality: NpcPersonality.pirateHunter,
+      sector: 12,
+      seed: 403,
+      weapons: const {'main_forward': 1},
+    ).copyWith(
+        currentGoal: NpcGoal(
+            type: NpcGoalType.tradeRoute,
+            status: NpcGoalStatus.travelling,
+            createdAt: DateTime.now(),
+            params: const {
+              'targetSectorId': 14,
+              'buyPortId': 14,
+              'sellPortId': 14,
+              'commodity': 'minerals',
+              'phase': 'travel_to_buy',
+            }));
+    var holder = _holderWithGrudge(
+      _ship(
+        faction: FactionClass.trader,
+        personality: NpcPersonality.traderMerchant,
+        sector: 11,
+        seed: 404,
+      ),
+      target.id,
+      60,
+    );
+    // Fresh intel says 12; the live heading says 14.
+    holder = holder.copyWith(
+      memory: holder.memory.withVendetta(
+        targetId: target.id,
+        sectorId: 12,
+        grievanceBump: 0,
+      ),
+    );
+
+    final roster = [holder, target];
+    holder = NpcAiService.processTurn(holder, sectors, [], roster);
+    // Heading wins over intel: straight to 14.
+    expect(holder.currentGoal?.params['vendettaFor'], target.id);
+    expect(holder.currentGoal?.params['targetSectorId'], 14);
+  });
+
   test('stronger vendetta target is held, not hunted', () {
     final sectors = _sectors();
     final target = _ship(
