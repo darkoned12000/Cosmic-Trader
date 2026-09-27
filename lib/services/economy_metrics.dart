@@ -18,8 +18,7 @@ class CommodityTradeStats {
   /// cheap buys with rich sells, so a stockpiling route reads as
   /// "trading at a loss" when it merely hasn't sold yet.
   double get avgBuyUnitPrice => buyUnits <= 0 ? 0 : buyCredits / buyUnits;
-  double get avgSellUnitPrice =>
-      sellUnits <= 0 ? 0 : sellCredits / sellUnits;
+  double get avgSellUnitPrice => sellUnits <= 0 ? 0 : sellCredits / sellUnits;
 }
 
 /// Per-faction trade totals (actor side: who bought/sold).

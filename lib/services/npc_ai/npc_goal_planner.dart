@@ -93,7 +93,9 @@ NpcGoal? _selectGoal(
   // C2: grudge before greed — an idle pilot with a fresh, actionable
   // vendetta hunts first. Selection only runs when a new goal is needed,
   // so this never hijacks a committed goal (memory → intent → goal).
-  final vendetta = _createVendettaGoal(npc, sectors, allNpcs);
+  // Player ids hunt too (pilot vendettas): the tick attack check
+  // engages on arrival, the goal just gets the hunter there.
+  final vendetta = _createVendettaGoal(npc, sectors, players, allNpcs);
   if (vendetta != null) return vendetta;
 
   // C3: fly together before flying rich — escorts and packmates join
@@ -744,6 +746,7 @@ NpcGoal? _respondToDistress(
 NpcGoal? _createVendettaGoal(
   NpcShip npc,
   List<Sector> sectors,
+  List<Player> players,
   List<NpcShip> allNpcs,
 ) {
   // C2a reacquisition: memory → intent → goal. Only idle pilots get
@@ -767,30 +770,54 @@ NpcGoal? _createVendettaGoal(
   for (final entry in grudges) {
     final record = entry.value;
     if (record.grievance < vendettaGrievanceThreshold) continue;
-    // Target must be a living NPC in this roster. Player-id grudges
-    // aren't recorded yet (C1c writes NPC killers only); absent from
-    // the roster means gone, and C2b prunes those entries. Lookup via
-    // the tick index when present (P2).
+    // Target: a living NPC in the roster, else a known player (pilot
+    // vendettas — kills the pilot witnesses get hunted like any mark).
+    // Absent from both means gone, and C2b prunes those entries.
+    // Lookup via the tick index when present (P2).
+    String? targetId;
+    int? targetSector;
+    int? targetPower;
+    String? targetName;
+    NpcGoal? targetRun;
     final indexed = NpcAiService.npcById?[entry.key];
-    final NpcShip? target;
+    NpcShip? npcTarget;
     if (indexed != null && !indexed.isDestroyed) {
-      target = indexed;
-    } else if (NpcAiService.npcById != null) {
-      target = null;
-    } else {
-      NpcShip? found;
+      npcTarget = indexed;
+    } else if (NpcAiService.npcById == null) {
       for (final n in allNpcs) {
         if (n.id == entry.key && !n.isDestroyed) {
-          found = n;
+          npcTarget = n;
           break;
         }
       }
-      target = found;
     }
-    if (target == null) continue;
+    Player? playerTarget;
+    if (npcTarget == null) {
+      for (final p in players) {
+        if (p.id == entry.key) {
+          playerTarget = p;
+          break;
+        }
+      }
+    }
+    if (npcTarget != null) {
+      targetId = npcTarget.id;
+      targetSector = npcTarget.currentSectorId;
+      targetPower = CombatService.calculateFirepower(npcTarget);
+      targetName = npcTarget.pilotName;
+      targetRun = npcTarget.currentGoal;
+    } else if (playerTarget != null) {
+      targetId = playerTarget.id;
+      targetSector = playerTarget.currentSectorId;
+      targetPower = CombatService.calculatePlayerFirepower(playerTarget);
+      targetName = playerTarget.name;
+      targetRun = null;
+    } else {
+      continue;
+    }
     // Convergence cap (review batch 1): a magnet target with a full
     // wing already inbound waits — the grudge keeps for later.
-    if ((hunters[target.id] ?? 0) >= maxHuntersPerTarget) {
+    if ((hunters[targetId] ?? 0) >= maxHuntersPerTarget) {
       continue;
     }
     // Destination is the live heading when the target is underway
@@ -800,16 +827,15 @@ NpcGoal? _createVendettaGoal(
     // — except under our nose: co-located ships see each other, so
     // engage in place instead of flying to stale intel.
     int dest;
-    if (target.currentSectorId == npc.currentSectorId) {
+    if (targetSector == npc.currentSectorId) {
       dest = npc.currentSectorId;
     } else {
       dest = NpcAiService.intelSearchSector(record, sectors);
-      final heading = target.currentGoal;
-      final hd = heading?.targetSectorId;
-      if (heading != null &&
-          heading.status == NpcGoalStatus.travelling &&
+      final hd = targetRun?.targetSectorId;
+      if (targetRun != null &&
+          targetRun.status == NpcGoalStatus.travelling &&
           hd != null &&
-          hd != target.currentSectorId &&
+          hd != targetSector &&
           !NpcAiService._isSafeZone(hd)) {
         final cut =
             PathfindingService.findPath(sectors, npc.currentSectorId, hd);
@@ -825,18 +851,18 @@ NpcGoal? _createVendettaGoal(
     // Pursuit budget in energy: trip plus a one-hop reserve, or sit out.
     if (npc.energy < (path.length - 1) * legCost + legCost) continue;
     // Grudges don't make NPCs suicidal: weaker targets only.
-    if (CombatService.calculateFirepower(target) >= myPower) continue;
-    GameEventLog.global.combat(
-        '[${npc.pilotName}] Hunting ${target.pilotName} over Sector $dest '
-        '(grudge ${record.grievance})');
+    if (targetPower >= myPower) continue;
+    GameEventLog.global
+        .combat('[${npc.pilotName}] Hunting $targetName over Sector $dest '
+            '(grudge ${record.grievance})');
     return NpcGoal(
       type: NpcGoalType.attack,
       status: NpcGoalStatus.travelling,
       createdAt: DateTime.now(),
       params: {
         'targetSectorId': dest,
-        'targetId': target.id,
-        'vendettaFor': target.id,
+        'targetId': targetId,
+        'vendettaFor': targetId,
       },
     );
   }

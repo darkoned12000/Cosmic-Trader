@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
@@ -26,11 +27,16 @@ class CombatScreen extends StatefulWidget {
   /// send the player (and NPC on flee) to a random adjacent sector.
   final List<int> sectorWarps;
 
+  /// Universe settings for post-death clone reissue (starter ship,
+  /// holds, credits). No pilot permadeath: the wreck is replaced.
+  final GameSettings settings;
+
   const CombatScreen({
     super.key,
     required this.player,
     required this.npc,
     required this.onCombatEnd,
+    required this.settings,
     this.sectorWarps = const [],
   });
 
@@ -339,6 +345,18 @@ class _CombatScreenState extends State<CombatScreen>
               '>>> ${_npc.shipName} collects $take cr bounty on your head <<<');
         }
       }
+      // Vengeance satisfied: the killer's grudge against this pilot
+      // resolves with the kill (player-vendetta symmetry with C2b).
+      _npc = _npc.copyWith(
+        memory: _npc.memory.withVendettaResolved(_player.id),
+      );
+      // Clone reissue (no pilot permadeath): wreck and cargo gone,
+      // starter interceptor + fittings + holds + credits, identity and
+      // assets intact. Wakes at Terra Prime.
+      _player = _player.respawned(widget.settings);
+      _combatLog
+          .add('>>> Emergency clone activated — ${_player.shipDefinitionName} '
+              'reissued at Terra Prime <<<');
       _endCombat(victory: false);
       return;
     }
@@ -372,6 +390,23 @@ class _CombatScreenState extends State<CombatScreen>
     }
   }
 
+  /// Crossed blades with this pilot (C2b symmetry for player fights):
+  /// an EXISTING grudge against the player gets a fresh sighting and a
+  /// small bump. Never creates one — grudges are born from witnessed
+  /// kills only (see NpcAiService.noteWitnessedKill).
+  void _refreshGrudge() {
+    if (!_npc.memory.vendettas.containsKey(_player.id)) return;
+    setState(() {
+      _npc = _npc.copyWith(
+        memory: _npc.memory.withVendetta(
+          targetId: _player.id,
+          sectorId: _npc.currentSectorId,
+          grievanceBump: 10,
+        ),
+      );
+    });
+  }
+
   /// NPC break-off attempt (C1b). Interception is engine-relative with the
   /// tractor-beam hook reserved in [CombatService.resolveRetreat]; the
   /// attempt costs energy whether it succeeds or not.
@@ -385,6 +420,7 @@ class _CombatScreenState extends State<CombatScreen>
     });
     if (res.escaped) {
       _combatLog.add('>>> ${_npc.shipName} breaks off and warps out <<<');
+      _refreshGrudge();
       if (widget.sectorWarps.isNotEmpty) {
         final rng = math.Random();
         final dest = widget.sectorWarps[rng.nextInt(widget.sectorWarps.length)];
@@ -420,6 +456,7 @@ class _CombatScreenState extends State<CombatScreen>
       _parleyOffer = null;
     });
     _combatLog.add('>>> You accept $tribute cr tribute. Combat ends. <<<');
+    _refreshGrudge();
     // C5: surrender with tribute paid, both tallies.
     CombatMetrics.global.recordNpc(
       attackerFaction: _player.faction.name,
@@ -438,6 +475,7 @@ class _CombatScreenState extends State<CombatScreen>
     _combatLog.add('>>> You fled from combat <<<');
     // C5: the pilot lived to file the report.
     CombatMetrics.global.recordPlayerFlee();
+    _refreshGrudge();
 
     // The NPC lives through your guns (C4d drift): survivors grow warier.
     // Milestone lines per tier crossed (soak instrumentation).

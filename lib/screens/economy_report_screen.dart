@@ -109,9 +109,8 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
   }
 
   /// Signed percent delta vs the base midpoint, or an em dash.
-  static String _delta(double avg, double base) => base <= 0
-      ? '—'
-      : '${(((avg - base) / base) * 100).toStringAsFixed(1)}%';
+  static String _delta(double avg, double base) =>
+      base <= 0 ? '—' : '${(((avg - base) / base) * 100).toStringAsFixed(1)}%';
 
   @override
   Widget build(BuildContext context) {
@@ -240,14 +239,12 @@ class _EconomyReportScreenState extends State<EconomyReportScreen> {
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),
                               Expanded(
-                                  child: Text(
-                                      _delta(s.avgBuyUnitPrice, base),
+                                  child: Text(_delta(s.avgBuyUnitPrice, base),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),
                               Expanded(
-                                  child: Text(
-                                      _delta(s.avgSellUnitPrice, base),
+                                  child: Text(_delta(s.avgSellUnitPrice, base),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),

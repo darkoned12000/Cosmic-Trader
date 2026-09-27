@@ -145,8 +145,19 @@ class _GameShellState extends State<GameShell> {
           player: event.player,
           npc: event.npc,
           sectorWarps: event.sectorWarps,
+          settings: _settings,
           onCombatEnd: (updatedPlayer, updatedNpc) {
             _updatePlayer(updatedPlayer);
+            if (updatedNpc.isDestroyed) {
+              NpcAiService.noteWitnessedKill(
+                allNpcs: _npcs,
+                victimId: updatedNpc.id,
+                victimFaction: updatedNpc.faction,
+                sectorId: updatedNpc.currentSectorId,
+                killerId: updatedPlayer.id,
+                killerName: updatedPlayer.name,
+              );
+            }
             final idx = _npcs.indexWhere((n) => n.id == updatedNpc.id);
             if (idx >= 0) {
               setState(() => _npcs[idx] = updatedNpc);
@@ -584,6 +595,7 @@ class _GameShellState extends State<GameShell> {
                       onOpenPort: () => setState(() => _currentIndex = 4),
                       onOpenPlanet: _openPlanet,
                       fedSpaceEnd: _settings.fedSpaceEnd,
+                      settings: _settings,
                     ),
                     GalaxyMap(
                       key: _universeKey,
@@ -849,6 +861,7 @@ class _GameShellState extends State<GameShell> {
                             onOpenPort: () => setState(() => _currentIndex = 4),
                             onOpenPlanet: _openPlanet,
                             fedSpaceEnd: _settings.fedSpaceEnd,
+                            settings: _settings,
                           ),
                           GalaxyMap(
                             key: _universeKey,

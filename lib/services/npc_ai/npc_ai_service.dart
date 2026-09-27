@@ -174,6 +174,47 @@ class NpcAiService {
     return out;
   }
 
+  /// Post-kill witness grudges, shared by NPC kills (C1c, called from
+  /// the kill path) and PLAYER kills (called from player-combat end
+  /// handlers — CombatScreen never sees the roster). Same-faction,
+  /// same-sector, living witnesses record the killer at grievance 40;
+  /// bystanders, the dead, and the killer itself are untouched. Memory
+  /// only, never a goal hijack. Returns the witness count.
+  static int noteWitnessedKill({
+    required List<NpcShip> allNpcs,
+    required String victimId,
+    required FactionClass victimFaction,
+    required int sectorId,
+    required String killerId,
+    required String killerName,
+  }) {
+    var witnesses = 0;
+    for (int i = 0; i < allNpcs.length; i++) {
+      final witness = allNpcs[i];
+      if (witness.id == victimId ||
+          witness.id == killerId ||
+          witness.isDestroyed ||
+          witness.faction != victimFaction ||
+          witness.currentSectorId != sectorId) {
+        continue;
+      }
+      allNpcs[i] = witness.copyWith(
+        memory: witness.memory.withVendetta(
+          targetId: killerId,
+          sectorId: sectorId,
+          grievanceBump: 40,
+        ),
+      );
+      witnesses++;
+    }
+    if (witnesses > 0) {
+      GameEventLog.global
+          .combat('$witnesses ${victimFaction.name} witness(es) recorded '
+              '$killerName over Sector $sectorId');
+    }
+    return witnesses;
+  }
+
   /// Goals cheap to interrupt when something more urgent (banking, refuel,
   /// distress) comes up. Trade/attack/raid carry multi-leg state in
   /// goal.params — clobbering them mid-route strands cargo and wastes trips,
@@ -236,7 +277,7 @@ class NpcAiService {
     updated = _pruneDeadVendettas(updated, players, allNpcs);
 
     // 2 — Execute the current goal (trade, bank, explore, etc.)
-    updated = _executeGoal(updated, sectors, allNpcs);
+    updated = _executeGoal(updated, sectors, players, allNpcs);
 
     if (updated.isDestroyed) {
       GameEventLog.global.combat(

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
@@ -1095,6 +1096,178 @@ void main() {
       );
       expect(memory.vendettas.length, NpcMemory.maxVendettas);
       expect(memory.vendettas.containsKey('grudge1'), isTrue);
+    });
+  });
+
+  group('player vendettas: witnessed kills make pilots hunt you', () {
+    Player mark({
+      required String id,
+      required int sector,
+      Map<String, int>? weapons,
+    }) {
+      return Player(
+        id: id,
+        name: 'Marked Pilot',
+        currentSectorId: sector,
+        hull: 100,
+        maxHull: 100,
+        shields: 50,
+        maxShields: 50,
+        cargoUsed: 0,
+        maxCargo: 20,
+        cargoSize: 20,
+        credits: 10000,
+        researchPoints: 0,
+        faction: FactionClass.trader,
+        weaponSlots: weapons ?? const {},
+      );
+    }
+
+    test('same-faction witnesses record the pilot, others do not', () {
+      final victim = _ship(
+        faction: FactionClass.trader,
+        personality: NpcPersonality.traderMerchant,
+        sector: 11,
+        seed: 701,
+      );
+      final witness = _ship(
+        faction: FactionClass.trader,
+        personality: NpcPersonality.traderMerchant,
+        sector: 11,
+        seed: 702,
+      );
+      final bystander = _ship(
+        faction: FactionClass.vinari,
+        personality: NpcPersonality.vinariExplorer,
+        sector: 11,
+        seed: 703,
+      );
+      final roster = [victim, witness, bystander];
+      final count = NpcAiService.noteWitnessedKill(
+        allNpcs: roster,
+        victimId: victim.id,
+        victimFaction: victim.faction,
+        sectorId: 11,
+        killerId: 'pilot-1',
+        killerName: 'Marked Pilot',
+      );
+      expect(count, 1);
+      expect(roster[1].memory.vendettas['pilot-1']?.grievance, 40);
+      expect(roster[1].memory.vendettas['pilot-1']?.sectorId, 11);
+      expect(bystander.memory.vendettas, isEmpty);
+      expect(victim.memory.vendettas, isEmpty);
+    });
+
+    test('idle pilots hunt a grudge-marked pilot', () {
+      final sectors = _sectors();
+      final player = mark(id: 'pilot-1', sector: 12);
+      var holder = _holderWithGrudge(
+        _ship(
+          faction: FactionClass.trader,
+          personality: NpcPersonality.traderMerchant,
+          sector: 11,
+          seed: 712,
+        ),
+        'pilot-1',
+        60,
+      );
+      // Intel says sector 12, where the mark actually is.
+      holder = holder.copyWith(
+        memory: holder.memory.withVendetta(
+          targetId: 'pilot-1',
+          sectorId: 12,
+          grievanceBump: 0,
+        ),
+      );
+
+      final roster = [holder];
+      holder = NpcAiService.processTurn(holder, sectors, [player], roster);
+      expect(holder.currentGoal?.type, NpcGoalType.attack);
+      expect(holder.currentGoal?.params['vendettaFor'], 'pilot-1');
+      expect(holder.currentGoal?.params['targetSectorId'], 12);
+      expect(holder.currentSectorId, 12);
+    });
+
+    test('cornered marks end the leg with the grudge intact', () {
+      final sectors = _sectors();
+      final player = mark(id: 'pilot-1', sector: 11);
+      var holder = _holderWithGrudge(
+        _ship(
+          faction: FactionClass.trader,
+          personality: NpcPersonality.traderMerchant,
+          sector: 11,
+          seed: 722,
+        ),
+        'pilot-1',
+        60,
+      ).copyWith(
+        currentGoal: NpcGoal(
+          type: NpcGoalType.attack,
+          status: NpcGoalStatus.travelling,
+          createdAt: DateTime.now(),
+          params: {
+            'targetSectorId': 11,
+            'targetId': 'pilot-1',
+            'vendettaFor': 'pilot-1',
+          },
+        ),
+      );
+
+      final roster = [holder];
+      holder = NpcAiService.processTurn(holder, sectors, [player], roster);
+      // Found, not dry: no easing — and the live grudge re-issues.
+      expect(holder.memory.vendettas['pilot-1']?.grievance, 60);
+      expect(holder.currentGoal?.params['vendettaFor'], 'pilot-1');
+    });
+
+    test('moved marks cool the trail like any dry hole', () {
+      final sectors = _sectors();
+      final player = mark(id: 'pilot-1', sector: 12);
+      var holder = _holderWithGrudge(
+        _ship(
+          faction: FactionClass.trader,
+          personality: NpcPersonality.traderMerchant,
+          sector: 11,
+          seed: 732,
+        ),
+        'pilot-1',
+        60,
+      ).copyWith(
+        currentGoal: NpcGoal(
+          type: NpcGoalType.attack,
+          status: NpcGoalStatus.travelling,
+          createdAt: DateTime.now(),
+          params: {
+            'targetSectorId': 11,
+            'targetId': 'pilot-1',
+            'vendettaFor': 'pilot-1',
+          },
+        ),
+      );
+
+      final roster = [holder];
+      holder = NpcAiService.processTurn(holder, sectors, [player], roster);
+      expect(holder.memory.vendettas['pilot-1']?.grievance, 50);
+      expect(holder.currentGoal?.params['targetSectorId'], 12);
+    });
+
+    test('prune keeps grudges against known pilots', () {
+      final sectors = _sectors();
+      final player = mark(id: 'pilot-1', sector: 12);
+      var holder = _holderWithGrudge(
+        _ship(
+          faction: FactionClass.trader,
+          personality: NpcPersonality.traderMerchant,
+          sector: 12,
+          seed: 742,
+          credits: 0,
+        ),
+        'pilot-1',
+        60,
+      );
+      final roster = [holder];
+      holder = NpcAiService.processTurn(holder, sectors, [player], roster);
+      expect(holder.memory.vendettas.containsKey('pilot-1'), isTrue);
     });
   });
 }

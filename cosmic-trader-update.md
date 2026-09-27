@@ -826,7 +826,27 @@ with automation-log lines + unit tests per the branch norm
     split-point spreads, lower replacement spawn credits, or an
     interest cut — none taken without soak evidence.
   Covered by extended metrics assertions (side-split averages).
-  Suite: 294 passing, analyze clean.
+- Player vendettas + clone reissue (`test/combat_vendetta_test.dart`
+  +5, `test/player_respawn_test.dart` new):
+  - Witnesses: `noteWitnessedKill` shared by NPC kills (extracted from
+    the C1c kill path, same behavior) and player kills (both combat-end
+    handlers) — same-faction onlookers record the pilot at 40.
+  - Hunts: vendetta selection resolves player ids (power via player
+    firepower, intel/heading destinations); arrivals corner the mark
+    for the tick attack check (no easing — they're right there), dry
+    holes ease and spread normally. Convergence caps apply.
+  - Kill resolves the hunter's grudge; survivors refresh sightings
+    (flee/parley/retreat, existing entries only — contact never
+    creates grudges).
+  - No pilot permadeath: defeat reissues the faction starter with
+    starter fittings/holds/drones/energy/credits (mirrors
+    registration), waking at Terra Prime; bank/ports/standings/
+    notoriety/hacks/arrays/research survive. NPC permadeath already
+    held (destroyed stay destroyed, pruned, never resurrected —
+    floors mint new pilots, not resurrections).
+  - Soak watch: vengeful wings converging on the player is intended;
+    tuning lever is the 40-grievance witness bump if it feels unfair.
+  Suite: 301 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

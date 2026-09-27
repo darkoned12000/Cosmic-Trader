@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
@@ -74,6 +75,7 @@ void main() {
           onPlayerUpdate: (_) {},
           npcs: const [],
           fedSpaceEnd: 1,
+          settings: GameSettings.defaults(),
         ),
       ),
     ));

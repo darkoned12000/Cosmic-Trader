@@ -8,6 +8,7 @@ part of 'npc_ai_service.dart';
 NpcShip _executeGoal(
   NpcShip npc,
   List<Sector> sectors,
+  List<Player> players,
   List<NpcShip> allNpcs,
 ) {
   final goal = npc.currentGoal;
@@ -31,7 +32,7 @@ NpcShip _executeGoal(
     case NpcGoalType.flee:
       return _executeFleeGoal(npc, sectors, goal);
     case NpcGoalType.attack:
-      return _executeAttackGoal(npc, sectors, allNpcs, goal);
+      return _executeAttackGoal(npc, sectors, players, allNpcs, goal);
     case NpcGoalType.raidPort:
       return _executeRaidPortGoal(npc, sectors, allNpcs, goal);
     case NpcGoalType.upgradeEquipment:
@@ -626,6 +627,7 @@ NpcShip _executeFleeGoal(
 NpcShip _executeAttackGoal(
   NpcShip npc,
   List<Sector> sectors,
+  List<Player> players,
   List<NpcShip> allNpcs,
   NpcGoal goal,
 ) {
@@ -701,6 +703,19 @@ NpcShip _executeAttackGoal(
         GameEventLog.global
             .combat('[${npc.pilotName}] Arrived to an empty fight in Sector '
                 '${npc.currentSectorId} — distress call cleared');
+      }
+    }
+    // Pilot mark cornered (player vendettas): the tick attack check owns
+    // the actual fight — the hunt leg just ends here. No easing: the
+    // mark is RIGHT THERE, and the grudge stays hot for the next turn.
+    if (vendettaFor != null) {
+      for (final p in players) {
+        if (p.id == vendettaFor && p.currentSectorId == npc.currentSectorId) {
+          GameEventLog.global
+              .combat('[${npc.pilotName}] Cornered ${p.name} in Sector '
+                  '${npc.currentSectorId}');
+          return npc.copyWith(clearGoal: true);
+        }
       }
     }
     GameEventLog.global
@@ -825,30 +840,14 @@ NpcShip _executeAttackGoal(
     // pursuit arrive in C2, and goal changes still go through the
     // interruption policy, so this never hijacks a committed goal.
     // Runs on every kill, independent of any bounty payout.
-    var witnesses = 0;
-    for (int i = 0; i < allNpcs.length; i++) {
-      final witness = allNpcs[i];
-      if (witness.id == target.id ||
-          witness.id == npc.id ||
-          witness.isDestroyed ||
-          witness.faction != target.faction ||
-          witness.currentSectorId != npc.currentSectorId) {
-        continue;
-      }
-      allNpcs[i] = witness.copyWith(
-        memory: witness.memory.withVendetta(
-          targetId: npc.id,
-          sectorId: npc.currentSectorId,
-          grievanceBump: 40,
-        ),
-      );
-      witnesses++;
-    }
-    if (witnesses > 0) {
-      GameEventLog.global
-          .combat('$witnesses ${target.faction.name} witness(es) recorded '
-              '${npc.pilotName} over Sector ${npc.currentSectorId}');
-    }
+    NpcAiService.noteWitnessedKill(
+      allNpcs: allNpcs,
+      victimId: target.id,
+      victimFaction: target.faction,
+      sectorId: npc.currentSectorId,
+      killerId: npc.id,
+      killerName: npc.pilotName,
+    );
     // Vengeance satisfied (C2b): a vendetta against the dead target
     // resolves regardless of any bounty payout. Memory only.
     // Killers grow bolder (C4d drift) on the same occasion — a
