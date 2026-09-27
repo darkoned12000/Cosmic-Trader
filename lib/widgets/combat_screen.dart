@@ -373,6 +373,9 @@ class _CombatScreenState extends State<CombatScreen>
   void _flee() {
     _combatLog.add('>>> You fled from combat <<<');
 
+    // The NPC lives through your guns (C4d drift): survivors grow warier.
+    setState(() => _npc = _npc.driftedForSurvival());
+
     // Send player to a random adjacent sector; the NPC stays put.
     if (widget.sectorWarps.isNotEmpty) {
       final rng = math.Random();

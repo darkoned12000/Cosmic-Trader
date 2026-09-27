@@ -2,8 +2,10 @@ import 'dart:math' as math;
 
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 
 /// Homeworld repopulation (C4, first slice).
@@ -25,6 +27,22 @@ class RepopulationService {
     FactionClass.pirate: 2,
   };
 
+  /// Steady-state production ceilings per faction (C4a). Floors recover,
+  /// production sustains — at or above the cap the yards stand down.
+  /// Pirates hold no homeworlds: floors cover them until C3 outposts.
+  static const Map<FactionClass, int> productionCaps = {
+    FactionClass.trader: 8,
+    FactionClass.duran: 8,
+    FactionClass.vinari: 8,
+  };
+
+  /// Chance a yard rollout is a living legend (C4c).
+  static const double heroChance = 0.05;
+
+  /// Minted bounty on a legend's head (C4c): the Guild pays for stories.
+  /// Follows the Federation auto-post precedent — no bankroll debited.
+  static const int heroBounty = 15000;
+
   static final math.Random _rng = math.Random();
 
   /// Counts living NPCs per faction.
@@ -42,15 +60,28 @@ class RepopulationService {
   /// under friendly control. A captured homeworld (owner is another
   /// faction) spawns nothing — losing control means losing regeneration,
   /// and recapture restores it. Unowned homeworlds still spawn (frontier).
+  /// Destroyed homeworlds (planet-killer path, C4b) never count.
+  /// Primaries win over backups (C4b): a live primary idles its backup;
+  /// the backup takes over only while the primary is captured, destroyed,
+  /// or missing.
   static Map<FactionClass, int> homeworldSectors(List<Sector> sectors) {
-    final homeworlds = <FactionClass, int>{};
-    for (final s in sectors) {
-      final planet = s.planet;
-      if (planet != null &&
+    bool usable(Planet? planet, {required bool backup}) {
+      return planet != null &&
           planet.isHomeworld &&
+          planet.isBackupHomeworld == backup &&
+          !planet.isDestroyed &&
           planet.homeworldOf != null &&
-          (planet.owner == null || planet.owner == planet.homeworldOf)) {
-        homeworlds.putIfAbsent(planet.homeworldOf!, () => s.id);
+          (planet.owner == null || planet.owner == planet.homeworldOf);
+    }
+
+    final homeworlds = <FactionClass, int>{};
+    for (final backup in [false, true]) {
+      for (final s in sectors) {
+        if (homeworlds.length >= FactionClass.values.length) break;
+        final planet = s.planet;
+        if (usable(planet, backup: backup)) {
+          homeworlds.putIfAbsent(planet!.homeworldOf!, () => s.id);
+        }
       }
     }
     return homeworlds;
@@ -100,5 +131,129 @@ class RepopulationService {
       );
     }
     return spawned;
+  }
+
+  /// Ticks controlled-homeworld production (C4a): each friendly-controlled,
+  /// intact homeworld counts down [Planet.productionTimer]; at zero it
+  /// rolls out one ship of its faction and resets to [Planet.spawnInterval].
+  /// Captured yards freeze (no countdown, no spawn); destroyed worlds are
+  /// silent; populations at/above [productionCaps] stand the yards down
+  /// (timer still resets — production is a cadence, not a queue).
+  /// Planet timers mutate in place; the tick loop saves the universe, so
+  /// the countdown persists across restarts. Returns the newcomers.
+  static List<NpcShip> produce(
+    List<Sector> sectors,
+    List<NpcShip> npcs, {
+    int startingCredits = 10000,
+    math.Random? rng,
+  }) {
+    final random = rng ?? _rng;
+    final spawned = <NpcShip>[];
+    if (sectors.isEmpty) return spawned;
+    final counts = livingCounts(npcs);
+
+    int living(FactionClass f) =>
+        (counts[f] ?? 0) + spawned.where((n) => n.faction == f).length;
+
+    // Live primaries idle their backups (C4b): capitals move back, they
+    // don't duplicate. A backup produces only while no controlled,
+    // intact primary of the same faction exists.
+    bool livePrimary(FactionClass f) => sectors.any((s) {
+          final p = s.planet;
+          return p != null &&
+              p.isHomeworld &&
+              !p.isBackupHomeworld &&
+              !p.isDestroyed &&
+              p.homeworldOf == f &&
+              (p.owner == null || p.owner == f);
+        });
+
+    for (final s in sectors) {
+      final planet = s.planet;
+      if (planet == null ||
+          !planet.isHomeworld ||
+          planet.isDestroyed ||
+          planet.homeworldOf == null) {
+        continue;
+      }
+      final faction = planet.homeworldOf!;
+      final cap = productionCaps[faction];
+      if (cap == null) continue; // pirates: no yards (C3 outposts later)
+      if (planet.owner != null && planet.owner != faction) continue; // cold yards
+      if (planet.isBackupHomeworld && livePrimary(faction)) continue;
+      planet.productionTimer--;
+      if (planet.productionTimer > 0) continue;
+      planet.productionTimer = planet.spawnInterval;
+      if (living(faction) >= cap) continue;
+      var ship = NpcShip.create(
+        faction: faction,
+        shipDef: ShipDefinition
+            .allShips[random.nextInt(ShipDefinition.allShips.length)],
+        currentSectorId: s.id,
+        startingCredits: startingCredits,
+        seed: random.nextInt(1 << 30),
+      );
+      ship = _maybeHero(ship, npcs, spawned, random);
+      spawned.add(ship);
+      GameEventLog.global.system(
+        '[Production] ${planet.name} rolled out ${ship.pilotName} '
+        '(${faction.name}) in sector #${s.id}',
+      );
+    }
+    return spawned;
+  }
+
+  /// Living legends (C4c): rarely a yard rollout is a lore hero from
+  /// [Faction.notableHeroes] — buffed hull/shields/guns, marked notorious,
+  /// with a minted Guild bounty so hunters notice. Roster-unique by hero
+  /// name (a legend already flying is never duplicated). Factions without
+  /// a lore table sail no legends.
+  static NpcShip _maybeHero(
+    NpcShip ship,
+    List<NpcShip> npcs,
+    List<NpcShip> spawned,
+    math.Random random,
+  ) {
+    if (random.nextDouble() >= heroChance) return ship;
+    List<Hero> heroes;
+    try {
+      heroes = Faction.forClass(ship.faction).notableHeroes;
+    } on StateError {
+      return ship;
+    }
+    final candidates = heroes
+        .where((h) =>
+            !npcs.any((n) => n.heroName == h.name) &&
+            !spawned.any((n) => n.heroName == h.name))
+        .toList();
+    if (candidates.isEmpty) return ship;
+    final hero = candidates[random.nextInt(candidates.length)];
+    BountyBoard.global.post(
+      targetId: ship.id,
+      targetName: hero.name,
+      targetFaction: ship.faction.name,
+      amount: heroBounty,
+      posterId: 'CHRONICLERS',
+      posterName: 'Guild Chroniclers',
+      posterFaction: FactionClass.trader.name,
+      reason: 'living legend — ${hero.title}',
+    );
+    GameEventLog.global.system(
+      '[Production] Living legend ${hero.name} (${hero.title}) takes '
+      'the helm in sector #${ship.currentSectorId}',
+    );
+    return ship.copyWith(
+      pilotName: hero.name,
+      heroName: hero.name,
+      heroTitle: hero.title,
+      hull: (ship.hull * 1.5).round(),
+      maxHull: (ship.maxHull * 1.5).round(),
+      shields: (ship.shields * 1.5).round(),
+      maxShields: (ship.maxShields * 1.5).round(),
+      weaponSlots: {
+        for (final e in ship.weaponSlots.entries) e.key: e.value + 1,
+      },
+      notoriety: 15.0,
+    );
   }
 }

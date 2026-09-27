@@ -177,7 +177,7 @@ lib/
       port_combat_service.dart    -- port combat resolution engine (shared siege core) with defense stats
 ```
 
-## File inventory (102 source files, 36 test files, 202 tests passing)
+## File inventory (102 source files, 37 test files, 219 tests passing)
 
 | Path | Role |
 |------|------|
@@ -363,9 +363,9 @@ Three-panel responsive layout when enabled in Settings:
 - **Colonies**: population, per-tab colonist production (minerals/organics/industrial/fighters) scaled by type multipliers + efficiency; storage with max capacity
 - **Levels**: 6 Citadel tiers (Outpost → Settlement → Colony → Fortified Colony → Planetary Base → Citadel) gated by colonists + stored resources
 - **Ownership**: planets can be claimed (faction owner), unclaimed planets show a Claim action; attacks are stubbed
-- **Homeworlds**: one per major faction at universe generation, with NPC spawn fields (`productionTimer`, `spawnInterval`) — not yet wired to tick processing
+- **Homeworlds**: primary + cold-standby backup per major faction at generation; `productionTimer`/`spawnInterval` drive per-tick production (`RepopulationService.produce`, caps 8/8/8, control-gated) alongside floor repopulation; destroyed worlds (`destroy()`) never regenerate
 - **UI**: `PlanetScreen` (7th tab) with scan (costs 1 turn), resource/colonist/drone transfers both ways (credits-based), colony production readout, defense card, and level-up
-- **Not yet implemented**: per-tick automated production, homeworld NPC repopulation, invasion combat, scanner module auto-scan, backup homeworlds
+- **Not yet implemented**: invasion combat, scanner module auto-scan (planet destruction is model + regen-exclusion; combat triggers pending)
 
 ### Port Screen features
 
@@ -466,10 +466,10 @@ Bundled assets (declared in `pubspec.yaml`):
 ## Known issues / technical debt
 
 - `core/theme.dart` (TWTheme) is unused — theme built inline in main.dart from ThemeService
-- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (202 tests) before committing
+- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (219 tests) before committing
 - Repeated UI patterns (cards, stat bars, pills) duplicated across screens → **A2 shared widget library**: `lib/widgets/shared/` ships `PanelCard`, `StatBar` (inline + stacked layouts), `HudPill` (radius/padding/font/icon overrides), `DataTableShell` (all density-aware via `UiScale.spacing()`). Adopted in `ship_status.dart` (5 panels), `port_trade_view.dart` (pills + trade table), `ship_status_summary.dart` (4 bars), `planet_screen.dart` (resource/defense bars), `faction_rankings_screen.dart` (stat pills). Screens whose cards use distinct visual families (radius-12 banded headers, padding-20 accent cards, ExpansionTile settings cards, hero/terminal styles) were audited and intentionally left as-is rather than forced.
 - No lint/format CI pipeline
-- Test coverage: 202 tests across 36 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
+- Test coverage: 219 tests across 37 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
 - No audio asset files shipped in the past — this is no longer the case; 5 tracks are now bundled
 - Sector `planetType` string removed from `Sector` (structured `Planet` object used instead) — old saves are handled by `fromJson` defaults
 - `PlanetScreen` "Attack" action currently only writes to the action log (combat pending)

@@ -278,6 +278,18 @@ class GameTickService {
         }
       });
 
+      // Homeworld production (C4a): controlled yards build on cadence
+      // (productionTimer/spawnInterval) up to their caps. Floors recover,
+      // production sustains.
+      DevProfiler.instance.trace('tick_produce', () {
+        final built = RepopulationService.produce(sectors, npcs);
+        if (built.isNotEmpty) {
+          npcs.addAll(built);
+          log.system(
+              '${built.length} ship(s) rolled out from homeworld yards');
+        }
+      });
+
       // Federation auto-posting (B4 enforcement): notorious pilots get
       // Federation bounties without anyone lifting a finger. This is the
       // Fed response to federal crimes — no police force, just money on

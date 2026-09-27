@@ -19,6 +19,16 @@ class Planet {
   bool isHomeworld;
   FactionClass? homeworldOf;
 
+  /// Cold-standby capital (C4b): produces only while no live primary
+  /// homeworld of the same faction exists. Recapture of the primary
+  /// idles the backup again — capitals move back, they don't duplicate.
+  bool isBackupHomeworld;
+
+  /// Planet-killer path (C4b): a destroyed world is permanently out of
+  /// play — no colony, no production, no homeworld status. Set via
+  /// [destroy]; combat triggers arrive with the invasion system.
+  bool isDestroyed;
+
   // Colony
   int population;
   int colonistsMinerals;
@@ -90,9 +100,37 @@ class Planet {
     this.maxHull = 1000,
     this.productionTimer = 0,
     this.spawnInterval = 10,
+    this.isBackupHomeworld = false,
+    this.isDestroyed = false,
     this.imagePath,
     this.scanned = false,
   });
+
+  /// Renders the world permanently uninhabitable (C4b planet-killer
+  /// path): colony zeroed, homeworld status and ownership cleared,
+  /// defenses gone. Regeneration tied to this world never resumes —
+  /// backup homeworlds (if any) take over via the usual control rules.
+  void destroy() {
+    isDestroyed = true;
+    isHomeworld = false;
+    homeworldOf = null;
+    isBackupHomeworld = false;
+    owner = null;
+    population = 0;
+    colonistsMinerals = 0;
+    colonistsOrganics = 0;
+    colonistsIndustrial = 0;
+    colonistsFighters = 0;
+    storedMinerals = 0;
+    storedOrganics = 0;
+    storedIndustrial = 0;
+    storedFighters = 0;
+    defenseLevel = 0;
+    shield = 0;
+    maxShield = 0;
+    hull = 0;
+    maxHull = 0;
+  }
 
   String get dominantCommodity {
     final mults = typeMultipliers[planetType];
@@ -140,6 +178,8 @@ class Planet {
       'maxHull': maxHull,
       'productionTimer': productionTimer,
       'spawnInterval': spawnInterval,
+      'isBackupHomeworld': isBackupHomeworld,
+      'isDestroyed': isDestroyed,
       'imagePath': imagePath,
       'scanned': scanned,
     };
@@ -178,6 +218,8 @@ class Planet {
       maxHull: (json['maxHull'] as num?)?.toDouble() ?? 1000,
       productionTimer: json['productionTimer'] as int? ?? 0,
       spawnInterval: json['spawnInterval'] as int? ?? 10,
+      isBackupHomeworld: json['isBackupHomeworld'] as bool? ?? false,
+      isDestroyed: json['isDestroyed'] as bool? ?? false,
       imagePath: json['imagePath'] as String?,
       scanned: json['scanned'] as bool? ?? false,
     );

@@ -1203,10 +1203,12 @@ class NpcAiService {
     // Resolve NPC-vs-NPC combat immediately
     final result = CombatService.resolveCombat(npc, target);
 
-    // Update defender in-place in the list
+    // Update defender in-place in the list. Survivors grow warier
+    // (C4d drift) — living through someone's guns teaches caution,
+    // wreckage notwithstanding (the dead don't spend it).
     final idx = allNpcs.indexWhere((n) => n.id == targetId);
     if (idx != -1) {
-      allNpcs[idx] = result.defender;
+      allNpcs[idx] = result.defender.driftedForSurvival();
     }
 
     if (result.result.defenderDestroyed) {
@@ -1259,7 +1261,8 @@ class NpcAiService {
       }
       // Vengeance satisfied (C2b): a vendetta against the dead target
       // resolves regardless of any bounty payout. Memory only.
-      var resolvedAttacker = result.attacker;
+      // Killers grow bolder (C4d drift) on the same occasion.
+      var resolvedAttacker = result.attacker.driftedForKill();
       if (resolvedAttacker.memory.vendettas.containsKey(target.id)) {
         resolvedAttacker = resolvedAttacker.copyWith(
           memory: resolvedAttacker.memory.withVendettaResolved(target.id),

@@ -1103,6 +1103,19 @@ class UniverseGenerator {
     ];
 
     for (final faction in factions) {
+      _assignOneHomeworld(sectors, rng, faction, false);
+    }
+    // Cold-standby capitals (C4b): a second flagged world per faction in
+    // a different sector. Takes over production/floors only while the
+    // primary is captured, destroyed, or missing.
+    for (final faction in factions) {
+      _assignOneHomeworld(sectors, rng, faction, true);
+    }
+  }
+
+  void _assignOneHomeworld(
+      List<Sector> sectors, math.Random rng, FactionClass faction, bool backup) {
+    {
       // Faction homeworld type preferences
       final preferredTypes = _homeworldTypes(faction);
       final candidates = <Sector>[];
@@ -1130,10 +1143,10 @@ class UniverseGenerator {
         if (nonFed.isEmpty) {
           // Entire universe is FedSpace (tiny dev/test config): no
           // homeworld possible. Loud, since regionals depend on this.
-          debugPrint('No homeworld sector available for ${faction.name} '
-              '(fedSpaceEnd ${settings.fedSpaceEnd} covers '
+          debugPrint('No ${backup ? 'backup ' : ''}homeworld sector available '
+              'for ${faction.name} (fedSpaceEnd ${settings.fedSpaceEnd} covers '
               '${sectors.length} sectors)');
-          continue;
+          return;
         }
         final sector = nonFed[rng.nextInt(nonFed.length)];
         if (!sector.hasPlanet) {
@@ -1144,13 +1157,14 @@ class UniverseGenerator {
               : faction == FactionClass.vinari
                   ? 'Terran'
                   : 'Desert';
-          sector.planet = _setupHomeworld(sector.planet!, faction, type, rng);
+          sector.planet =
+              _setupHomeworld(sector.planet!, faction, type, rng, backup);
         }
-        continue;
+        return;
       }
       final chosen = pool[rng.nextInt(pool.length)];
       chosen.planet = _setupHomeworld(
-          chosen.planet!, faction, chosen.planet!.planetType, rng);
+          chosen.planet!, faction, chosen.planet!.planetType, rng, backup);
     }
   }
 
@@ -1168,7 +1182,8 @@ class UniverseGenerator {
   }
 
   Planet _setupHomeworld(
-      Planet planet, FactionClass faction, String type, math.Random rng) {
+      Planet planet, FactionClass faction, String type, math.Random rng,
+      [bool backup = false]) {
     final homeworldName = _homeworldName(faction);
     return Planet(
       name: homeworldName ?? planet.name,
@@ -1177,6 +1192,7 @@ class UniverseGenerator {
       owner: faction,
       isHomeworld: true,
       homeworldOf: faction,
+      isBackupHomeworld: backup,
       population: 10000 + rng.nextInt(5000),
       colonistsMinerals: 3000,
       colonistsOrganics: 3000,

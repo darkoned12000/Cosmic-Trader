@@ -478,7 +478,7 @@ distress/reinforcement work composes with it directly. Each slice ships
 with automation-log lines + unit tests per the branch norm
 (analyze-clean, format-clean, full suite green, live numbers before/after).
 
-**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26):**
+**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26, C4 ✅ done 2026-09-26):**
 - `CombatOutcome` enum (attacker/defender victory, attacker/defender
   retreat, defender surrender, parley, ongoing) + `outcome`,
   `escapeCostEnergy`, `parleyCostCredits` on `CombatResult`
@@ -555,6 +555,35 @@ with automation-log lines + unit tests per the branch norm
   must fit the tank, hunts never buy anything). Restart persistence
   holds by construction (vendettas + profitableRoutes serialize with
   legacy-safe defaults through the existing whole-ship save).
+- C4 production spawning (`test/homeworld_production_test.dart`,
+  17 tests):
+  - C4a cadence — `RepopulationService.produce` ticks
+    `productionTimer` on controlled, intact homeworlds; at zero rolls
+    out one ship and resets to `spawnInterval` (timers mutate in place,
+    universe saves each tick). Captured yards freeze; caps
+    (8/8/8, pirates excluded) stand yards down with reset; wired into
+    the tick loop beside floors (`tick_produce`). Floors recover,
+    production sustains.
+  - C4b backups + planet-killer — `isBackupHomeworld` /
+    `isDestroyed` on `Planet` (JSON, legacy-safe) + `destroy()`
+    (clears homeworld/owner/colony/defenses — regen never resumes
+    there). Generator assigns a cold-standby capital per major faction;
+    selection prefers primaries, backup takes over on capture/destroy,
+    recapture idles it again; production skips idled backups.
+  - C4c legends — 5% of yard rollouts are lore heroes
+    (`Faction.notableHeroes`): roster-unique by name, pilot renamed,
+    hull/shields ×1.5, guns +1 level, notoriety 15, minted 15k Guild
+    bounty (Fed auto-post precedent), hero hail dialog (title/bio/
+    legend instead of generic lore).
+  - C4d drift — `driftAggression`/`driftCaution` (±0.15 cap) fold into
+    `personalityConfig` (zero-drift returns the archetype instance);
+    killers +0.02 aggression, survivors (incl. NPCs that live through
+    player attacks — `CombatScreen` flee path) +0.02 caution.
+  Suite: 219 passing, analyze clean.
+- C4 deltas: pirate production waits on C3 outposts (floors cover them);
+  planet destruction is model + regen-exclusion only, combat triggers
+  arrive with the invasion system; hero hail is dialog-only (no widget
+  test — same headless rationale as the parley UI).
   Suite: 202 passing, analyze clean.
 - Soak note (per review): behavior quality over time is judged by a
   30–60 min sim + log review in C5, not by unit tests alone. The log

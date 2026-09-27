@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Hero;
 import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
@@ -308,11 +308,20 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
         (f) => f.factionClass == npc.faction,
         orElse: () => Faction.allFactions().first,
       );
+      // Living legends (C4c) hail as themselves: title, bio, legend.
+      Hero? hero;
+      if (npc.heroName != null) {
+        for (final h in factionData.notableHeroes) {
+          if (h.name == npc.heroName) hero = h;
+        }
+      }
       if (!mounted) return;
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text('HAIL — ${npc.shipName}'),
+          title: Text(hero != null
+              ? 'HAIL — ${hero.name}, ${npc.heroTitle ?? hero.title}'
+              : 'HAIL — ${npc.shipName}'),
           content: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -320,12 +329,28 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
               children: [
                 _detailRow('Ship', npc.shipName),
                 _detailRow('Faction', factionData.name),
-                Text(
-                  factionData.background,
-                  style: const TextStyle(
-                      fontSize: 12, fontStyle: FontStyle.italic),
-                ),
-                const SizedBox(height: 12),
+                if (hero != null) ...[
+                  Text(
+                    hero.shortBio,
+                    style: const TextStyle(
+                        fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Legend: ${hero.notableAchievement}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.amber.shade200,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ] else
+                  Text(
+                    factionData.background,
+                    style: const TextStyle(
+                        fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                if (hero == null) const SizedBox(height: 12),
                 Text(
                   'Personality: ${npc.personality.name.toUpperCase().replaceAll('_', ' ')}',
                   style: TextStyle(
