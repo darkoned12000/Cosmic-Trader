@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/bounty.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
@@ -29,6 +30,28 @@ void main() {
     expect(board.active, isEmpty);
     expect(board.paid, isEmpty);
     expect(board.totalFor('victim-1'), 0);
+  });
+
+  test('paid factions round-trip through JSON with legacy defaults', () {
+    final paid = PaidBounty(
+      targetName: 'T',
+      targetFaction: 'pirate',
+      killerName: 'K',
+      killerFaction: 'duran',
+      amount: 100,
+      paidAt: DateTime.utc(2026),
+    );
+    final restored =
+        PaidBounty.fromJson(paid.toJson().cast<String, dynamic>());
+    expect(restored.targetFaction, 'pirate');
+    expect(restored.killerFaction, 'duran');
+    final legacy = PaidBounty.fromJson(const {
+      'targetName': 'T',
+      'killerName': 'K',
+      'amount': 100,
+    });
+    expect(legacy.targetFaction, '');
+    expect(legacy.killerFaction, '');
   });
 
   test('post holds bounty; killer auto-collects; history kept', () {
@@ -62,11 +85,16 @@ void main() {
       killerName: 'Killer',
       targetName: 'Victim',
       verifiedKills: {'victim-1'},
+      killerFaction: 'duran',
+      targetFaction: 'pirate',
     );
     expect(paid, 8000);
     expect(board.active, isEmpty);
     expect(board.paid, hasLength(1));
     expect(board.paid.first.killerName, 'Killer');
+    // Factions ride along for the faction-colored board.
+    expect(board.paid.first.killerFaction, 'duran');
+    expect(board.paid.first.targetFaction, 'pirate');
 
     // Nothing owed twice — even with the kill still "verified".
     expect(

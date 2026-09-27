@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
@@ -111,13 +112,28 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
     });
   }
 
+  /// Faction color for a stored faction name (enum names on bounties),
+  /// or null when unknown (Federation posters, legacy rows) so the
+  /// default text style applies.
+  Color? _factionColorOf(String name) {
+    for (final value in FactionClass.values) {
+      if (value.name == name) return factionColor(value);
+    }
+    return null;
+  }
+
   void _claim(String targetId, String targetName) {
     final factions = BountyBoard.global.posterFactionsFor(targetId);
+    final targets =
+        BountyBoard.global.active.where((b) => b.targetId == targetId);
     final paid = BountyBoard.global.claim(
       targetId: targetId,
       targetName: targetName,
       killerName: widget.player.name,
       verifiedKills: widget.player.recentKills.toSet(),
+      killerFaction: widget.player.faction.name,
+      targetFaction:
+          targets.isEmpty ? '' : targets.first.targetFaction,
     );
     if (paid <= 0) return;
     var updated = widget.player.copyWith(credits: widget.player.credits + paid);
@@ -195,9 +211,11 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(b.targetName,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                             fontSize: 12,
-                                            fontWeight: FontWeight.w600)),
+                                            fontWeight: FontWeight.w600,
+                                            color: _factionColorOf(
+                                                b.targetFaction))),
                                     Text(
                                       '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''}',
                                       style: TextStyle(
@@ -326,11 +344,17 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                               Expanded(
                                   flex: 2,
                                   child: Text(p.targetName,
-                                      style: const TextStyle(fontSize: 12))),
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: _factionColorOf(
+                                              p.targetFaction)))),
                               Expanded(
                                   flex: 2,
                                   child: Text(p.killerName,
-                                      style: const TextStyle(fontSize: 12))),
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: _factionColorOf(
+                                              p.killerFaction)))),
                               Expanded(
                                   child: Text('${p.amount}',
                                       style: const TextStyle(

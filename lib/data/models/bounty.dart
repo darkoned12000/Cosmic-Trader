@@ -60,27 +60,35 @@ class Bounty {
 /// A paid-out bounty, kept for the board's recent history.
 class PaidBounty {
   final String targetName;
+  final String targetFaction;
   final String killerName;
+  final String killerFaction;
   final int amount;
   final DateTime paidAt;
 
   const PaidBounty({
     required this.targetName,
+    this.targetFaction = '',
     required this.killerName,
+    this.killerFaction = '',
     required this.amount,
     required this.paidAt,
   });
 
   Map<String, dynamic> toJson() => {
         'targetName': targetName,
+        'targetFaction': targetFaction,
         'killerName': killerName,
+        'killerFaction': killerFaction,
         'amount': amount,
         'paidAt': paidAt.toIso8601String(),
       };
 
   factory PaidBounty.fromJson(Map<String, dynamic> json) => PaidBounty(
         targetName: json['targetName'] as String? ?? 'Unknown',
+        targetFaction: json['targetFaction'] as String? ?? '',
         killerName: json['killerName'] as String? ?? 'Unknown',
+        killerFaction: json['killerFaction'] as String? ?? '',
         amount: (json['amount'] as num?)?.toInt() ?? 0,
         paidAt: json['paidAt'] != null
             ? DateTime.parse(json['paidAt'] as String)

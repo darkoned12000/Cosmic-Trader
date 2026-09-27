@@ -127,6 +127,8 @@ class BountyBoard extends ChangeNotifier {
     required String targetId,
     required String killerName,
     required String targetName,
+    String killerFaction = '',
+    String targetFaction = '',
   }) {
     final owed = forTarget(targetId);
     if (owed.isEmpty) return 0;
@@ -135,7 +137,15 @@ class BountyBoard extends ChangeNotifier {
       total += b.amount;
       _active.remove(b);
     }
-    _recordPaid(targetName, killerName, total);
+    _recordPaid(
+      targetName,
+      targetFaction.isNotEmpty
+          ? targetFaction
+          : owed.first.targetFaction,
+      killerName,
+      killerFaction,
+      total,
+    );
     GameEventLog.global.combat(
       '[Bounty] $killerName collected $total cr for $targetName',
     );
@@ -154,6 +164,8 @@ class BountyBoard extends ChangeNotifier {
     required String targetName,
     required String killerName,
     required Set<String> verifiedKills,
+    String killerFaction = '',
+    String targetFaction = '',
   }) {
     if (!verifiedKills.contains(targetId)) {
       GameEventLog.global.system(
@@ -166,16 +178,26 @@ class BountyBoard extends ChangeNotifier {
       targetId: targetId,
       killerName: killerName,
       targetName: targetName,
+      killerFaction: killerFaction,
+      targetFaction: targetFaction,
     );
     return total;
   }
 
-  void _recordPaid(String targetName, String killerName, int total) {
+  void _recordPaid(
+    String targetName,
+    String targetFaction,
+    String killerName,
+    String killerFaction,
+    int total,
+  ) {
     _paid.insert(
       0,
       PaidBounty(
         targetName: targetName,
+        targetFaction: targetFaction,
         killerName: killerName,
+        killerFaction: killerFaction,
         amount: total,
         paidAt: DateTime.now(),
       ),

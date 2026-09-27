@@ -1437,6 +1437,8 @@ class NpcAiService {
         targetId: target.id,
         killerName: result.attacker.pilotName,
         targetName: target.pilotName,
+        killerFaction: result.attacker.faction.name,
+        targetFaction: target.faction.name,
       );
       // Post-kill retaliation intent (C1c): same-faction witnesses in
       // this sector record the killer. Memory only — vendetta goals and
