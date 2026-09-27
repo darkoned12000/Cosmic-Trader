@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Living design drafts (untracked working docs, not build inputs).
+player-avatar.md
