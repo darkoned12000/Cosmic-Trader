@@ -22,6 +22,10 @@ class BountyBoard extends ChangeNotifier {
   final List<PaidBounty> _paid = [];
   bool _loaded = false;
 
+  /// Target ids paid out this session: load-merge must not resurrect
+  /// them as zombies (paid pre-load, disk still carries them).
+  final Set<String> _paidIds = {};
+
   /// Lifetime payouts this universe (the `_paid` list itself caps at 20
   /// for display). Answers "is it 20 again?" — yes, the window is full;
   /// the lifetime count keeps score.
@@ -44,10 +48,33 @@ class BountyBoard extends ChangeNotifier {
 
   /// Distinct poster factions owed on [targetId] (for completion
   /// standing). Empty factions (Federation Marshal) carry no standing.
-  List<String> posterFactionsFor(String targetId) => {
-        for (final b in forTarget(targetId))
-          if (b.posterFaction.isNotEmpty) b.posterFaction,
-      }.toList();
+  /// [excludePosterId] drops self-posts (bounty review H3): posting on
+  /// your own mark must never mint reputation.
+  List<String> posterFactionsFor(String targetId,
+      {String? excludePosterId}) {
+    return {
+      for (final b in forTarget(targetId))
+        if (b.posterFaction.isNotEmpty &&
+            b.posterId != excludePosterId)
+          b.posterFaction,
+    }.toList();
+  }
+
+  /// Removes live marks whose targets are gone from the world (bounty
+  /// review M2): neither on the NPC roster nor among players. Logs the
+  /// sweep; unclaimed poster credits lapse (escrow is roadmap).
+  void pruneAbsent(Set<String> liveIds) {
+    final before = _active.length;
+    _active.removeWhere((b) => !liveIds.contains(b.targetId));
+    final pruned = before - _active.length;
+    if (pruned > 0) {
+      GameEventLog.global.system(
+        '[Bounty] Pruned $pruned mark(s) on vanished targets',
+      );
+      notifyListeners();
+      _persist();
+    }
+  }
 
   /// Total active credits per target id (multiple posters stack).
   int totalFor(String targetId) => _active
@@ -61,13 +88,18 @@ class BountyBoard extends ChangeNotifier {
     if (_loaded) return;
     _loaded = true;
     final data = await BountyStorage.instance.loadAll();
-    _active
-      ..clear()
-      ..addAll(data.active);
-    _paid
-      ..clear()
-      ..addAll(data.paid);
-    paidLifetime = data.paidLifetime;
+    // Merge, don't replace (bounty review M3): posts landing mid-load
+    // used to be wiped when the disk snapshot applied. In-memory marks
+    // (this session's posts) always survive; disk fills the rest, minus
+    // ids already paid out this session (no zombie resurrection).
+    for (final b in data.active) {
+      if (_active.every((e) => e.id != b.id) &&
+          !_paidIds.contains(b.targetId)) {
+        _active.add(b);
+      }
+    }
+    if (_paid.isEmpty) _paid.addAll(data.paid);
+    if (paidLifetime == 0) paidLifetime = data.paidLifetime;
     notifyListeners();
   }
 
@@ -83,13 +115,24 @@ class BountyBoard extends ChangeNotifier {
   Future<void> resetForNewUniverse() async {
     _active.clear();
     _paid.clear();
+    _paidIds.clear();
     paidLifetime = 0;
     notifyListeners();
     await _persist();
   }
 
-  /// Posts a bounty. Returns null when [amount] is not positive. The
-  /// caller deducts the credits (player wallet or NPC bankroll).
+  /// Minimum postable amount (bounty review): dust marks are spam and
+  /// rounding noise, not contracts.
+  static const int minBountyAmount = 100;
+
+  /// Max live marks per poster (bounty review): a 200-cr flood should
+  /// never evict real contracts.
+  static const int maxBountiesPerPoster = 10;
+
+  /// Posts a bounty. Returns null when [amount] is below
+  /// [minBountyAmount], [targetId] is empty, or the poster is at their
+  /// [maxBountiesPerPoster] cap. The caller deducts the credits (player
+  /// wallet or NPC bankroll).
   Bounty? post({
     required String targetId,
     required String targetName,
@@ -101,7 +144,16 @@ class BountyBoard extends ChangeNotifier {
     String posterFaction = '',
     String reason = '',
   }) {
-    if (amount <= 0) return null;
+    if (amount < minBountyAmount) return null;
+    if (targetId.isEmpty) return null;
+    final posterCount =
+        _active.where((b) => b.posterId == posterId).length;
+    if (posterCount >= maxBountiesPerPoster) {
+      GameEventLog.global.system(
+        '[Bounty] $posterName at poster cap — mark on $targetName refused',
+      );
+      return null;
+    }
     final bounty = Bounty(
       id: const Uuid().v4(),
       targetId: targetId,
@@ -116,10 +168,16 @@ class BountyBoard extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
     _active.add(bounty);
+    // Evict the cheapest mark first (bounty review): a flood of minimum
+    // posts pushes out other minimum posts, never the high-value heads.
     while (_active.length > maxActiveBounties) {
-      final evicted = _active.removeAt(0);
+      var cheapest = 0;
+      for (var i = 1; i < _active.length; i++) {
+        if (_active[i].amount < _active[cheapest].amount) cheapest = i;
+      }
+      final evicted = _active.removeAt(cheapest);
       GameEventLog.global.system(
-        '[Bounty] Board full — oldest mark (${evicted.targetName} '
+        '[Bounty] Board full — cheapest mark (${evicted.targetName} '
         '${evicted.amount} cr) expired unclaimed',
       );
     }
@@ -149,6 +207,7 @@ class BountyBoard extends ChangeNotifier {
       _active.remove(b);
     }
     _recordPaid(
+      targetId,
       targetName,
       targetFaction.isNotEmpty
           ? targetFaction
@@ -196,6 +255,7 @@ class BountyBoard extends ChangeNotifier {
   }
 
   void _recordPaid(
+    String targetId,
     String targetName,
     String targetFaction,
     String killerName,
@@ -203,6 +263,7 @@ class BountyBoard extends ChangeNotifier {
     int total,
   ) {
     paidLifetime++;
+    _paidIds.add(targetId);
     _paid.insert(
       0,
       PaidBounty(

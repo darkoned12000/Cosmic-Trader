@@ -36,7 +36,30 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   NpcShip? _target;
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
+  // Autocomplete-owned search field (cleared on post, never disposed here).
+  TextEditingController? _targetField;
   String? _formError;
+
+  /// Thousands separators for credit amounts (bounty review L1).
+  static String _commas(int n) {
+    final s = n.abs().toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return '${n < 0 ? '-' : ''}$buf';
+  }
+
+  /// Compact age for bounty rows (bounty review L1).
+  static String _age(DateTime at) {
+    final mins = DateTime.now().difference(at).inMinutes;
+    if (mins < 1) return 'now';
+    if (mins < 60) return '${mins}m';
+    final hours = mins ~/ 60;
+    if (hours < 48) return '${hours}h';
+    return '${hours ~/ 24}d';
+  }
 
   @override
   void initState() {
@@ -60,7 +83,11 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
           _npcs = npcs.where((n) => !n.isDestroyed).toList();
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      // Never silent (repo convention): an empty target list with no
+      // explanation looks like "no bounties work".
+      debugPrint('[BountyBoardScreen] NPC load failed: $e');
+    }
   }
 
   void _post() {
@@ -106,6 +133,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
     }
     _amountController.clear();
     _reasonController.clear();
+    _targetField?.clear();
     setState(() {
       _target = null;
       _formError = null;
@@ -123,7 +151,10 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   }
 
   void _claim(String targetId, String targetName) {
-    final factions = BountyBoard.global.posterFactionsFor(targetId);
+    // H3 guard: self-posted marks pay out (money was debited at post)
+    // but never mint reputation.
+    final factions = BountyBoard.global.posterFactionsFor(targetId,
+        excludePosterId: widget.player.id);
     final targets =
         BountyBoard.global.active.where((b) => b.targetId == targetId);
     final paid = BountyBoard.global.claim(
@@ -170,6 +201,12 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
         builder: (context, _) {
           final board = BountyBoard.global;
           final kills = widget.player.recentKills.toSet();
+          // Richest marks first (bounty review L1); header counts both
+          // marks and distinct targets so stacking reads honestly.
+          final active = board.active.toList()
+            ..sort((a, b) => b.amount.compareTo(a.amount));
+          final targets =
+              active.map((b) => b.targetId).toSet().length;
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -177,10 +214,11 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
               children: [
                 PanelCard(
                   icon: Icons.crisis_alert_rounded,
-                  title: 'Active bounties (${board.active.length})',
+                  title:
+                      'Active bounties (${active.length} marks · $targets targets)',
                   subtitle: 'Claim pays out for pilots you destroyed',
                   children: [
-                    if (board.active.isEmpty)
+                    if (active.isEmpty)
                       Text(
                         'No open contracts. Survive an attack or post one.',
                         style: TextStyle(
@@ -199,9 +237,9 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                           '',
                         ],
                         flexes: const [2, 1, 1, 1],
-                        itemCount: board.active.length,
+                        itemCount: active.length,
                         rowBuilder: (context, i) {
-                          final b = board.active[i];
+                          final b = active[i];
                           final claimable = kills.contains(b.targetId);
                           return Row(
                             children: [
@@ -217,7 +255,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                                             color: _factionColorOf(
                                                 b.targetFaction))),
                                     Text(
-                                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''}',
+                                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)}',
                                       style: TextStyle(
                                         fontSize: 10,
                                         color:
@@ -231,7 +269,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                                   child: Text(b.targetFaction,
                                       style: const TextStyle(fontSize: 12))),
                               Expanded(
-                                  child: Text('${b.amount}',
+                                  child: Text(_commas(b.amount),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),
@@ -274,6 +312,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                       onSelected: (n) => setState(() => _target = n),
                       fieldViewBuilder:
                           (context, controller, focusNode, onSubmitted) {
+                        _targetField = controller;
                         if (controller.text.isEmpty && _target != null) {
                           controller.text =
                               '${_target!.pilotName} (${_target!.faction.name})';
@@ -357,7 +396,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                                           color: _factionColorOf(
                                               p.killerFaction)))),
                               Expanded(
-                                  child: Text('${p.amount}',
+                                  child: Text(_commas(p.amount),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),

@@ -611,15 +611,15 @@ void main() {
       expect(memory.profitableRoutes.length, NpcMemory.maxProfitableRoutes);
     });
 
-    test('bounty board caps active marks', () {
+    test('bounty board caps active marks (cheapest evicted)', () {
       for (var i = 0; i < BountyBoard.maxActiveBounties + 5; i++) {
         BountyBoard.global.post(
           targetId: 't$i',
           targetName: 'T$i',
           targetFaction: 'pirate',
           amount: 100,
-          posterId: 'tester',
-          posterName: 'Tester',
+          posterId: 'tester$i',
+          posterName: 'Tester$i',
           reason: 'cap',
         );
       }

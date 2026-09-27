@@ -3,10 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cosmic_trader/core/faction_colors.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
@@ -318,6 +320,25 @@ class _CombatScreenState extends State<CombatScreen>
         attackerHullFraction: 0.0,
         defenderHullFraction: CombatMetrics.fractionOf(npcHull, _npc.maxHull),
       );
+      // Bounty review H1: marks on the player pay the NPC killer —
+      // notoriety without collection was dead data on a public board.
+      final owed = BountyBoard.global.totalFor(_player.id);
+      if (owed > 0) {
+        final take = BountyBoard.global.payKiller(
+          targetId: _player.id,
+          killerName: _npc.pilotName,
+          targetName: _player.name,
+          killerFaction: _npc.faction.name,
+          targetFaction: _player.faction.name,
+        );
+        if (take > 0) {
+          setState(() {
+            _npc = _npc.copyWith(credits: _npc.credits + take);
+          });
+          _combatLog.add(
+              '>>> ${_npc.shipName} collects $take cr bounty on your head <<<');
+        }
+      }
       _endCombat(victory: false);
       return;
     }
@@ -486,6 +507,36 @@ class _CombatScreenState extends State<CombatScreen>
       );
       // Kill recorded for Bounty Board claims (payout happens via Claim).
       _player = _player.withKill(_npc.id);
+      // Bounty review H2: claims auto-pay at kill time (mirroring the NPC
+      // instant path) so the 50-kill ledger can never strand a payout.
+      // The board Claim stays as a harmless fallback (nothing left owed).
+      final bountyTake = BountyBoard.global.claim(
+        targetId: _npc.id,
+        targetName: _npc.pilotName,
+        killerName: _player.name,
+        verifiedKills: {_npc.id},
+        killerFaction: _player.faction.name,
+        targetFaction: _npc.faction.name,
+      );
+      var standingPlayer = _player;
+      if (bountyTake > 0) {
+        standingPlayer = standingPlayer.copyWith(
+          credits: standingPlayer.credits + bountyTake,
+        );
+        for (final faction in BountyBoard.global.posterFactionsFor(
+          _npc.id,
+          excludePosterId: _player.id,
+        )) {
+          for (final value in FactionClass.values) {
+            if (value.name == faction) {
+              standingPlayer =
+                  standingPlayer.withFactionStandingChange(value, 5);
+            }
+          }
+        }
+        _combatLog.add('>>> Bounty collected: $bountyTake cr <<<');
+      }
+      _player = standingPlayer;
       _npc = _npc.copyWith(
         credits: 0,
         cargo: {},

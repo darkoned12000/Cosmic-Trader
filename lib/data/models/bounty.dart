@@ -44,7 +44,7 @@ class Bounty {
         id: json['id'] as String? ?? '',
         targetId: json['targetId'] as String? ?? '',
         targetName: json['targetName'] as String? ?? 'Unknown',
-        targetFaction: json['targetFaction'] as String? ?? 'pirate',
+        targetFaction: json['targetFaction'] as String? ?? '',
         targetIsPlayer: json['targetIsPlayer'] as bool? ?? false,
         amount: (json['amount'] as num?)?.toInt() ?? 0,
         posterId: json['posterId'] as String? ?? '',

@@ -41,8 +41,8 @@ void main() {
         targetName: 'T$i',
         targetFaction: 'pirate',
         amount: 100,
-        posterId: 'p',
-        posterName: 'P',
+        posterId: 'p$i',
+        posterName: 'P$i',
         reason: 'cap',
       );
       board.payKiller(
@@ -55,7 +55,109 @@ void main() {
     expect(board.paidLifetime, 25);
   });
 
-  test('paid factions round-trip through JSON with legacy defaults', () {    final paid = PaidBounty(
+  test('poster cap, minimum amount, and cheapest-first eviction', () {
+    final board = BountyBoard.global;
+    // Dust amounts are refused outright.
+    expect(
+        board.post(
+          targetId: 'dust',
+          targetName: 'Dust',
+          targetFaction: 'pirate',
+          amount: 50,
+          posterId: 'poor',
+          posterName: 'Poor',
+        ),
+        isNull);
+    expect(board.totalFor('dust'), 0);
+    // Empty target ids are refused.
+    expect(
+        board.post(
+          targetId: '',
+          targetName: 'Nobody',
+          targetFaction: 'pirate',
+          amount: 500,
+          posterId: 'poor',
+          posterName: 'Poor',
+        ),
+        isNull);
+    // Ten live marks per poster, then refusal.
+    for (var i = 0; i < 11; i++) {
+      board.post(
+        targetId: 'c$i',
+        targetName: 'C$i',
+        targetFaction: 'pirate',
+        amount: 500,
+        posterId: 'spammer',
+        posterName: 'Spammer',
+      );
+    }
+    expect(
+        board.active.where((b) => b.posterId == 'spammer').length,
+        BountyBoard.maxBountiesPerPoster);
+    // A flood of minimums evicts minimums, never the high-value head.
+    board.post(
+      targetId: 'whale',
+      targetName: 'Whale',
+      targetFaction: 'pirate',
+      amount: 50000,
+      posterId: 'rich',
+      posterName: 'Rich',
+    );
+    for (var i = 0; i < BountyBoard.maxActiveBounties; i++) {
+      board.post(
+        targetId: 'f$i',
+        targetName: 'F$i',
+        targetFaction: 'pirate',
+        amount: 100,
+        posterId: 'flood$i',
+        posterName: 'Flood$i',
+      );
+    }
+    expect(board.active.length, BountyBoard.maxActiveBounties);
+    expect(board.totalFor('whale'), 50000);
+  });
+
+  test('pruneAbsent drops vanished targets, keeps the living', () {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'alive',
+      targetName: 'Alive',
+      targetFaction: 'pirate',
+      amount: 500,
+      posterId: 'p',
+      posterName: 'P',
+    );
+    board.post(
+      targetId: 'gone',
+      targetName: 'Gone',
+      targetFaction: 'pirate',
+      amount: 500,
+      posterId: 'p',
+      posterName: 'P',
+    );
+    board.pruneAbsent({'alive', 'player-1'});
+    expect(board.totalFor('alive'), 500);
+    expect(board.totalFor('gone'), 0);
+  });
+
+  test('self-posts pay out but mint no standing', () {
+    final board = BountyBoard.global;
+    board.post(
+      targetId: 'mark',
+      targetName: 'Mark',
+      targetFaction: 'pirate',
+      amount: 1000,
+      posterId: 'me',
+      posterName: 'Me',
+      posterFaction: 'trader',
+    );
+    expect(board.posterFactionsFor('mark'), ['trader']);
+    expect(
+        board.posterFactionsFor('mark', excludePosterId: 'me'), isEmpty);
+  });
+
+  test('paid factions round-trip through JSON with legacy defaults', () {
+    final paid = PaidBounty(
       targetName: 'T',
       targetFaction: 'pirate',
       killerName: 'K',
@@ -201,8 +303,8 @@ void main() {
         targetName: 'T$i',
         targetFaction: 'pirate',
         amount: 100,
-        posterId: 'p',
-        posterName: 'P',
+        posterId: 'p$i',
+        posterName: 'P$i',
       );
       board.payKiller(targetId: 't$i', killerName: 'K', targetName: 'T$i');
     }

@@ -208,6 +208,9 @@ class _GameShellState extends State<GameShell> {
             shields: 100,
             cargo: const {},
             cargoUsed: 0,
+            // Bounty review M2: kill records from a dead universe must
+            // not validate claims in the new one.
+            recentKills: const [],
           );
         }
         _universeKey = UniqueKey();

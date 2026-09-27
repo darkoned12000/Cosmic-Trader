@@ -724,7 +724,31 @@ with automation-log lines + unit tests per the branch norm
   tick-end wreckage clearing (`clearWrecks` — 118 corpses vs 92 living
   were riding every save; faction totals persist in CombatMetrics).
   Covered by 1 test.
-  Suite: 276 passing, analyze clean.
+- Bounty review (external pass — fixed, verified, deferred):
+  - H1 player marks pay out: NPC killers collect on player death
+    (credited + logged); new Fed marks on the player raise an Action
+    Log warning (positions never revealed — your call, kept that way).
+  - H2 silent loss closed: player kills auto-claim at combat end
+    (credits + standing, mirroring the NPC instant path); the board
+    Claim stays as a harmless zero-balance fallback.
+  - H3 self-post exploit closed: completion standing excludes the
+    claimant's own posts (payouts still flow — the money was debited).
+  - M1 flood-proofing: 100cr minimum, 10 live marks per poster,
+    cheapest-first eviction (floods eat floods, never whale heads).
+  - M2 dead-target pruning per tick + `recentKills` cleared on regen;
+    unclaimed poster credits lapse (escrow is roadmap).
+  - M3 load race fixed by merge (session posts survive; paid ids
+    can't resurrect as zombies). M4 left as-is (crash-window only,
+    reset path awaits). M5 screen load failure now logs.
+  - L1 all done: sorted-by-richest board, marks/targets header,
+    separators, ages, cleared search field, `''` faction default,
+    empty-id refusal.
+  - Deferred: expiry/TTL + escrow + refunds, grouped target view,
+    hunter proximity UI (vetoed — stays behind hypothetical
+    equipment), lifetime stats, multiplayer kill-trust hardening.
+  Covered by 4 new bounty tests (poster caps/min/eviction, prune,
+  self-post standing, lifetime) + updated cap tests.
+  Suite: 279 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide

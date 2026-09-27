@@ -306,6 +306,16 @@ class GameTickService {
             .samplePopulation(RepopulationService.livingCounts(npcs));
       });
 
+      // Bounty hygiene (bounty review M2): drop marks on vanished
+      // targets before the Fed considers new posts.
+      DevProfiler.instance.trace('tick_bounty_prune', () {
+        BountyBoard.global.pruneAbsent({
+          for (final p in players) p.id,
+          for (final n in npcs)
+            if (!n.isDestroyed) n.id,
+        });
+      });
+
       // Federation auto-posting (B4 enforcement): notorious pilots get
       // Federation bounties without anyone lifting a finger. This is the
       // Fed response to federal crimes — no police force, just money on
@@ -333,6 +343,15 @@ class GameTickService {
             posterName: 'Federation Marshal',
             reason: 'notoriety ${notoriety.toStringAsFixed(0)}',
           );
+          // Bounty review: the player always learns their own mark —
+          // Action Log warning, never hunter positions (those stay
+          // behind an equipment upgrade, if ever).
+          if (isPlayer) {
+            ActionLogProvider.global.warning(
+              'WANTED: Federation Marshal posted $amount cr on your head — '
+              'hunters will come',
+            );
+          }
           posted++;
         }
 
