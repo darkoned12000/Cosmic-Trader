@@ -826,7 +826,7 @@ with automation-log lines + unit tests per the branch norm
     split-point spreads, lower replacement spawn credits, or an
     interest cut — none taken without soak evidence.
   Covered by extended metrics assertions (side-split averages).
-  Suite: 295 passing, analyze clean.
+  Suite: 294 passing, analyze clean.
 - Phase C complete. Soak protocol (user-run): fresh session → Reset
   both reports → 30–60 min live (1s ticks for density) → Copy combat
   + economy summaries + filtered log lines (`Hunting|Settled|wide
