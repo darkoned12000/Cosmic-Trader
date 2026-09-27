@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/npc_ai/combat_service.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
@@ -292,12 +293,32 @@ class _CombatScreenState extends State<CombatScreen>
           'Destroyed ${_npc.pilotName} (${_npc.shipName}) in sector #${_npc.currentSectorId}');
       ActionLogProvider.global
           .combat(NpcDeathCries.formatDeathCry(_npc.pilotName, _npc.faction));
+      // C5: the kill counts for pilot and faction alike.
+      CombatMetrics.global.recordPlayerKill();
+      CombatMetrics.global.recordNpc(
+        attackerFaction: _player.faction.name,
+        defenderFaction: _npc.faction.name,
+        outcome: CombatOutcome.attackerVictory,
+        attackerHullFraction: CombatMetrics.fractionOf(
+            playerHull, _player.maxHull),
+        defenderHullFraction: 0.0,
+      );
       _endCombat(victory: true);
       return;
     }
 
     if (playerDestroyed) {
       _combatLog.add('*** YOUR SHIP IS CRITICALLY DAMAGED ***');
+      // C5: pilot death and the faction-level loss.
+      CombatMetrics.global.recordPlayerDeath();
+      CombatMetrics.global.recordNpc(
+        attackerFaction: _player.faction.name,
+        defenderFaction: _npc.faction.name,
+        outcome: CombatOutcome.defenderVictory,
+        attackerHullFraction: 0.0,
+        defenderHullFraction:
+            CombatMetrics.fractionOf(npcHull, _npc.maxHull),
+      );
       _endCombat(victory: false);
       return;
     }
@@ -350,10 +371,24 @@ class _CombatScreenState extends State<CombatScreen>
         setState(() => _npc = _npc.copyWith(currentSectorId: dest));
         _combatLog.add('>>> Enemy warped to sector #$dest <<<');
       }
+      // C5: successful break-off, both tallies.
+      CombatMetrics.global.recordNpc(
+        attackerFaction: _player.faction.name,
+        defenderFaction: _npc.faction.name,
+        outcome: CombatOutcome.defenderRetreat,
+        attackerHullFraction: CombatMetrics.fractionOf(
+            _player.hull, _player.maxHull),
+        defenderHullFraction:
+            CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
+      );
+      CombatMetrics.global
+          .recordNpcYield(retreated: true, parleyed: false);
       _endCombat(victory: false, npcRetreated: true);
     } else {
       _combatLog.add(
           '>>> ${_npc.shipName} tried to break off — you cut them off <<<');
+      // C5: failed escapes count against the runner's faction.
+      CombatMetrics.global.recordFailedEscape(_npc.faction.name);
     }
   }
 
@@ -367,11 +402,26 @@ class _CombatScreenState extends State<CombatScreen>
       _parleyOffer = null;
     });
     _combatLog.add('>>> You accept $tribute cr tribute. Combat ends. <<<');
+    // C5: surrender with tribute paid, both tallies.
+    CombatMetrics.global.recordNpc(
+      attackerFaction: _player.faction.name,
+      defenderFaction: _npc.faction.name,
+      outcome: CombatOutcome.defenderSurrender,
+      attackerHullFraction:
+          CombatMetrics.fractionOf(_player.hull, _player.maxHull),
+      defenderHullFraction:
+          CombatMetrics.fractionOf(_npc.hull, _npc.maxHull),
+      tribute: tribute,
+    );
+    CombatMetrics.global
+        .recordNpcYield(retreated: false, parleyed: true);
     _endCombat(victory: false, parleyed: true);
   }
 
   void _flee() {
     _combatLog.add('>>> You fled from combat <<<');
+    // C5: the pilot lived to file the report.
+    CombatMetrics.global.recordPlayerFlee();
 
     // The NPC lives through your guns (C4d drift): survivors grow warier.
     setState(() => _npc = _npc.driftedForSurvival());

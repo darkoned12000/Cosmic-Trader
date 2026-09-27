@@ -9,6 +9,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
@@ -1304,6 +1305,19 @@ class NpcAiService {
 
     // Resolve NPC-vs-NPC combat immediately
     final result = CombatService.resolveCombat(npc, target);
+
+    // C5 measurement: every resolution counts, at this single choke
+    // point, whatever the outcome (kills, retreats, surrenders).
+    CombatMetrics.global.recordNpc(
+      attackerFaction: npc.faction.name,
+      defenderFaction: target.faction.name,
+      outcome: result.result.outcome,
+      attackerHullFraction: CombatMetrics.fractionOf(
+          result.attacker.hull, result.attacker.maxHull),
+      defenderHullFraction: CombatMetrics.fractionOf(
+          result.defender.hull, result.defender.maxHull),
+      tribute: result.result.parleyCostCredits,
+    );
 
     // Update defender in-place in the list. Survivors grow warier
     // (C4d drift) — living through someone's guns teaches caution,

@@ -478,7 +478,7 @@ distress/reinforcement work composes with it directly. Each slice ships
 with automation-log lines + unit tests per the branch norm
 (analyze-clean, format-clean, full suite green, live numbers before/after).
 
-**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26, C4 ✅ done 2026-09-26, C3 ✅ done 2026-09-26):**
+**Status (Step 0 ✅ done 2026-09-26, C1a ✅ done 2026-09-26, C1b ✅ done 2026-09-26, C1c ✅ done 2026-09-26, C2 ✅ done 2026-09-26, C4 ✅ done 2026-09-26, C3 ✅ done 2026-09-26, C5 ✅ done 2026-09-26):**
 - `CombatOutcome` enum (attacker/defender victory, attacker/defender
   retreat, defender surrender, parley, ongoing) + `outcome`,
   `escapeCostEnergy`, `parleyCostCredits` on `CombatResult`
@@ -610,7 +610,27 @@ with automation-log lines + unit tests per the branch norm
     door with decay untouched.
   All three join behaviors run inside `_selectGoal` (idle pilots only —
   the C2 no-hijack guarantee extends to coordination).
-  Suite: 233 passing, analyze clean.
+- C5 measurement (`test/combat_metrics_test.dart`, 7 tests):
+  - `CombatMetrics` (session-scoped `ChangeNotifier`, resettable):
+    engagements/outcomes per faction (attacks, kills, deaths,
+    retreats, surrenders + tribute, failed escapes), retreat-hull
+    average, player kills/deaths/flees, NPC yields vs player, capped
+    population census (240 samples), and a paste-ready `summary()`
+    that composes per-faction loot from the economy side.
+  - Hooks: single choke point in `_executeAttackGoal` (every NPC
+    resolution); every `CombatScreen` ending (kill, death, flee,
+    NPC retreat success/failure, accepted parley); per-tick census
+    (`tick_census`) beside production.
+  - Automation console gains a live Combat report (summary + Copy +
+    Reset, no shell wiring needed) — before/after sim comparisons
+    are Reset → run → Copy. NPC retreats auto-succeed by design, so
+    failed escapes only occur vs the player (interception works).
+  Suite: 240 passing, analyze clean.
+- Phase C complete. Soak protocol (user-run): fresh session → Reset
+  both reports → 30–60 min live (1s ticks for density) → Copy combat
+  + economy summaries + filtered log lines (`Hunting|Settled|wide
+  berth|Heard about|dangerous|Living legend|Convoy|pack|border|Cutting
+  off`) → paste to AI review.
   Suite: 202 passing, analyze clean.
 - Soak note (per review): behavior quality over time is judged by a
   30–60 min sim + log review in C5, not by unit tests alone. The log

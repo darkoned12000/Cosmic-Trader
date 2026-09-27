@@ -15,6 +15,7 @@ import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/repopulation_service.dart';
+import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
 /// Describes an NPC-initated attack on a player during a tick.
@@ -287,6 +288,13 @@ class GameTickService {
           npcs.addAll(built);
           log.system('${built.length} ship(s) rolled out from homeworld yards');
         }
+      });
+
+      // Combat census (C5): population-over-time for the soak review.
+      // Capped ring — the steady state costs one count per tick.
+      DevProfiler.instance.trace('tick_census', () {
+        CombatMetrics.global
+            .samplePopulation(RepopulationService.livingCounts(npcs));
       });
 
       // Federation auto-posting (B4 enforcement): notorious pilots get

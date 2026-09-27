@@ -177,7 +177,7 @@ lib/
       port_combat_service.dart    -- port combat resolution engine (shared siege core) with defense stats
 ```
 
-## File inventory (102 source files, 38 test files, 233 tests passing)
+## File inventory (103 source files, 39 test files, 240 tests passing)
 
 | Path | Role |
 |------|------|
@@ -263,6 +263,7 @@ lib/
 | `lib/services/game_tick_service.dart` | Background timer (adjustable interval, re-entrancy guard, per-NPC bulkhead + 3-strike reset, repopulation, Fed bounties, NPC interest, multi-player attack check) |
 | `lib/services/game_event_log.dart` | Central categorized event bus (2000-entry ring + all-time counters, debugPrint mirror) |
 | `lib/services/economy_metrics.dart` | Session trade metrics (persisted across restarts; server health-feed payload) |
+| `lib/services/combat_metrics.dart` | Session combat metrics (outcomes/retreat-hull/escapes/player endings, census; Automation Combat report) |
 | `lib/services/bounty_board.dart` | Bounty post/stack/pay/claim singleton (kill-verified claims, Fed auto-post rule) |
 | `lib/services/repopulation_service.dart` | Homeworld control-gated respawns (extinction reversible by recapture) |
 | `lib/services/tow_service.dart` | Emergency Tow recovery — nearest Hardware Emporium tow with port fallback, distance-scaled fee, emergency energy |
@@ -466,10 +467,10 @@ Bundled assets (declared in `pubspec.yaml`):
 ## Known issues / technical debt
 
 - `core/theme.dart` (TWTheme) is unused — theme built inline in main.dart from ThemeService
-- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (233 tests) before committing
+- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (240 tests) before committing
 - Repeated UI patterns (cards, stat bars, pills) duplicated across screens → **A2 shared widget library**: `lib/widgets/shared/` ships `PanelCard`, `StatBar` (inline + stacked layouts), `HudPill` (radius/padding/font/icon overrides), `DataTableShell` (all density-aware via `UiScale.spacing()`). Adopted in `ship_status.dart` (5 panels), `port_trade_view.dart` (pills + trade table), `ship_status_summary.dart` (4 bars), `planet_screen.dart` (resource/defense bars), `faction_rankings_screen.dart` (stat pills). Screens whose cards use distinct visual families (radius-12 banded headers, padding-20 accent cards, ExpansionTile settings cards, hero/terminal styles) were audited and intentionally left as-is rather than forced.
 - No lint/format CI pipeline
-- Test coverage: 233 tests across 38 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
+- Test coverage: 240 tests across 39 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
 - No audio asset files shipped in the past — this is no longer the case; 5 tracks are now bundled
 - Sector `planetType` string removed from `Sector` (structured `Planet` object used instead) — old saves are handled by `fromJson` defaults
 - `PlanetScreen` "Attack" action currently only writes to the action log (combat pending)
