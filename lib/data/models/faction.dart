@@ -18,6 +18,22 @@ enum FactionClass {
         return 'Pirates';
     }
   }
+
+  /// Whether a new player may join this faction.
+  ///
+  /// Pirates are an NPC affiliation, not a joining point: there is no homeworld,
+  /// no recruitment, and no lore reason why the Guilds would enrol a raider.
+  /// Registration filters on this rather than on an inline `!= pirate`, so the
+  /// rule lives with the faction it is about instead of in one screen — an inline
+  /// filter is a rule with exactly one caller and no test.
+  ///
+  /// Pirates are not a *species* either. A pirate pilot is drawn from all three
+  /// species and tinted with the pirate palette; see [AvatarAffiliation].
+  bool get isSelectable => this != FactionClass.pirate;
+
+  /// Factions a new player may join, in enum order.
+  static List<FactionClass> get selectable =>
+      FactionClass.values.where((f) => f.isSelectable).toList(growable: false);
 }
 
 class Hero {

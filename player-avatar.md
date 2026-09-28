@@ -1,8 +1,9 @@
 # Player Avatar System — Design & Implementation Plan
 
 **Status:** Art direction **settled** (procedural). Phases 1–4 and 6 complete. Uploads (phase 5)
-deferred by choice. **Remaining work is prioritised in §13** — start with the Vinari silhouette,
-which is a live quality defect rather than a feature.
+deferred by choice. **Remaining work is prioritised in §13** — the two species-art defects are fixed
+(§13.1 Vinari silhouette, §13.2 pirates, which turned out not to be a species at all), as are the
+rankings faces (§13.3).
 **Scope:** Give each pilot a visual identity chosen during account creation, persist it on the
 `Player`, show it on Ship Status, and let the player customise it afterwards.
 **Related docs:** `planets.md` (same doc-driven pattern), `AGENTS.md` (architecture, commands,
@@ -154,7 +155,7 @@ The style is what makes a pilot individual. `null` for the whole style means "us
 | `tone` | 6 | Species skin tone |
 | `outfit` | 3 | Species garment set (Duran armour / Vinari shroud / Terran suit-coat-rig) |
 | `outfitTone` | 3 | Garment base colour |
-| `hair` | 3 | Terran hairstyle, Duran chitin crest, Vinari light-drift — **species-specific** |
+| `hair` | 3 | Terran hairstyle, Duran chitin crest, Vinari crown/tendril-fall/frill-fan — **species-specific**, and a *silhouette* axis for all three |
 | `horns` | 3 | Duran only: forward-curved / tall crown / short barbel |
 | `eyes` | 3 | Eye shape: round / narrow / angular |
 | `markings` | 0–2 | None / war paint. **Duran + Trader only**; 0 is "unmarked" |
@@ -658,9 +659,9 @@ tile height, per-NPC derivation).
 | **5 — Upload** | **Deferred** | Not scheduled. Analysis preserved in §8. |
 | **6 — Designer** | **Done in substance** | The original asked for a *layered artist-authored asset composer*. What shipped is a *procedural parameter designer*: 14 axes, 6 decoupled, all named and per-axis editable, with per-axis reset, full reset, and per-axis locks. That is the whole customisation layer. |
 
-**Nothing outstanding in the customisation layer.** Remaining work is prioritised in **§13**; the two
-species-art items there (Vinari silhouette, pirate species) are the ones that still affect quality
-rather than adding scope.
+**Nothing outstanding in the customisation layer.** Remaining work is prioritised in **§13**. Both
+species-art quality items are now **done**: the Vinari silhouette (§13.1) and pirates (§13.2), which
+turned out not to need a species at all.
 
 ---
 
@@ -674,11 +675,13 @@ rather than adding scope.
    some will be unattractive. Per-axis locks (§6.3) mitigate this for players by letting them protect
    the axes they have settled. For **NPCs** the risk is sharper still, because nobody chose: every
    combination must hold, not just the ones a player selected. A 48-face sweep already found two art
-   defects this way (§12), and found that the Vinari barely vary at all — a live, unresolved item.
-3. **Species variety is uneven.** The Duran and Terran have a large silhouette-changing axis; the
-   Vinari do not, so a Vinari roster reads as one silhouette in several tints. Any future species
-   needs at least one axis that genuinely changes the head shape, or it will look repetitive at
-   roster scale.
+   defects this way (§12), and found that the Vinari barely varied at all — fixed in §13.1.
+3. **Species variety is uneven, and it is a per-species tax.** The Duran and Terran each had a large
+   silhouette-changing axis from the start; the Vinari did not, and that had to be built. Any future
+   species needs at least one axis that genuinely changes the head shape, or it will look repetitive
+   at roster scale. The rule this established: **repurpose a slot before adding an axis.** The Vinari
+   `hair` slot already meant "head feature" and was simply inert; a new axis would have cost an enum
+   value, a nullable slot, a serializer, palette work, and axis-catalog wiring to say the same thing.
 4. **Previewing is the only review mechanism.** Nothing in the test suite can tell you a portrait
    looks good, and the same is true of the editor's *usability* — a passing widget test says the
    Face tab builds, not that it is readable. Screenshotting the editor is what found the option-list
@@ -753,12 +756,17 @@ Live on two surfaces, both wired to real NPCs:
 The comms panel is **not** wired — its chat tab is mock data with a sender string, not `NpcShip`s, so
 there is nothing to derive from yet.
 
-### The pirate gap
+### The pirate gap — **resolved, and it was not a species after all**
 
-`AvatarSpecies.forFaction` maps `pirate` → `AvatarSpecies.terran`, so roughly **one NPC in seven is
-drawn from the human pool**, and a pirate and a Trader share the entire species pool. The same face
-can appear on both; the faction ring is the only thing distinguishing them. A dedicated pirate species
-is a deliberate follow-on, and `NpcPortraits` is the only place that would need to change.
+`AvatarSpecies.forFaction` mapped `pirate` → `AvatarSpecies.terran`, so roughly **one NPC in seven
+was drawn from the human pool**, and a pirate and a Trader shared the entire species pool. The same
+face could appear on both; the faction ring was the only thing distinguishing them.
+
+The obvious fix was a fourth `AvatarSpecies`, and it would have been wrong. Pirates are defectors,
+not a race: a pirate Duran is still scaled, horned, and green. Giving them a species would have
+contradicted the lore *and* collapsed a mixture of three silhouettes into one. `AvatarAffiliation`
+is the right axis — orthogonal to species, changing only cloth, ring, and marking frequency, and
+never persisted. See §13.2.
 
 ### Rendering at NPC scale found two art defects
 
@@ -774,10 +782,10 @@ has to hold up. A 48-face sweep per faction at 96px and 48px found:
 2. **Terran "short spikes" read as a crown.** A symmetric row of evenly-sized triangles is a crown,
    and on a pale dye it read unmistakably as royalty. Now uneven heights with a forward rake.
 
-### The Vinari variety problem — **unresolved, and the most significant finding**
+### The Vinari variety problem — **resolved in §13.1**
 
-The same sweep showed the Vinari produce far less variety than the other two species, and the reason
-is structural:
+The sweep showed the Vinari producing far less variety than the other two species, and the reason
+was structural:
 
 | Species | Silhouette-changing axes |
 |---|---|
@@ -785,15 +793,15 @@ is structural:
 | Terran | `hair` (3 per presentation, very visible) + `outfit` (3) |
 | **Vinari** | `hair` (drift crown — near-invisible) + `outfit` (3 subtle shrouds) |
 
-The Vinari have **no analogue of `horns`**, and their `hair` options barely differ on screen, so three
-options on that axis are really one. 48 derived faces read as near-identical teardrops differing mainly
-in skin tint. The lore fidelity is right — no ears, nose, mouth, or sclera, luminous core, drift motes
-— but the *variety* is not there.
+The Vinari had **no analogue of `horns`**, and their `hair` options barely differed on screen, so
+three options on that axis were really one. 48 derived faces read as near-identical teardrops
+differing mainly in skin tint. The lore fidelity was right — no ears, nose, mouth, or sclera,
+luminous core, drift motes — but the *variety* was not there.
 
-The fix is art, not model: the Vinari need one axis that genuinely changes the head silhouette
-(a crest/frill/appendage form), or their existing `hair` options need to be made visually distinct.
-This is deliberately **not** attempted here, because it is a species-art change rather than
-plumbing, and the same decision sits behind the pirate species.
+Fixed by making the Vinari `hair` a **silhouette axis** rather than a surface one. See §13.1 for
+the three forms and for what the render passes got wrong on the way.
+
+---
 
 ---
 
@@ -802,48 +810,407 @@ plumbing, and the same decision sits behind the pirate species.
 The build is done. This is what is left, in the order it is worth doing. Two items are
 **unresolved quality problems**, not features, and one of them should probably go first.
 
-### 13.1 Fix first — the Vinari silhouette
+### 13.1 The Vinari silhouette — **done**
 
-**Not a feature. A live defect, and the most significant finding of the whole build.**
+**Was a live defect, and the most significant finding of the whole build.** The NPC render sweep
+(§12) showed 48 derived Vinari reading as near-identical teardrops differing mainly in skin tint.
+The cause was structural: `horns` is Duran-only, and the Vinari `hair` options barely differed on
+screen, so three options on that axis were effectively one.
 
-The NPC render sweep (§12) showed 48 derived Vinari reading as near-identical teardrops differing
-mainly in skin tint. The cause is structural: `horns` is Duran-only, and the Vinari `hair` options
-barely differ on screen, so three options on that axis are effectively one. A Vinari roster will look
-repetitive to any player who scans a sector.
+**The fix was to repurpose `hair`, not to add an axis.** A new axis would have meant a new enum
+value, a new nullable slot, a serializer, palette work, and axis-catalog wiring — all to express
+something the existing slot already meant for this species. `hair` was already the Vinari's
+head-feature slot; it just wasn't doing any work. It now is a silhouette axis:
 
-Affects **every** playable Vinari and every Vinari NPC, and it undermines the variety that was the
-*main* reason to choose procedural art in the first place (§2). Unlockables built on a
-one-silhouette species compound the problem rather than helping.
+| `hair` | Form | What it does |
+|---|---|---|
+| 0 | **Crown of light** | Deliberately plain: temple frills only. Matches the Duran's "low ridge" and the Terran's "close-cropped" as the unadorned end of the axis. |
+| 1 | **Tendril fall** | Seven tapered tendrils fanning from the upper head, bowing outward, with glowing tips. The widest and longest form. |
+| 2 | **Frill fan** | A wide crescent membrane arching over the skull, ribbed, blooming along its lit edge, tapering to a point at each temple. |
 
-Needed: one axis that genuinely changes the Vinari head silhouette — a crest, frill, or appendage
-form with three visibly distinct states. Pure art; the `SpeciesArt` seam and the axis plumbing
-already exist.
+"Tendril fall" and "bioluminescent frill" are the Vinari's own entries in the original §4 layer
+catalogue, so the forms are lore-anchored rather than invented.
 
-### 13.2 Pirate species
+Four things the render passes got wrong, none of which were visible in the code:
 
-`AvatarSpecies` gains a fourth value so `forFaction(pirate)` stops falling through to
-`AvatarSpecies.terran` (§12). Right now ~1 NPC in 7 is drawn from the human pool and a pirate can
-draw the same face as a Trader, with only the faction ring distinguishing them.
+1. **The tendrils all swept to one side.** The anchor was mirrored but the *angle* was not — the
+   sign was dropped when indexing the spread array. This was recorded as fixed at the time, and
+   **it was not**: the sign was then applied to an angle that `_tendril` read from +x rather than
+   from straight-down, so `cos` stayed positive across the whole spread and mirroring the angle
+   could not produce a left-leaning tendril however it was signed. It only surfaced when a peer
+   review read the maths rather than the picture.
+2. **The frill's bottom edge was a hard flat cut.** Both edges closed on one shared horizontal
+   line, so the frill read as a lampshade. Making the two edges converge at the tips tapers it.
+3. **The frill never rose above the crown at all.** This is the one that mattered. Its arch put
+   the *control points* at the height I wanted the apex, and a cubic's midpoint only reaches 3/4 of
+   the way to its controls — so a requested 2.16r apex peaked at 1.62r, which is *below* the 1.46r
+   crown line. The entire membrane hid behind the skull and the fan was only ever a side-wing.
+   Routing the arch through an explicit apex point fixed it. The same bug made the ribs invisible
+   and put the lit rim below the head, because all three placed their geometry by control height.
+4. **A translucent membrane is darker than the head behind it.** The first frill rendered as a
+   monk's cowl — the dullest shape in a portrait of a luminous species. It is now three stacked
+   passes (bloom, membrane, lit rim) rather than one wash, because light has to be *added* for it
+   to read as light. Its tips also came up to head height, since trailing down over the shoulders
+   is what made it read as a cloak.
 
-Scope beyond the art: `AvatarCatalog` entries or a derived seed, `AvatarPalette` entries,
-`AvatarAxisCatalog` option labels, and a decision about whether pirates stay excluded from
-registration (they should — they are not a playable faction, only an NPC one). `NpcPortraits` is the
-single place that maps faction → species.
+The `hair` 0 crown filaments were also **removed**. They were thin strokes off the crown and read
+unmistakably as insect antennae — the wrong species, and the exact failure the original
+implementation comment warned about before they were reintroduced.
 
-Worth doing **with** 13.1, not after: both are species art, and both benefit from the same sweep pass.
+**The guard for this is in `test/avatar_outfit_render_test.dart`**, and both of its assertions were
+verified by re-injecting the fault they exist to catch:
 
-### 13.3 Faction power rankings — faces for Most Wanted / Top 10 Pilots
+- The three forms must render *differently* above the crown. Caught by reverting the axis to
+  inert (all three values taking the plain branch).
+- At least one form must put **≥30% of the above-crown band above a luminance floor** — i.e. one
+  form must genuinely rise above the head. Caught by the apex bug, and *only* by this one: the
+  frill's wide bloom still leaked upward with the membrane hidden, so the difference check passed
+  happily while the silhouette was gone. Measured 51% correct against 12% faulted.
 
-Both lists live in `faction_rankings_screen.dart` and already distinguish `isNpc`.
+Both assertions are needed. "The renders differ" is not "the silhouette changed", and a soft glow
+is exactly what makes those two claims come apart.
 
-**Not a drop-in.** `_TopEntity` currently carries only `name`, `faction`, `powerScore`, `credits`,
-`portsOwned`, `kills`, `isNpc` — it **discards the identity a portrait needs**. `NpcPortraits` derives
-from `NpcShip.id` and a player face needs `Player.avatar`, and neither survives into the projection.
+### 13.2 Pirate species — **done, and deliberately not a species**
 
-So this is: add an id (or the resolved portrait) to `_TopEntity`, populate it at the two construction
-sites — where `player` / `npc` are both still in hand — then render. Small, but it is a data change
-first, not a cosmetic one. Same lesson as the bounty board, where the board happened to keep only a
-`targetId` and needed a roster lookup added.
+**The original §11 note that this would need a fourth `AvatarSpecies` was wrong, and the brief
+confirmed it.** Pirates are people who left their own faction and banded together for profit, so
+their *bodies* are ordinary Duran, Vinari, and Terran. A fourth species would have contradicted the
+lore and replaced one variety problem with a worse one: every pirate would then share a single
+silhouette and a single palette, instead of being a mixture of three.
+
+So there is no `avatar_pirate_art.dart`. What exists instead is an **affiliation**.
+
+#### `AvatarAffiliation` — a new axis of identity that is not appearance
+
+`AvatarAffiliation { native, pirate }` sits on `AvatarPortrait`, orthogonal to `species`. It changes
+exactly three things, all of them wear rather than anatomy:
+
+| | What changes | Where |
+|---|---|---|
+| Colour scheme | Garment, trim, hair dye, and marking pigment all move to a darker pirate table | `AvatarPalette` |
+| Ring / backdrop | Orange, whatever species they are | `AvatarPortrait.accentFaction` |
+| Markings | Raised from ~76% to ~95% **marked** at seed time | `AvatarCatalog.seededStyleFor` |
+
+It is **not persisted**. Pirates are not selectable, so an affiliation only ever appears on a derived
+NPC portrait, which is rebuilt from the NPC id on every load. Nothing to migrate.
+
+`NpcPortraits._speciesFor` draws a pirate's species from their own id across all three values, on a
+salt distinct from the presentation and style draws. Sharing one would have locked every pirate of a
+species to a single presentation — a pattern that shows up the moment two land in the same sector.
+
+#### Three things this had to get right, none of them obvious
+
+1. **The ring must not follow the species.** Deriving the accent from `species.faction` put Hegemony
+   red on a pirate Duran, who read as a loyalist at a glance. The accent is now resolved once, in
+   `AvatarAffiliation.factionColorFor`, and both the painter and `AvatarPortraitView` read it from
+   `AvatarPortrait.accentFaction` so they cannot disagree.
+2. **A pirate opts out of the `null`-means-legacy rule.** Hair and marking pigment both fall back to
+   a legacy shape-keyed colour when the dye slot is null, which is what keeps pre-slot saves
+   byte-identical. A pirate must *not* take that path — the native colour is exactly the faction
+   identity the affiliation exists to replace. Safe because a pirate's style is derived per-NPC and
+   never persisted, so there is no older pirate build to stay compatible with.
+3. **The extra RNG draw had to be pirate-only.** `seededStyleFor` draws a different number of times
+   for a pirate. If that ever leaked into the shared sequence it would shift `expression` and every
+   later consumer, silently repainting all 27 catalogue portraits and every saved player avatar. The
+   bias is therefore applied after the shared sequence, and the native stream is pinned by literal
+   values in `test/avatar_pirate_test.dart`.
+
+#### Markings needed art work in two species before the bias could mean anything
+
+Biasing an axis that renders nothing is a no-op, and two of three species were in that state:
+
+- **The Terran drew their marks in `skinShadow`, not from the palette.** Correct for decorative clan
+  marks, useless for scars. A pirate's marks are *damage*, which does not read as complexion shadow,
+  so the shapes are shared and only the pigment is swapped — and only for pirates, because switching
+  it for natives would have repainted every Terran portrait saved before the affiliation existed.
+- **The Vinari had no markings at all**, hidden by lore: they are luminous, not painted. That rule
+  still holds for players, and the editor still hides the row. But a pirate Vinari is a *different
+  case* rather than a contradiction of it — a born Vinari has nothing painted on them, whereas a
+  raider who has been shot has a **crack** in the form with light escaping through it. The seams are
+  gated on the affiliation, so a native Vinari with a non-zero `markings` value from a corrupt save
+  still renders exactly as before. A hidden control must not start working behind the player's back.
+
+The first pass put those seams straight through the eyes (which sit at `o.dy - 0.04r`) and the result
+read as a crude lettered zigzag across the face — the same failure that moved the Duran war paint off
+the mouth. They now sit on the cheek and temple, three points rather than four: enough to bend like a
+fracture, few enough not to read as a glyph.
+
+#### Making them look mean, not merely unsmiling
+
+The brief was "not have them smile … they should look mean", and the first half of that was **not
+enough on its own**. Removing the smiling expression produced a roster that was technically correct
+and visually wrong: rendered side by side, a native "Stern" reads as *unimpressed* and "Neutral" as
+*calm*. Neither is mean. A scowl has to actually be drawn.
+
+So pirates get a `Scowl` on **every** expression, not just the stern one:
+
+| | Native | Pirate |
+|---|---|---|
+| Brow tilt | 0 to 1.0 | +0.52 bias, and the expression's own arch ×1.45 |
+| Brow height | fixed | lifted toward the eye — a scowl sits closer |
+| Mouth | flat, frown, or **smile** | always a downturn: −0.16 neutral, −0.30 stern |
+| Mouth size | species default | ×1.23 wider, ×1.25 heavier, so it reads at 48px |
+
+The mouth is never flat and never upturned, which matters for the Vinari too even though they have
+none — **the brow is their only lever**, so the bias applies there too. Two of three expressions stay
+reachable: half stern, half neutral-with-a-scowl, neither of which smiles.
+
+`Scowl` is a public value rather than a branch inside `expression()`, for two reasons that both
+materialised as bugs:
+
+- **The Terran overrides `expression()` and does not call `super`.** The first implementation put the
+  adjustments in the base class only, so the one species whose face actually shows a mouth silently
+  never scowled. A pixel diff of a Terran pirate against a Terran native came back **byte-identical**
+  with and without the scowl. It is now consumed explicitly by both.
+- **It is assertable.** See below.
+
+#### The guard that could not fail
+
+The natural guard — "a pirate face renders differently from a native one" — **cannot detect the scowl
+being removed**, because the cloth, hair dye, and backdrop differ too. The faces stay different and the
+assertion passes with the defect fully present. This was verified by disabling the entire scowl and
+watching the test pass. It is the same trap as the Vinari frill, in the opposite direction: that guard
+could not see a difference that *should* exist, this one could not see one that *should not*.
+
+Two guards replace it, and both were fault-injected:
+
+- **A pixel floor, per species.** The scowl has to *contribute* a measurable number of pixels in a
+  strip strictly inside the head, where the backdrop is occluded and only skin and features remain.
+  Measured with and without: Duran 4 → 492, Terran 0 → 713, Vinari 3736 → 3831. The floor of 200
+  catches the Duran and the Terran; it cannot catch a Vinari-only revert, whose face texture already
+  differs by 3736 pixels because it is drawn in the hair colour. That gap is covered by the next guard.
+- **The exact `Scowl` values**, asserted directly in `avatar_pirate_test.dart` across all three
+  species, all three presentations, and both expressions: a native's is `Scowl.none` with a `null`
+  mouth curve (so the "Amused" smile stays reachable for everyone else), a pirate's has a positive brow
+  bias, an arch scale above 1, a lifted brow, a negative mouth curve, and a wider, heavier mouth.
+  Nothing unrelated can contaminate a number.
+
+#### What a peer review found (and what it cost to fix)
+
+A static read of the four highest-risk files found real defects that rendering had not. All four
+were in the Vinari, and all four share a cause: **the frill re-derived its own geometry in each
+place that needed it**, and the copies drifted apart.
+
+| Defect | Why rendering missed it |
+|---|---|
+| `_frillTip` used as **pixels** where the constant and its doc both said head radii | Tips sat 1.6px from centre instead of ~50px, so the "wide bell" was a narrow steeple — and the head hid all but the part above the crown, which still read as a glowing arc |
+| The edge was built `close()`d and then **stroked** | `drawPath` strokes a closed path's closing chord too, putting a hard horizontal line tip to tip. Invisible at 1.6px, a lampshade cut once the units were fixed |
+| Rib endpoints came from a **quadratic** through the same three points | Its midpoint only reaches halfway to its control, so the ribs peaked at ~0.96r — below the 1.46r crown, behind the skull. The comment claimed this was already fixed. It had not |
+| Tendril direction read its angle from **+x, not straight-down** | `cos` stays positive across the whole spread, so every tendril leaned right. The fan was one-sided; the comment claimed a symmetry the maths never produced |
+
+The fix was to give the frill **one** geometry holder, `_FrillArch`, and have the fill, both strokes,
+and the rib endpoints all come from it. A point on the edge is now evaluated from the same control
+points the drawn path uses, so an endpoint cannot land somewhere the edge is not.
+
+The tendril fix then **changed what the guard could see**, which turned out to be the more valuable
+half. The guard sampled the strip above the crown; the tendrils no longer rise above the crown at
+all, so forms 0 and 1 came back "identical above the crown" — true, and useless, because they differ
+plainly beside the head. Rebuilding it took three attempts, and the failures are the useful part:
+
+1. **Widening the band silently blinded it.** A wider sample let all three defects through. The
+   reason: `coverage.reduce(max)` only catches a fault in whichever form is *tallest*, and the plain
+   form and the tendrils kept the maximum high enough to mask a broken frill.
+2. **Counting brightness cannot work in a wide band.** The head is identical across all three forms
+   and dominates the count; the input moved by under 7% when the frill's apex was pushed back below
+   the crown — the exact defect the test exists to catch.
+3. **The crest also varies with `hair`.** Drawing 4500 of 5709 differing pixels, it vouched for an
+   entirely inert axis. The mask has to be **outside the head silhouette**, where an appendage lands
+   and the crest does not.
+
+The final guard differences each form against the plain one inside that mask, and separates the two
+ways a silhouette fails: **vanished** (a pixel count) and **lopsided** (a left/right balance check —
+the one-sided spray covers *more* pixels than the symmetric fall, so no count threshold can see it).
+All four defects above are re-injected and caught, plus an inert axis.
+
+#### A palette property I asserted instead of the one that mattered
+
+Pirate trim was derived by lerping the **native** trim toward black, so "darker than native trim"
+held by construction — and the test asserted exactly that. The property anyone can see is **contrast
+against its own garment**, and it was 1.15:1, worse than the native 1.43:1 in all nine
+species/variant combinations. The trim had all but vanished. It was optimising for its own
+assertion.
+
+Mixing the trim target into the **pirate's own cloth** at the rate the native path already uses
+lands lower than native trim in every case — the old property, still true — while giving 1.54:1,
+better than the native baseline. Both now hold by construction, and the luminance test was widened
+to assert the one that matters.
+
+#### Smaller items from the same review
+
+- **The `SpeciesArt` layer-order doc had been orphaned.** `Scowl` was inserted between it and the
+  class with no blank line, so Dartdoc attached the whole run-on comment to `Scowl` and left
+  `SpeciesArt` undocumented. The layer order is the invariant that has already been broken once.
+- **Pirate colour slots were unreachable.** With `hairColor` null, the pirate dye resolved off the
+  hair *shape*, so a pirate got 3 looks from a 3×3 grid — the exact coupling the dye axis exists to
+  remove — and one entry of each pirate dye list could never be drawn. Pirates now draw the slots;
+  it costs two draws on the pirate path only, which is free.
+- **`trim()` ignored the dye for pirates** while `hair` and `markingPigment` both honoured it, making
+  the exception inconsistent inside itself.
+- **The `pirate ? 5 : 4` marking skew was nearly a no-op** — 6.25% unmarked down to 5%, with the
+  re-roll doing essentially all the work. Removed.
+- **The RNG draws were the argument list.** Dart evaluates named arguments in source order, so the
+  `AvatarStyle(...)` call *was* the draw order. A formatter will not reorder it, but any refactor
+  that regroups those arguments would silently shift the stream for all 27 catalogue portraits.
+  Hoisted into sequential locals, and all 27 native styles are now pinned as literals rather than a
+  three-id sample.
+- **`Scowl` is now a proper value**: `==`/`hashCode`, a shared-constant base for its two presets (they
+  were duplicated verbatim), and `forAffiliation(affiliation, expression)` so a test can read it
+  without building a whole `AvatarDrawContext`.
+
+#### A second review round: the Terran and the model
+
+A follow-up read of `avatar_terran_art.dart`, `avatar_selection.dart`, and `npc_portrait.dart` found
+three more rendering bugs, all of which had been visible in a screenshot for some time and simply
+had not been looked at with the right question.
+
+1. **The male squint was never drawn.** `lidWidth` returned *pixels* in the base class and a *raw
+   fraction* in the Terran override, and the caller clamped with `math.max(1, …)`. Both Terran
+   presentations got a 1px lid, so one of the three documented changes that stop the male faces
+   looking girlish had never rendered. Renamed `lidFraction`, with `c.u()` applied at the one call
+   site. **This repaints Terran portraits** — the female lid goes from 1px to ~2.8px — which was
+   accepted because the code had never matched its own documentation.
+2. **The brow was a diagonal, not a V.** `side` multiplied the y-offsets as well as the x-offsets,
+   so the left brow's inner end rose while the right brow's fell. Fixed for pirates only, for the
+   same reason as everywhere else: pirates were added after the bug was found, so they get correct
+   geometry for free while natives keep the old shape and no save moves.
+3. **The Terran gear was painted over.** It was called from `appendages` with a comment insisting it
+   "must be unclipped" — true and irrelevant, because `appendages` is drawn *before* the head
+   fill. Only the earcup ever showed, so two of the three options were indistinguishable. This forced
+   a new `SpeciesArt.accessories` slot drawn last and unclipped, which is the seam's missing home for
+   worn things that overlap the skull. The reviewer's framing was the useful part: `appendages` is
+   behind the head *on purpose*, so anything crossing the interior needs its own slot.
+
+Plus a palette fix: measured across every species' own pigment table, the worst pigment-on-skin pair
+is **1.02:1** — a mark that is drawn and entirely invisible. `markingPigment` now takes the skin and
+nudges a pirate's mark away from it until it clears 1.5:1, lightening or darkening whichever moves
+further. Natives keep their authored table so nothing saved moves; the same weakness is real for
+them and is separate work.
+
+And a batch of small correctness items: `withStyle(null)` was a **silent no-op** (it forwarded to
+`copyWith(style: null)`, which resolves a nullable argument with `??`, so the "reset" kept the old
+style — the `clearStyle` flag existed and simply was not used); `fromJson` read `presentation` from
+the save while repairing `portraitId`, so a hand-edited save could put a *female* tab over
+`duran_male_lancer_01`, and presentation is now derived from the resolved portrait; the dead
+`eyes()` override whose comment claimed the squint was handled there; `browLift` renamed `browDrop`
+because it *lowers* the brow and the wrong name invites the wrong sign; the `stableSeedFor` doc
+claimed FNV-1a and the function is a split-multiply hash; pirate species pinned to an explicit list
+so adding a species cannot reshuffle every existing pirate; the two copy-pasted draws in
+`NpcPortraits` folded into one; and an empty `pilotName` now falls back to the species label rather
+than producing an empty accessibility label.
+
+#### Deferred, with reasons
+
+- **Switching the painter off `math.Random`** onto the same Lehmer generator would remove a real
+  stability hazard — Dart documents that `Random`'s stream may change between releases, and this
+  project calls the shared rng "effectively part of the save format". It repaints every existing
+  portrait, so it is its own piece of work, not a drive-by. `scoped()` could move now at no
+  compatibility cost, since only the backdrop axis uses it.
+- **A call-order test with a recording fake `SpeciesArt`** would enforce the layer order rather than
+  documenting it. Worth doing; not urgent, since the doc is now correctly attached. It would also have
+  caught the gear-in-`appendages` placement without a render.
+- **Splitting `expression()` into a template method** with overridable brow/mouth geometry. The
+  Terran currently copies ~60 lines of `expression()` to consume the `Scowl`, which is how the
+  super-skip class of bug happened once already; the next species override will repeat it. Right fix,
+  moderate blast radius, so it wants its own pass.
+- **Removing the `avatar_selection.dart` <-> `avatar_catalog.dart` import cycle** by lifting the
+  enums and `AvatarStyle` into a shared `avatar_types.dart`. Legal Dart, and the comment claiming it
+  was "kept harmless" gave false comfort: this file imports `package:flutter/foundation.dart` for
+  `@immutable`, so what actually keeps the cycle cheap is only that the *catalogue* imports no
+  Flutter. `package:meta` would be honest, but it is not a declared dependency and adding one to fix
+  a comment is the wrong trade. The restructure is the real answer.
+- **A golden test on `flutter test --platform chrome`** against pinned literals, to actually prove the
+  web-parity claim rather than assert it in a comment. Needs a browser-capable runner, so it could not
+  be done here.
+- **`_isBareFilename` hardening** — it rejects `/`, `\`, `.` and `..` but not a Windows-rooted
+  `C:evil.png` or a NUL byte. Only worth doing before uploads ship, which is deferred anyway.
+- **Marking pigment legibility for natives** — see above; fixing it repaints saved portraits.
+- **An affiliation traits object** would make a third affiliation a data change. Premature at two.
+- **A style schema version.** The `null`-means-legacy rule now accrues a branch per new axis. An
+  explicit version would allow migration instead, and is the right answer eventually.
+- **Caching portraits to a `Picture`** keyed by id/style/size, for NPC lists.
+
+#### Palette choices that a test had to force
+
+Two hand-authored "dark" values were wrong, and both were caught by asserting relative luminance
+rather than by looking:
+
+- **Pirate trim was *brighter* than native Duran trim.** The Duran's issued armour is already so dark
+  that a shared dark trim out-shone it. Pirate trim is now derived — the native trim pushed 42% to
+  black — which makes "darker" true by construction for every species and variant, including any
+  added later.
+- **"Darker hair at every index" is false and was not asserted.** A pirate is bleached as often as
+  they are sun-darkened, so one dye is legitimately lighter than the native equivalent. The test
+  asserts the *mean* per species, which is the claim that is actually true.
+
+The marking rate is likewise asserted on both sides: below 90% fails, and **100% also fails.** An
+earlier version re-rolled every unmarked pirate and measured exactly 100%, which is a stronger claim
+than "more often" and threw away a variant for nothing — a pirate with no marks at all reads as
+somebody who joined last week, which is a look worth keeping.
+
+### 13.3 Faction power rankings — **done**
+
+Both lists live in `faction_rankings_screen.dart`. The prediction in the first draft was right: this
+was a data change first, not a cosmetic one. `_TopEntity` discarded exactly the identity a portrait
+needs — it kept `name`, `faction`, and the scores, and dropped `Player.avatar` and `NpcShip.id` at
+the two construction sites where both were still in hand.
+
+#### One face route, two entry points
+
+`_TopEntity` now carries a `_PilotFace` rather than an id, so the card knows nothing about players,
+NPCs, or storage. `_PilotFace` exists because the two kinds genuinely reach a portrait differently:
+
+- A **player** holds an `AvatarSelection` — a catalogue id plus an optional saved style — which
+  `AvatarCanvas` resolves, and which degrades to the species default rather than to a broken box.
+  The call site uses `player.effectiveAvatar`, so a player who never customised still gets a face.
+- An **NPC**'s face is *derived* from its id and is deliberately absent from the catalogue, so it goes
+  straight to `AvatarPortraitView`. There is nothing to resolve.
+
+Both draw through the same painter, so this is one drawing path with two entry points rather than
+two renderings. Note `AvatarCanvas` *returns* an `AvatarPortraitView`, so the portrait count is the
+total and the canvas count is the players — which is exactly the split the test asserts, because a
+swapped route would still produce ten faces and only a count would notice.
+
+#### Most Wanted is a lookup, not a projection
+
+A bounty stores only a `targetId` and a name, so the section needs the ship or the player back. The
+screen already loads both rosters, so it indexes them by id at load rather than scanning per row.
+A target that is **destroyed or missing gets no face** and the row falls back to the alert icon —
+never a blank, never an error. That matches the Bounty Board screen exactly, so the same contract
+looks the same in both places, and it is why the face *replaces* the icon rather than sitting beside
+it: with the icon kept as the fallback, a missing portrait costs the row nothing.
+
+#### The layout defect this surfaced — and why no test found it
+
+Adding a 28px face to the Top 10 row **broke the phone layout**, and neither a passing test nor an
+overflow report caught it. At 430px the fixed two-column layout squeezed the name column down to
+about four pixels: `Expanded` absorbed the shortfall without complaining, so there was no
+`RenderFlex` error, and every name then rendered **one character per line** down a narrow strip,
+making each card roughly 200px tall. It was only visible in a screenshot.
+
+The fix is a `LayoutBuilder` that falls back to a single column below 616px — 300px per column plus
+the gap, which is what a rank, a face, a name, and a score bar actually need.
+
+The guard therefore **measures** rather than watching for an overflow: the long-named pilot's `Text`
+must exceed 80px wide *and* stay under 40px tall, and the second half is the one that matters. A
+collapsed column is not an overflow, it is a wrapping, and only the height catches it. The test uses
+a deliberately long name because a short one can survive the squeeze by luck.
+
+#### An incidental pre-existing fix
+
+The Ship Class Breakdown legend was a centred `Row` of four entries, which **overflowed by 162px** at
+430px. Unrelated to the portraits, but a visible break in the screen being worked on, so it became a
+`Wrap`. `flutter_test` fails on a `RenderFlex` overflow, so the pump itself is the regression guard.
+
+#### What the tests need to exist
+
+`PlayerStorage` and `NpcStorage` had no way to be faked: their constructors were private, so a
+subclass in another library could not even be declared, and neither had a singleton override. Both
+gained `instanceForTest` and a `forTesting()` constructor, matching `UniverseStorage`. `BountyBoard`
+gained `replaceForTest` — `post` cannot be used because it validates against the live roster and
+debits the poster's credits — and `skipDiskLoadForTest`, because `ensureLoaded` otherwise awaits
+`BountyStorage`, which needs `path_provider` and is left **pending rather than throwing**: the screen
+sat on its spinner forever instead of failing loudly. That one is worth remembering generally —
+a missing `path_provider` in a widget test does not throw, it hangs.
 
 ### 13.4 Comms panel — chat and mail
 

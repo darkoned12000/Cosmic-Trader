@@ -9,9 +9,22 @@ import '../../services/game_event_log.dart';
 import 'file_safe.dart';
 
 class NpcStorage {
-  static final NpcStorage _instance = NpcStorage._internal();
+  static NpcStorage _instance = NpcStorage._internal();
   factory NpcStorage() => _instance;
   NpcStorage._internal();
+
+  /// Constructor for a test double. [NpcStorage._internal] is private, so a fake
+  /// in another library could not otherwise subclass this to avoid the
+  /// filesystem.
+  @visibleForTesting
+  NpcStorage.forTesting();
+
+  /// Test-only override for the singleton, to inject a fake that returns a
+  /// synthetic roster without touching the filesystem. Matches
+  /// `UniverseStorage.instanceForTest`; pass `null` to restore the real one.
+  @visibleForTesting
+  static set instanceForTest(NpcStorage? storage) =>
+      _instance = storage ?? NpcStorage._internal();
 
   static const _fileName = 'npcs.json';
 

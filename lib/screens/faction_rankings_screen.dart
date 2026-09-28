@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cosmic_trader/data/models/avatar_selection.dart';
+import 'package:cosmic_trader/data/models/bounty.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -10,6 +12,8 @@ import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/core/faction_colors.dart' as fcol;
+import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
+import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/shared/hud_pill.dart';
 
 String _formatCredits(int credits) {
@@ -34,6 +38,18 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
   List<NpcShip> _npcs = [];
   bool _loading = true;
 
+  /// Rosters indexed by id, for drawing a face on a ranked pilot or a bounty
+  /// target.
+  ///
+  /// Built here rather than scanned per row: both lists are walked once at load
+  /// instead of five-to-ten times per rebuild. A bounty only stores a
+  /// `targetId` and a name, so a portrait needs the ship or the player back. A
+  /// target that has been destroyed, or is somehow missing, simply gets no
+  /// portrait — the row is still fully usable without one, so a missing face
+  /// must never be an error state. Same rule as the Bounty Board screen.
+  Map<String, NpcShip> _npcById = const {};
+  Map<String, Player> _playerById = const {};
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +67,8 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
         _players = players;
         _sectors = sectors;
         _npcs = npcs;
+        _npcById = {for (final n in npcs) n.id: n};
+        _playerById = {for (final p in players) p.id: p};
         _loading = false;
       });
     } catch (e) {
@@ -150,6 +168,10 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
         portsOwned: player.ownedPorts.length,
         kills: 0,
         isNpc: false,
+        // `effectiveAvatar`, not `avatar`: a player who never customised (or whose
+        // save predates the avatar system) still gets their species default rather
+        // than no face at all.
+        face: _PilotFace.player(player.effectiveAvatar, player.username),
       ));
     }
 
@@ -171,6 +193,9 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
         portsOwned: 0,
         kills: npc.kills,
         isNpc: true,
+        // Derived from the NPC's own id, so it needs no storage and re-derives
+        // identically on every rebuild.
+        face: _PilotFace.npc(npc),
       ));
     }
 
@@ -337,6 +362,27 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
     );
   }
 
+  /// The face for a bounty target, or null when they are not in the roster.
+  ///
+  /// A bounty stores only a `targetId` and a name, so a portrait needs the ship or
+  /// the player back. A target that has been destroyed — or that is somehow
+  /// missing — gets no face, and the row falls back to the alert icon. This is
+  /// never an error state: the contract is still fully readable without one.
+  /// Same rule as the Bounty Board screen, so the same contract looks the same in
+  /// both places.
+  _PilotFace? _faceForBounty(Bounty bounty) {
+    if (bounty.targetIsPlayer) {
+      final player = _playerById[bounty.targetId];
+      return player == null
+          ? null
+          : _PilotFace.player(player.effectiveAvatar, player.username,
+              size: 32, showRing: true);
+    }
+    final npc = _npcById[bounty.targetId];
+    if (npc == null || npc.isDestroyed) return null;
+    return _PilotFace.npc(npc, size: 32, showRing: true);
+  }
+
   /// Most-wanted feed from the Bounty Board: top active contracts by
   /// amount. Read-only view over the shared board singleton.
   Widget _buildMostWantedSection(ThemeData theme, ColorScheme cs) {
@@ -376,31 +422,40 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                 ),
               )
             else
-              ...shown.map((b) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
+              ...shown.map((b) {
+                // Face when the target is still in the roster; the alert icon
+                // when it is not, so a missing portrait never costs the row its
+                // only visual signal.
+                final face = _faceForBounty(b);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      if (face != null)
+                        face
+                      else
                         Icon(Icons.crisis_alert_rounded,
                             size: 16, color: Colors.redAccent.shade400),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${b.targetName} (${b.targetFaction})',
-                            style: const TextStyle(fontSize: 13),
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${b.targetName} (${b.targetFaction})',
+                          style: const TextStyle(fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        Text(
-                          '${b.amount} cr',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.bold,
-                          ),
+                      ),
+                      Text(
+                        '${b.amount} cr',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.bold,
                         ),
-                      ],
-                    ),
-                  )),
+                      ),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -426,37 +481,64 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    children: _topEntities.take(5).map((entity) {
-                      return _TopPilotCard(
-                        rank: _topEntities.indexOf(entity) + 1,
-                        entity: entity,
-                        maxScore: _topEntities.isNotEmpty
-                            ? _topEntities.first.powerScore
-                            : 1,
-                      );
-                    }).toList(),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    children: _topEntities.skip(5).take(5).map((entity) {
-                      return _TopPilotCard(
-                        rank: _topEntities.indexOf(entity) + 1,
-                        entity: entity,
-                        maxScore: _topEntities.isNotEmpty
-                            ? _topEntities.first.powerScore
-                            : 1,
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Two columns only when each can still hold a rank, a face, a
+                // name, and a score bar.
+                //
+                // This is not a hypothetical. A fixed two-column `Row` does not
+                // *overflow* below the threshold — `Expanded` absorbs the
+                // shortfall — it just squeezes the name column to a few pixels,
+                // and every name then renders one character per line down a 4px
+                // strip. No test failed and no overflow was reported; it was only
+                // visible in a 430px screenshot, as rows ~200px tall.
+                const minPerColumn = 300.0;
+                // `1.0`, not `1`: hoisted out of the call site the ternary loses
+                // the `double` context it used to inherit from the named argument,
+                // and the branch types as `num`.
+                final maxScore = _topEntities.isNotEmpty
+                    ? _topEntities.first.powerScore
+                    : 1.0;
+                Widget cardAt(int index) => _TopPilotCard(
+                      rank: index + 1,
+                      entity: _topEntities[index],
+                      maxScore: maxScore,
+                    );
+
+                if (constraints.maxWidth >= minPerColumn * 2 + 16) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          children: [
+                            for (var i = 0;
+                                i < 5 && i < _topEntities.length;
+                                i++)
+                              cardAt(i),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            for (var i = 5;
+                                i < 10 && i < _topEntities.length;
+                                i++)
+                              cardAt(i),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Column(
+                  children: [
+                    for (var i = 0; i < _topEntities.length; i++) cardAt(i),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -526,8 +608,14 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
               getStats: (fc) => stats[fc]!.shipByClass,
             ),
             const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            // A `Wrap`, not a `Row`: four legend entries in a centred Row
+            // overflowed by 162px at 430px width. Pre-existing, and unrelated to
+            // the portraits above, but it is a visible break in the same screen
+            // so it is fixed rather than left next to new work.
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 4,
               children: ShipClassType.values.map((sc) {
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1067,6 +1155,10 @@ class _TopEntity {
   final int kills;
   final bool isNpc;
 
+  /// The pilot's face. Carried on the row rather than looked up at paint time so
+  /// the card has no knowledge of players, NPCs, or storage.
+  final _PilotFace face;
+
   _TopEntity({
     required this.name,
     required this.faction,
@@ -1075,7 +1167,73 @@ class _TopEntity {
     required this.portsOwned,
     required this.kills,
     required this.isNpc,
+    required this.face,
   });
+}
+
+/// A pilot's face, from whichever side of the player/NPC split they came from.
+///
+/// The two kinds reach a portrait by genuinely different routes, which is why
+/// this exists rather than a nullable pair on the row:
+///
+///  - A **player** holds an `AvatarSelection` — a catalogue id plus an optional
+///    saved style — which [AvatarCanvas] resolves. A selection can be stale or
+///    missing, and the canvas degrades to the species default rather than to a
+///    broken box.
+///  - An **NPC**'s face is *derived* from the NPC's id and is deliberately absent
+///    from [AvatarCatalog], so it goes straight to [AvatarPortraitView]. There is
+///    nothing to resolve.
+///
+/// Both draw through the same painter, so this is one drawing path with two entry
+/// points, not two renderings.
+class _PilotFace extends StatelessWidget {
+  const _PilotFace.player(
+    this._selection,
+    this._label, {
+    this.size = 28,
+    this.showRing = false,
+  }) : _npc = null;
+
+  const _PilotFace.npc(
+    NpcShip npc, {
+    this.size = 28,
+    this.showRing = false,
+  })  : _selection = null,
+        _npc = npc,
+        _label = null;
+
+  final AvatarSelection? _selection;
+  final NpcShip? _npc;
+
+  /// Spoken label. A player's name is not in the portrait, so it has to be passed;
+  /// an NPC's derived portrait already carries the pilot name.
+  final String? _label;
+
+  final double size;
+
+  /// Defaults **off**. The Top 10 card already carries a faction-coloured left
+  /// border, and at 28px a second ring of the same colour reads as a smudge
+  /// rather than as information. The Most Wanted rows turn it on, because those
+  /// have no border and the ring is the only place the target's faction shows.
+  final bool showRing;
+
+  @override
+  Widget build(BuildContext context) {
+    final npc = _npc;
+    if (npc != null) {
+      return AvatarPortraitView(
+        portrait: NpcPortraits.of(npc),
+        size: size,
+        showRing: showRing,
+      );
+    }
+    return AvatarCanvas(
+      selection: _selection!,
+      size: size,
+      showRing: showRing,
+      semanticLabel: _label,
+    );
+  }
 }
 
 class _TopPilotCard extends StatelessWidget {
@@ -1121,6 +1279,8 @@ class _TopPilotCard extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(width: 6),
+          entity.face,
           const SizedBox(width: 6),
           Expanded(
             child: Column(

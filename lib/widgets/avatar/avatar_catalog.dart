@@ -1,4 +1,5 @@
 import 'package:cosmic_trader/data/models/avatar_selection.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 
 /// One selectable portrait in the gallery.
 ///
@@ -13,6 +14,7 @@ class AvatarPortrait {
     required this.presentation,
     required this.label,
     this.isDefault = false,
+    this.affiliation = AvatarAffiliation.native,
   });
 
   /// Stable catalogue key, e.g. `duran_male_lancer_01`.
@@ -28,6 +30,21 @@ class AvatarPortrait {
   /// selection. Exactly one per species; see [AvatarCatalog.defaultFor].
   final bool isDefault;
 
+  /// Who this pilot fights for, independent of species. Every catalogue entry is
+  /// [AvatarAffiliation.native]; only derived NPC portraits are ever pirates.
+  final AvatarAffiliation affiliation;
+
+  /// The faction whose colour identifies this pilot on the ring and backdrop.
+  ///
+  /// Resolved through [AvatarAffiliation.factionColorFor] rather than from
+  /// `species.faction`, so the painter and `AvatarPortraitView` cannot disagree
+  /// about a pirate's colour — a pirate Duran is orange, not Hegemony red.
+  ///
+  /// Returns a [FactionClass] rather than a `Color` to keep this file free of
+  /// `package:flutter`; callers pass it to `factionColor()`.
+  FactionClass get accentFaction =>
+      AvatarAffiliation.factionColorFor(affiliation, species);
+
   /// Deterministic seed for the procedural portrait painter.
   ///
   /// Uses a stable FNV-1a hash of [id] rather than `String.hashCode`, which is
@@ -38,7 +55,8 @@ class AvatarPortrait {
   /// The appearance this portrait gets when the player has not customised
   /// anything. Derived from [drawSeed], so it is stable across platforms and
   /// identical for every build that has not been given a `null` style.
-  AvatarStyle get seededStyle => AvatarCatalog.seededStyleFor(id);
+  AvatarStyle get seededStyle =>
+      AvatarCatalog.seededStyleFor(id, affiliation: affiliation);
 
   @override
   String toString() => 'AvatarPortrait($id)';
@@ -229,8 +247,20 @@ abstract final class AvatarCatalog {
   /// gallery's swatch rows cannot drift from what the painter actually draws.
   static const int variantCount = 3;
 
-  /// FNV-1a over the UTF-16 code units of [value]. Stable across platforms and
-  /// SDK versions, unlike `String.hashCode`.
+  /// A split-multiply hash over the UTF-16 code units of [value]. Stable across
+  /// platforms and SDK versions, unlike `String.hashCode`.
+  ///
+  /// **Not FNV-1a**, despite what an earlier version of this comment claimed and
+  /// what the file's history implies. The prime is applied as
+  /// `lo * 0x193 + hi * 0x100 + (hash >> 16)` rather than `hash * 0x01000193`, and
+  /// the multiply is deliberately split into 16-bit halves to keep every
+  /// intermediate inside 2^53 for web parity. That is a *different function* from
+  /// FNV-1a, and a weaker one: after the first code unit the state is bounded near
+  /// 2.7e7 regardless of input length, so a few thousand ids can collide by
+  /// birthday. Fine for 27 catalogue entries and for the "hundreds of NPCs show no
+  /// repeats" claim, which is what this is used for. Do not describe it as FNV-1a,
+  /// and do not "fix" it to be — that would repaint every saved portrait and every
+  /// existing NPC face.
   ///
   /// The multiply is deliberately kept under 2^53. A plain 32-bit FNV prime
   /// (0x01000193) times a 32-bit hash reaches ~7e16, which exceeds the exact
@@ -251,9 +281,26 @@ abstract final class AvatarCatalog {
   }
 
   /// The style a portrait falls back to when a selection carries no explicit
-  /// one. Derived purely from [portraitId] so an un-customised portrait looks
-  /// the same everywhere and across rebuilds.
-  static AvatarStyle seededStyleFor(String portraitId) {
+  /// one. Derived purely from [portraitId] (and [affiliation]) so an
+  /// un-customised portrait looks the same everywhere and across rebuilds.
+  ///
+  /// [affiliation] biases one axis and nothing else. Pirates carry markings far
+  /// more often: a hard life leaves a record, and more of it on somebody who
+  /// chose that life.
+  ///
+  /// ## The extra draw is deliberately last-ish
+  ///
+  /// The bias consumes an *additional* draw, and only for pirates, so the RNG
+  /// stream for every [AvatarAffiliation.native] portrait is untouched. Drawing
+  /// the bias inside the shared sequence would shift [expression] and every
+  /// later consumer for all 27 catalogue entries, silently repainting every
+  /// player portrait saved so far — the exact failure the `null`-means-legacy
+  /// rule exists to prevent. Pirates are derived per-NPC and never persisted, so
+  /// they are free to consume a different number of draws.
+  static AvatarStyle seededStyleFor(
+    String portraitId, {
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
+  }) {
     // A local Lehmer draw rather than `math.Random` so the value depends on
     // nothing but the id — no global RNG state, no library import here.
     //
@@ -268,18 +315,84 @@ abstract final class AvatarCatalog {
       return seed % max;
     }
 
-    return AvatarStyle(
-      tone: nextInt(AvatarStyle.toneCount),
-      outfit: nextInt(variantCount),
-      outfitTone: nextInt(variantCount),
-      hair: nextInt(variantCount),
-      horns: nextInt(variantCount),
-      eyes: nextInt(variantCount),
-      // Same weighting as AvatarStyle.reroll, so an un-customised portrait is
-      // as likely to carry markings as a re-rolled one.
+    final pirate = affiliation == AvatarAffiliation.pirate;
+
+    // Hoisted into sequential locals rather than passed as named arguments.
+    //
+    // Dart evaluates named arguments in source order, so the argument list *was*
+    // the draw order — a formatter will not reorder it, but any refactor that
+    // reorders or regroups those arguments silently shifts the stream for all 27
+    // catalogue portraits and every saved avatar. Written out, the order is
+    // visible and a reorder is a diff rather than an accident.
+    final tone = nextInt(AvatarStyle.toneCount);
+    final outfit = nextInt(variantCount);
+    final outfitTone = nextInt(variantCount);
+    final hair = nextInt(variantCount);
+    final horns = nextInt(variantCount);
+    final eyes = nextInt(variantCount);
+    // Same weighting as AvatarStyle.reroll, so an un-customised portrait is as
+    // likely to carry markings as a re-rolled one.
+    final markings = nextInt(4) == 0 ? 0 : nextInt(2) + 1;
+    // Pirates never draw "Amused" (the third option, the only one with a mouth
+    // that curves upward). A smiling raider reads as friendly, and a third of a
+    // pirate roster grinning detours the eye straight past the silhouette work
+    // the affiliation otherwise does.
+    //
+    // Drawn over 2 rather than 3, so the modulus differs but the **number of
+    // draws does not** — one `nextInt` either way, which is what keeps the native
+    // stream identical. Over 1 would be the tempting version ("always stern") and
+    // it would throw away the neutral option for nothing: half stern and half
+    // neutral still never smiles, and keeps two faces in the mix.
+    final expression = nextInt(pirate ? 2 : variantCount);
+
+    // Colour slots. Left null for everyone, which is the "coupled" reading that
+    // reproduces the old shape-keyed colours for pre-slot saves.
+    //
+    // Pirates are the exception, and a peer review caught why it matters: with
+    // `hairColor` null, `AvatarPalette.hair` keys the pirate's dye off the hair
+    // *shape*, so a pirate got 3 distinct looks from a 3×3 shape/dye grid — the
+    // exact coupling the dye axis exists to remove — and one entry of each
+    // pirate dye list was unreachable. Drawing the slots costs two extra draws
+    // **on the pirate path only**, which is free: a pirate style is derived
+    // per-NPC and never persisted.
+    final hairColor = pirate ? nextInt(3) : null;
+    final markingColor = pirate && markings > 0 ? nextInt(3) : null;
+
+    var style = AvatarStyle(
+      tone: tone,
+      outfit: outfit,
+      outfitTone: outfitTone,
+      hair: hair,
+      horns: horns,
+      eyes: eyes,
+      markings: markings,
+      expression: expression,
+      hairColor: hairColor,
+      markingColor: markingColor,
+    );
+
+    // Only reached by a pirate who drew unmarked, so native portraits never
+    // consume these draws and their stream is unchanged.
+    //
+    // Three unmarked draws in four become marked. That takes pirates from ~75%
+    // marked to ~95% rather than to 100%: a pirate with no marks at all reads as
+    // somebody who joined last week, which is a look worth keeping in the mix. An
+    // earlier version re-rolled unconditionally and measured exactly 100%, which
+    // is a stronger claim than "more often" and threw away a variant for nothing.
+    //
+    // An earlier version also skewed the base rate (`nextInt(5)` for pirates) to
+    // push the number up. A peer review showed that contributed almost nothing —
+    // 6.25% unmarked down to 5% — while the re-roll does essentially all the work,
+    // so the extra rate was complexity for no measurable gain and is gone.
+    if (!pirate || style.markings != 0) {
+      return style.sanitized();
+    }
+    style = style.copyWith(
       markings: nextInt(4) == 0 ? 0 : nextInt(2) + 1,
-      expression: nextInt(variantCount),
-    ).sanitized();
+      // A pirate who loses their mark has no pigment to spend on one.
+      clearMarkingColor: true,
+    );
+    return style.sanitized();
   }
 
   static final Map<String, AvatarPortrait> _byId = {

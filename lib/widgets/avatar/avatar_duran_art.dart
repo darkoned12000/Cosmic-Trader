@@ -179,8 +179,14 @@ class DuranArt extends SpeciesArt {
     if (c.style.markings == 0) return;
     final o = c.headCenter;
     final r = c.headR;
+    // `c.skin` is passed so a pirate's mark can be checked against the skin it
+    // is drawn on — a fixed pigment table cannot serve six tones.
     final paint = AvatarPalette.markingPigment(
-            AvatarSpecies.duran, c.style.markings, c.style.markingColor)
+            AvatarSpecies.duran,
+            c.style.markings,
+            c.style.markingColor,
+            c.portrait.affiliation,
+            c.skin)
         .withValues(alpha: 0.80);
     if (c.style.markings == 1) {
       // Two cheek stripes, kept clear of the mouth.

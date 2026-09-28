@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:cosmic_trader/data/models/avatar_selection.dart';
+import 'package:cosmic_trader/widgets/avatar/avatar_palette.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_species_art.dart';
 
 /// Terran art: humans in practical jumpsuits and merchant finery.
@@ -80,6 +81,10 @@ class TerranArt extends SpeciesArt {
   @override
   void appendages(AvatarDrawContext c) {
     _ears(c);
+  }
+
+  @override
+  void accessories(AvatarDrawContext c) {
     _gear(c);
   }
 
@@ -105,8 +110,12 @@ class TerranArt extends SpeciesArt {
   /// [AvatarStyle.effectiveGear], which keeps the old coupling to `outfit` so
   /// existing pilots keep whatever they were wearing.
   ///
-  /// Unclipped, because a headset band and a goggle strap both cross the head
-  /// silhouette.
+  /// Drawn from [accessories], not [appendages]. It used to come from
+  /// `appendages` on the grounds that it "must be unclipped" — true, and
+  /// irrelevant, because `appendages` is painted *before* the head fill. Every part
+  /// of the goggles and headset inside the skull was painted over, leaving only
+  /// the earcup, so two of the three options looked identical. A render confirmed
+  /// what a review flagged as needing verification.
   void _gear(AvatarDrawContext c) {
     final o = c.headCenter;
     final r = c.headR;
@@ -186,9 +195,29 @@ class TerranArt extends SpeciesArt {
 
     // Markings. 0 is unmarked by design; the reroll weighting keeps 1 and 2
     // common enough to be worth seeing.
+    //
+    // ## Why a pirate branches here
+    //
+    // A Terran's native marks are drawn in `skinShadow` — a darker version of
+    // their own complexion, so they read as shadow rather than as pigment. That
+    // is correct for clan and guild decoration, and it is left exactly as it was:
+    // switching it to [AvatarPalette.markingPigment] would repaint every Terran
+    // portrait saved before the affiliation existed, for no gain.
+    //
+    // A pirate's marks are *scars*, which do not read as complexion shadow. So the
+    // shapes are shared and only the pigment is swapped, and only for pirates.
+    final scar = c.portrait.affiliation == AvatarAffiliation.pirate
+        // `c.skin` is passed so a pirate's scar can be checked against the skin it
+        // is drawn on — a fixed pigment table cannot serve six tones, and the
+        // darkest Terran tones swallow the darker pigments entirely.
+        ? AvatarPalette.markingPigment(AvatarSpecies.terran, c.style.markings,
+            c.style.markingColor, AvatarAffiliation.pirate, c.skin)
+        : null;
     switch (c.style.markings) {
       case 1:
-        final dot = Paint()..color = c.skinShadow.withValues(alpha: 0.55);
+        final dot = Paint()
+          ..color = (scar ?? c.skinShadow)
+              .withValues(alpha: scar == null ? 0.55 : 0.72);
         for (final side in [-1.0, 1.0]) {
           for (var i = 0; i < 4; i++) {
             c.dot(
@@ -203,7 +232,7 @@ class TerranArt extends SpeciesArt {
         c.line(
           Offset(o.dx + r * 0.22, o.dy - r * 0.50),
           Offset(o.dx + r * 0.74, o.dy + r * 0.18),
-          c.skinShadow,
+          scar ?? c.skinShadow,
           width: math.max(1, c.u(0.022)),
         );
       default:
@@ -212,14 +241,7 @@ class TerranArt extends SpeciesArt {
   }
 
   @override
-  void eyes(AvatarDrawContext c, {int? eyeShapeIndex}) {
-    // The male presentation gets a heavier upper lid, which reads as a squint.
-    // The player's shape choice is still honoured; only the lid weight bends.
-    super.eyes(c, eyeShapeIndex: eyeShapeIndex);
-  }
-
-  @override
-  double lidWidth(AvatarDrawContext c) =>
+  double lidFraction(AvatarDrawContext c) =>
       c.presentation == AvatarPresentation.male ? 0.030 : 0.014;
 
   @override
@@ -229,16 +251,25 @@ class TerranArt extends SpeciesArt {
     final male = c.presentation == AvatarPresentation.male;
     final female = c.presentation == AvatarPresentation.female;
 
+    // This method overrides the base class and does not call `super`, so it has
+    // to consume a [Scowl] itself. The first version of the pirate scowl put the
+    // adjustments only in the base `expression()`, and the Terran — the one
+    // species whose face actually shows a mouth — silently never scowled. A
+    // pixel diff of a Terran pirate against a Terran native was byte-identical
+    // with and without it.
+    final scowl = Scowl.forContext(c);
+
     // Brows: the male presentation gets them lower, thicker, and straighter.
     // Thin high arches are the single strongest "girlish" signal on a
     // stylised face.
     final browY = o.dy -
         r *
-            (male
-                ? 0.40
-                : female
-                    ? 0.32
-                    : 0.34);
+            ((male
+                    ? 0.40
+                    : female
+                        ? 0.32
+                        : 0.34) -
+                scowl.browDrop);
     final browW = math.max(
         1.0,
         c.u(male
@@ -246,22 +277,28 @@ class TerranArt extends SpeciesArt {
             : female
                 ? 0.018
                 : 0.026));
-    final arch = switch (c.style.expression) {
-      1 => 1.0,
-      2 => -0.5,
-      _ => 0.0,
-    };
+    final arch = (switch (c.style.expression) {
+              1 => 1.0,
+              2 => -0.5,
+              _ => 0.0,
+            } *
+            scowl.archScale) +
+        scowl.browBias;
     // A male brow is nearly straight; the female one arches.
     final inner = male ? 0.02 : 0.10;
+    // Same asymmetry fix as the base class: `side` belongs in the x terms only, or
+    // the two brows run as a diagonal instead of a V. Natives keep the old
+    // geometry so saved portraits do not move — see the base class for why.
     for (final side in [-1.0, 1.0]) {
+      final ySign = scowl.isNone ? side : 1.0;
       c.stroke(
         Path()
-          ..moveTo(o.dx + side * r * 0.76, browY - side * arch * r * 0.10)
+          ..moveTo(o.dx + side * r * 0.76, browY - ySign * arch * r * 0.10)
           ..quadraticBezierTo(
               o.dx + side * r * 0.50,
-              browY - r * inner - side * arch * r * 0.02,
+              browY - r * inner - ySign * arch * r * 0.02,
               o.dx + side * r * 0.26,
-              browY + side * arch * r * 0.06),
+              browY + ySign * arch * r * 0.06),
         c.skinShadow,
         width: browW,
       );
@@ -274,18 +311,20 @@ class TerranArt extends SpeciesArt {
             ? 0.32
             : female
                 ? 0.22
-                : 0.26);
-    final curve = switch (c.style.expression) {
-      1 => -0.14,
-      2 => 0.18,
-      _ => 0.0,
-    };
+                : 0.26) *
+        scowl.mouthScale;
+    final curve = scowl.mouthCurve ??
+        switch (c.style.expression) {
+          1 => -0.14,
+          2 => 0.18,
+          _ => 0.0,
+        };
     c.stroke(
       Path()
         ..moveTo(o.dx - halfWidth, mouthY)
         ..quadraticBezierTo(o.dx, mouthY + r * curve, o.dx + halfWidth, mouthY),
       c.skinShadow,
-      width: math.max(1, c.u(male ? 0.024 : 0.016)),
+      width: math.max(1, c.u((male ? 0.024 : 0.016) * scowl.mouthWidthScale)),
     );
   }
 

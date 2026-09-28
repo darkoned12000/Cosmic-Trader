@@ -25,14 +25,17 @@ import 'package:cosmic_trader/widgets/avatar/avatar_catalog.dart';
 /// every platform. It is deliberately *not* derived from the pilot name (which
 /// can collide) or the sector (which changes as the ship moves).
 ///
-/// ## Pirates have no species yet
+/// ## Pirates are an affiliation, not a species
 ///
-/// [AvatarSpecies.forFaction] maps `pirate` to `AvatarSpecies.terran`, so
-/// roughly one NPC in seven is drawn from the human pool, and a pirate and a
-/// Trader can land on the same face — the faction ring is the only thing
-/// distinguishing them. A dedicated pirate species (scarred Terran/Duran) is a
-/// deliberate follow-on. When one is added, this is the only place that needs to
-/// know: it would map a pirate NPC to it and nothing else would change.
+/// A pirate is somebody who left their own faction, so their *body* is an
+/// ordinary Duran, Vinari, or Terran — [_speciesFor] draws a pirate from all
+/// three, evenly, instead of falling through
+/// [AvatarSpecies.forFaction] and handing every pirate a human face. The
+/// affiliation then supplies the pirate palette, the darker cloth, and a
+/// higher chance of markings; see [AvatarAffiliation].
+///
+/// The split is drawn from the same id as everything else, so a pirate keeps
+/// their species for the life of the NPC and re-derives identically everywhere.
 abstract final class NpcPortraits {
   /// The synthetic catalogue id an NPC's portrait is derived from.
   ///
@@ -54,14 +57,68 @@ abstract final class NpcPortraits {
     String pilotName,
   ) {
     final id = idFor(npcId);
+    final species = _speciesFor(id, faction);
     return AvatarPortrait(
       id: id,
-      species: AvatarSpecies.forFaction(faction),
+      species: species,
       presentation: _presentationFor(id),
       // The pilot's own name, so the spoken label is the pilot's name rather
-      // than a catalogue callsign that belongs to somebody else.
-      label: pilotName,
+      // than a catalogue callsign that belongs to somebody else. Falls back to the
+      // species label rather than going empty, because an empty semantics label
+      // makes the portrait invisible to a screen reader rather than merely
+      // unlabelled.
+      label: pilotName.isEmpty ? 'Unidentified ${species.label}' : pilotName,
+      affiliation: faction == FactionClass.pirate
+          ? AvatarAffiliation.pirate
+          : AvatarAffiliation.native,
     );
+  }
+
+  /// The species a pirate can be, **pinned as an explicit list**.
+  ///
+  /// Not `AvatarSpecies.values`. A peer review pointed out that using `values`
+  /// makes every existing pirate's species depend on the *size* of the enum, so
+  /// adding a fourth species would reshuffle the whole pirate roster in one
+  /// release — new faces for NPCs nobody touched, with no diff to point at. An
+  /// explicit list makes that an edit here instead, and a new species is a
+  /// deliberate decision to add.
+  static const List<AvatarSpecies> _pirateSpecies = [
+    AvatarSpecies.duran,
+    AvatarSpecies.vinari,
+    AvatarSpecies.terran,
+  ];
+
+  /// Salt for [AvatarSpecies] draws. Distinct from [_presentationSalt] and from
+  /// [AvatarCatalog]'s own salt on purpose: sharing one would correlate species
+  /// with presentation — every pirate Terran male, say — which reads as a pattern
+  /// the moment two land in the same sector.
+  static const int _speciesSalt = 0x6A09E667;
+
+  /// Salt for [AvatarPresentation] draws. See [_speciesSalt] for why they differ.
+  static const int _presentationSalt = 0x2545F491;
+
+  /// Species for a non-pirate is exactly its faction's. A pirate is drawn from all
+  /// three, evenly, and from their own id rather than from the faction they left —
+  /// so a pirate keeps the same body for life even if their faction is reassigned.
+  ///
+  /// Park–Miller draw, matching the catalogue's method for the same reason: no
+  /// global RNG state, and `seed * 16807` stays inside 2^53 so web and native agree.
+  static AvatarSpecies _speciesFor(String id, FactionClass faction) {
+    if (faction != FactionClass.pirate) {
+      return AvatarSpecies.forFaction(faction);
+    }
+    return _pirateSpecies[_draw(id, _speciesSalt, _pirateSpecies.length)];
+  }
+
+  /// One Lehmer draw from a salted hash, reduced to [buckets].
+  ///
+  /// A peer review noted the species and presentation helpers were copy-pasted
+  /// verbatim; they are one function now.
+  static int _draw(String id, int salt, int buckets) {
+    var seed = (AvatarCatalog.stableSeedFor(id) ^ salt) % 0x7FFFFFFF;
+    if (seed <= 0) seed += 0x7FFFFFFE;
+    seed = (seed * 16807) % 0x7FFFFFFF;
+    return seed % buckets;
   }
 
   /// Presentation drawn from the id.
@@ -75,10 +132,6 @@ abstract final class NpcPortraits {
   /// Park–Miller draw, matching the catalogue's method for the same reason: no
   /// global RNG state, and `seed * 16807` stays inside 2^53 so web and native
   /// agree.
-  static AvatarPresentation _presentationFor(String id) {
-    var seed = (AvatarCatalog.stableSeedFor(id) ^ 0x2545F491) % 0x7FFFFFFF;
-    if (seed <= 0) seed += 0x7FFFFFFE;
-    seed = (seed * 16807) % 0x7FFFFFFF;
-    return AvatarPresentation.values[seed % AvatarPresentation.values.length];
-  }
+  static AvatarPresentation _presentationFor(String id) => AvatarPresentation
+      .values[_draw(id, _presentationSalt, AvatarPresentation.values.length)];
 }

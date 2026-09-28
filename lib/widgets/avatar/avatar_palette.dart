@@ -82,11 +82,29 @@ abstract final class AvatarPalette {
   /// get **no** presentation shift in colour — they are a warrior race, so
   /// gender is carried by silhouette (crest and horn shape, plating density)
   /// rather than a palette that would undercut them.
+  ///
+  /// ## Pirates
+  ///
+  /// [affiliation] swaps in [pirateOutfit], which is the same garment
+  /// construction in cloth bought off-planet: darker, flatter, and less
+  /// saturated than anything a faction issues. The Duran lose their military
+  /// green, the Vinari their aurora jewel tones, the Traders their Guild
+  /// blues — which is the point, since a pirate is wearing whatever they could
+  /// get rather than what was issued to them.
+  ///
+  /// Skin and eyes are **not** affected. A pirate is still a Duran, Vinari, or
+  /// Terran underneath; only the clothes are defected. Making a pirate's skin
+  /// darker would be inventing a fourth race, which is exactly what
+  /// [AvatarAffiliation] exists to avoid.
   static Color outfit(
     AvatarSpecies species,
     int variant, [
     AvatarPresentation presentation = AvatarPresentation.neutral,
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
   ]) {
+    if (affiliation == AvatarAffiliation.pirate) {
+      return pirateOutfit(species, variant);
+    }
     switch (species) {
       case AvatarSpecies.duran:
         return const [
@@ -116,17 +134,56 @@ abstract final class AvatarPalette {
     }
   }
 
+  /// Off-planet cloth, per species. Every entry is darker than its native
+  /// counterpart at the same [variant]; `avatar_palette_test.dart` asserts that
+  /// with relative luminance rather than trusting the hex values to look right.
+  static const Map<AvatarSpecies, List<Color>> _pirateOutfits = {
+    AvatarSpecies.duran: [
+      Color(0xFF1D2318),
+      Color(0xFF261F16),
+      Color(0xFF141810),
+    ],
+    AvatarSpecies.vinari: [
+      Color(0xFF221E3E),
+      Color(0xFF191B30),
+      Color(0xFF2A2448),
+    ],
+    AvatarSpecies.terran: [
+      Color(0xFF232830),
+      Color(0xFF2B2521),
+      Color(0xFF1A1F25),
+    ],
+  };
+
+  static List<Color> pirateOutfits(AvatarSpecies species) =>
+      _pirateOutfits[species]!;
+
+  static Color pirateOutfit(AvatarSpecies species, int variant) =>
+      pirateOutfits(species)[_wrap(variant, pirateOutfits(species).length)];
+
   /// Highlight for a Duran armour plate edge. Kept separate from [outfitTrim]
   /// because plating wants a harder, brighter catch than a fabric collar.
-  static Color plateHighlight(AvatarSpecies species, int variant) {
+  static Color plateHighlight(
+    AvatarSpecies species,
+    int variant, [
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
+  ]) {
     if (species == AvatarSpecies.duran) {
+      if (affiliation == AvatarAffiliation.pirate) {
+        // Salvaged plate, not issued plate: the catch is duller and dirtier.
+        return const [
+          Color(0xFF6E6444),
+          Color(0xFF615038),
+          Color(0xFF4E5A3E)
+        ][_wrap(variant, 3)];
+      }
       return const [
         Color(0xFF9A8C5E),
         Color(0xFF8A6A48),
         Color(0xFF6F7F5A)
       ][_wrap(variant, 3)];
     }
-    return outfitTrim(species, variant);
+    return outfitTrim(species, variant, affiliation);
   }
 
   /// A lighter trim tone for collars, straps, and insignia.
@@ -134,19 +191,94 @@ abstract final class AvatarPalette {
   /// Tinted toward the species rather than just lightened: an earlier pass used
   /// a flat lerp-to-white, which made every species' garment trim read as the
   /// same washed-out grey.
-  static Color outfitTrim(AvatarSpecies species, int variant) {
+  static Color outfitTrim(
+    AvatarSpecies species,
+    int variant, [
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
+  ]) {
+    if (affiliation == AvatarAffiliation.pirate) {
+      // Somebody else's insignia: the same trim *target* as a faction member's,
+      // mixed into the pirate's own cloth rather than into issued cloth.
+      //
+      // Two reviews' worth of history here, and the second one caught the first
+      // fix being wrong. v1 lerped the *native trim* toward black, which
+      // guaranteed the property its test asserted — darker than native trim —
+      // while degrading the one that matters: contrast against its own garment.
+      // Measured, that put cloth-to-trim at 1.15:1, worse than the native 1.43:1
+      // in all nine species/variant combinations, so the trim all but vanished.
+      //
+      // v2 aimed at the right shape and quoted the right numbers, but kept
+      // `final base = outfit(species, variant)` — which resolves with the
+      // **default, native** affiliation. The pirate branch therefore computed
+      // exactly what the native branch computed, and pirate trim came out
+      // *bit-for-bit identical* to native trim. It passed the "never brighter"
+      // assertion because that assertion was `lessThanOrEqualTo` and they were
+      // equal, and the comment described a derivation the code did not do.
+      //
+      // The base has to be the pirate's own cloth. Note how quietly that failed:
+      // the wrong answer was indistinguishable from the right one to every
+      // assertion that existed, which is the argument for asserting the property
+      // a viewer can see (contrast) rather than a relationship between two values
+      // that happen to be computed from the same input.
+      return Color.lerp(
+          outfit(species, variant, AvatarPresentation.neutral,
+              AvatarAffiliation.pirate),
+          _trimTarget(species),
+          _trimRate(species))!;
+    }
     final base = outfit(species, variant);
+    return Color.lerp(base, _trimTarget(species), _trimRate(species))!;
+  }
+
+  /// The hue a species' trim is mixed toward. Shared by the native and pirate
+  /// paths so the two cannot drift into different families.
+  static Color _trimTarget(AvatarSpecies species) {
     switch (species) {
       case AvatarSpecies.duran:
-        // Worn chitin edge.
-        return Color.lerp(base, const Color(0xFF8A7A4E), 0.34)!;
+        return const Color(0xFF8A7A4E); // worn chitin edge
       case AvatarSpecies.vinari:
-        // A luminous edge, not cloth.
-        return Color.lerp(base, const Color(0xFF9E93FF), 0.30)!;
+        return const Color(0xFF9E93FF); // a luminous edge, not cloth
       case AvatarSpecies.terran:
-        return Color.lerp(base, const Color(0xFFB9C4D0), 0.18)!;
+        return const Color(0xFFB9C4D0);
     }
   }
+
+  /// How far toward [_trimTarget] the trim is mixed. The Terran take less because
+  /// their issued cloth is lighter and a heavy mix reads as white piping.
+  static double _trimRate(AvatarSpecies species) {
+    switch (species) {
+      case AvatarSpecies.duran:
+        return 0.34;
+      case AvatarSpecies.vinari:
+        return 0.30;
+      case AvatarSpecies.terran:
+        return 0.18;
+    }
+  }
+
+  /// Pirate trim targets, per species: salvage that does not match the garment
+  /// it is sewn onto. Used only when a `trimColor` dye is chosen — the implicit
+  /// path mixes [_trimTarget] into the pirate cloth, which keeps the contrast.
+  static const Map<AvatarSpecies, List<Color>> _pirateTrimColours = {
+    AvatarSpecies.duran: [
+      Color(0xFF7A6A44),
+      Color(0xFF6E5A48),
+      Color(0xFF5F6A4A),
+    ],
+    AvatarSpecies.vinari: [
+      Color(0xFF7E74C8),
+      Color(0xFF5FA89E),
+      Color(0xFFB87E9C),
+    ],
+    AvatarSpecies.terran: [
+      Color(0xFF9AA4AE),
+      Color(0xFFB09A7C),
+      Color(0xFF7E9E8C),
+    ],
+  };
+
+  static List<Color> pirateTrimColours(AvatarSpecies species) =>
+      _pirateTrimColours[species]!;
 
   // ── Hair / crest / drift ───────────────────────────────────────
   //
@@ -203,11 +335,56 @@ abstract final class AvatarPalette {
 
   static List<Color> hairColours(AvatarSpecies species) => _hairDyes[species]!;
 
+  /// Pirate hair / crest / drift, per species.
+  ///
+  /// Sun-bleached, sweat-dark, or dyed with whatever was to hand. Deliberately
+  /// still *species-plausible*: a Vinari's drift is dimmer, not brown, because
+  /// the form is luminous whatever its owner does.
+  static const Map<AvatarSpecies, List<Color>> _pirateHairDyes = {
+    AvatarSpecies.duran: [
+      Color(0xFF12160E),
+      Color(0xFF4A3F26),
+      Color(0xFF22301F),
+    ],
+    AvatarSpecies.vinari: [
+      Color(0xFF9A93C8),
+      Color(0xFF4E9E96),
+      Color(0xFFB08CA0),
+    ],
+    AvatarSpecies.terran: [
+      Color(0xFF15110E),
+      Color(0xFF5C3A1C),
+      Color(0xFFA79A88),
+    ],
+  };
+
+  static List<Color> pirateHairColours(AvatarSpecies species) =>
+      _pirateHairDyes[species]!;
+
   /// Resolved hair colour: the player's dye if set, else the shape's own.
-  static Color hair(AvatarSpecies species, int shapeVariant, int? dye) =>
-      dye == null
-          ? legacyHair(species, shapeVariant)
-          : hairColours(species)[_wrap(dye, hairColours(species).length)];
+  ///
+  /// ## Why a pirate skips the legacy fallback
+  ///
+  /// Every other resolution here ends in `dye == null ? legacyHair(...)`, which
+  /// reproduces what a save written before the dye slot existed looked like.
+  /// A pirate opts out of that, because a pirate's style is derived per-NPC from
+  /// an id and **never persisted** — there is no older pirate build to stay
+  /// byte-compatible with. Falling through to the native hair colour would give
+  /// a pirate the faction palette the affiliation exists to replace.
+  static Color hair(
+    AvatarSpecies species,
+    int shapeVariant,
+    int? dye, [
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
+  ]) {
+    if (affiliation == AvatarAffiliation.pirate) {
+      final list = pirateHairColours(species);
+      return list[_wrap(dye ?? shapeVariant, list.length)];
+    }
+    return dye == null
+        ? legacyHair(species, shapeVariant)
+        : hairColours(species)[_wrap(dye, hairColours(species).length)];
+  }
 
   // ── Eyes ───────────────────────────────────────────────────────
 
@@ -314,12 +491,98 @@ abstract final class AvatarPalette {
   static List<Color> markingColours(AvatarSpecies species) =>
       _markingColours[species]!;
 
+  /// Pirate marking pigment, per species.
+  ///
+  /// This is where the affiliation's *markings* bias earns its keep. A native
+  /// pilot's markings are decorative — clan pigment, war paint, a guild device.
+  /// A pirate's read as a record of a hard life: scar tissue, old burns, the
+  /// patchy remains of something that was inked once and never touched up. Pale
+  /// scar and bruised tones rather than saturated pigment, so the same pattern
+  /// reads as damage instead of decoration.
+  ///
+  /// Kept off faction colour for the same reason the native pigments are — see
+  /// [_markingColours]. A red marking on a green pirate Duran would read as a
+  /// fresh wound, which is at least consistent, but a *Durani* red on their own
+  /// war paint would read as loyalism rather than as a scar.
+  static const Map<AvatarSpecies, List<Color>> _pirateMarkingColours = {
+    AvatarSpecies.duran: [
+      Color(0xFFC9BFA4),
+      Color(0xFF5A3A44),
+      Color(0xFF2A3038),
+    ],
+    AvatarSpecies.vinari: [
+      Color(0xFFB8B2D8),
+      Color(0xFF6E63A8),
+      Color(0xFF8FA0B8),
+    ],
+    AvatarSpecies.terran: [
+      Color(0xFFC4B2A4),
+      Color(0xFF6E4A48),
+      Color(0xFF3A4650),
+    ],
+  };
+
+  static List<Color> pirateMarkingColours(AvatarSpecies species) =>
+      _pirateMarkingColours[species]!;
+
   /// Resolved marking pigment.
+  ///
+  /// As with [hair], a pirate resolves against its own table even for a null
+  /// dye: pirate styles are derived per-NPC and never persisted, so there is no
+  /// legacy pirate render to preserve.
+  /// WCAG relative-luminance contrast between two opaque colours.
+  static double contrast(Color a, Color b) {
+    final la = a.computeLuminance();
+    final lb = b.computeLuminance();
+    final hi = la > lb ? la : lb;
+    final lo = la > lb ? lb : la;
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  /// Nudges [pigment] away from [skin] until the pair is legible, or gives up and
+  /// returns whichever of lightening/darkening got closest.
+  ///
+  /// A fixed pigment table cannot serve six skin tones. Measured across every
+  /// species' own table, the worst pigment-on-skin pair is **1.02:1** — the mark is
+  /// there and completely invisible. A dark scar on dark skin and a pale one on
+  /// pale skin are the two cases that matter, and a static table gets at most one
+  /// of them right.
+  ///
+  /// Applied to **pirates only**. Natives keep the table as authored so no saved
+  /// portrait moves; the same weakness is real for them and is a separate piece of
+  /// work, because fixing it repaints every portrait that has markings.
+  static Color _ensureLegible(Color pigment, Color skin, {double min = 1.6}) {
+    if (contrast(pigment, skin) >= min) return pigment;
+    final lighter = Color.lerp(pigment, Colors.white, 0.72)!;
+    final darker = Color.lerp(pigment, Colors.black, 0.72)!;
+    return contrast(lighter, skin) >= contrast(darker, skin) ? lighter : darker;
+  }
+
+  /// Resolved marking pigment.
+  ///
+  /// [skin] is the colour the mark will be drawn on. Optional, and only used for
+  /// pirates: without it there is nothing to check legibility against, which is the
+  /// case for the editor's swatch row.
+  ///
+  /// As with [hair], a pirate resolves against its own table even for a null dye:
+  /// pirate styles are derived per-NPC and never persisted, so there is no legacy
+  /// pirate render to preserve.
   static Color markingPigment(
-          AvatarSpecies species, int patternVariant, int? dye) =>
-      dye == null
-          ? legacyMarkingPigment(species, patternVariant)
-          : markingColours(species)[_wrap(dye, markingColours(species).length)];
+    AvatarSpecies species,
+    int patternVariant,
+    int? dye, [
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
+    Color? skin,
+  ]) {
+    if (affiliation == AvatarAffiliation.pirate) {
+      final list = pirateMarkingColours(species);
+      final base = list[_wrap(dye ?? patternVariant, list.length)];
+      return skin == null ? base : _ensureLegible(base, skin);
+    }
+    return dye == null
+        ? legacyMarkingPigment(species, patternVariant)
+        : markingColours(species)[_wrap(dye, markingColours(species).length)];
+  }
 
   /// Decoupled garment trim / accent dye, per species. `outfitTrim` remains the
   /// legacy shape-keyed fallback.
@@ -345,8 +608,27 @@ abstract final class AvatarPalette {
       _trimColours[species]!;
 
   /// Resolved garment trim colour.
-  static Color trim(AvatarSpecies species, int outfitTone, int? dye) =>
-      dye == null
-          ? outfitTrim(species, outfitTone)
-          : trimColours(species)[_wrap(dye, trimColours(species).length)];
+  static Color trim(
+    AvatarSpecies species,
+    int outfitTone,
+    int? dye, [
+    AvatarAffiliation affiliation = AvatarAffiliation.native,
+  ]) {
+    if (affiliation == AvatarAffiliation.pirate) {
+      // Honours the dye too, which the first pirate version did not. `hair` and
+      // `markingPigment` both take it, so ignoring it here made the exception
+      // inconsistent inside itself. A dye picks a *target*, which is then mixed
+      // into the pirate cloth at the same rate the implicit path uses — so a
+      // chosen dye changes the hue without losing the contrast.
+      if (dye == null) return outfitTrim(species, outfitTone, affiliation);
+      final list = pirateTrimColours(species);
+      return Color.lerp(
+          outfit(species, outfitTone, AvatarPresentation.neutral, affiliation),
+          list[_wrap(dye, list.length)],
+          _trimRate(species))!;
+    }
+    return dye == null
+        ? outfitTrim(species, outfitTone)
+        : trimColours(species)[_wrap(dye, trimColours(species).length)];
+  }
 }

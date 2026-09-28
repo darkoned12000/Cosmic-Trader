@@ -336,8 +336,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Widget _buildFactionStep() {
-    final factions =
-        FactionClass.values.where((f) => f != FactionClass.pirate).toList();
+    final factions = FactionClass.selectable;
     // Read-only: the selection is seeded in initState and only ever changed
     // through the faction handler or the gallery's onChanged.
     final avatar = _selectedAvatar;

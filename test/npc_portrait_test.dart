@@ -43,6 +43,74 @@ void main() {
           NpcPortraits.of(npc).presentation, NpcPortraits.of(npc).presentation);
     });
 
+    test('pirates are drawn from all three species, not handed a human face',
+        () {
+      // Pirates are an affiliation, not a race — see [AvatarAffiliation]. Before
+      // this, [AvatarSpecies.forFaction] mapped them to Terran, so roughly one
+      // NPC in seven shared the human pool and a pirate could draw the same face
+      // as a Trader. The ring was the only thing telling them apart.
+      final ids = List.generate(240, (i) => 'pirate-sweep-$i');
+      final species =
+          ids.map((id) => _p(id, faction: FactionClass.pirate).species).toSet();
+
+      expect(species, AvatarSpecies.values.toSet(),
+          reason: 'every species should turn up among pirates — they are a '
+              'mixture of defectors, not a fourth race');
+    });
+
+    test('a non-pirate keeps exactly their own faction species', () {
+      for (final faction in FactionClass.values.where((f) => f.isSelectable)) {
+        for (var i = 0; i < 12; i++) {
+          expect(_p('n-$faction-$i', faction: faction).species,
+              AvatarSpecies.forFaction(faction));
+        }
+      }
+    });
+
+    test('only pirates carry the pirate affiliation', () {
+      for (var i = 0; i < 20; i++) {
+        expect(_p('aff-$i', faction: FactionClass.pirate).affiliation,
+            AvatarAffiliation.pirate);
+        for (final faction
+            in FactionClass.values.where((f) => f.isSelectable)) {
+          expect(_p('aff-$faction-$i', faction: faction).affiliation,
+              AvatarAffiliation.native);
+        }
+      }
+    });
+
+    test('a pirate ring is pirate-orange whatever species they are', () {
+      // The defect this catches: deriving the accent from `species.faction`, so a
+      // pirate Duran wears Hegemony red and reads as a loyalist at a glance.
+      for (var i = 0; i < 90; i++) {
+        final p = _p('accent-$i', faction: FactionClass.pirate);
+        expect(p.accentFaction, FactionClass.pirate,
+            reason: 'a ${p.species.label} pirate should be identified by the '
+                'pirate colour, not the faction they left');
+      }
+      // And a native still gets their own species' colour.
+      for (final faction in FactionClass.values.where((f) => f.isSelectable)) {
+        expect(_p('accent-n-$faction', faction: faction).accentFaction,
+            AvatarSpecies.forFaction(faction).faction);
+      }
+    });
+
+    test('pirate species and presentation are not correlated', () {
+      // Both are drawn from the NPC id, so sharing a salt would lock every
+      // pirate of a species to one presentation — a pattern that shows up the
+      // moment two land in the same sector.
+      final pairs = <String>{};
+      for (var i = 0; i < 300; i++) {
+        final p = _p('corr-$i', faction: FactionClass.pirate);
+        pairs.add('${p.species.name}/${p.presentation.name}');
+      }
+      // A single shared salt would produce at most 3 pairs (one per species).
+      expect(pairs.length, greaterThan(3),
+          reason:
+              'species and presentation look correlated: only ${pairs.length} '
+              'pair(s) across 300 pirates');
+    });
+
     test('a different NPC gets a different portrait', () {
       // If this ever collapsed, a whole sector would show the same face.
       final a = _p('a');
@@ -51,7 +119,7 @@ void main() {
       expect(a.drawSeed, isNot(b.drawSeed));
     });
 
-    test('species follows the faction, including the pirate fallback', () {
+    test('species follows the faction for everyone a player can join', () {
       expect(
         _p('x', faction: FactionClass.duran).species,
         AvatarSpecies.duran,
@@ -64,13 +132,11 @@ void main() {
         _p('x', faction: FactionClass.trader).species,
         AvatarSpecies.terran,
       );
-      // Pirates have no species yet and fall back to the human pool. Pinned so
-      // that adding one is a deliberate change rather than a silent drift — the
-      // bounty ring is currently the only thing telling a pirate from a trader.
-      expect(
-        _p('x', faction: FactionClass.pirate).species,
-        AvatarSpecies.terran,
-      );
+      // Pirates used to be pinned here to the human pool, with the comment that
+      // the ring was the only thing telling a pirate from a trader. That is the
+      // defect [AvatarAffiliation] removed: they are now drawn from all three
+      // species, asserted in the sweep test above. This test keeps the *native*
+      // mapping, which is the half that must not move.
     });
 
     test('a derived id can never collide with a real catalogue entry', () {

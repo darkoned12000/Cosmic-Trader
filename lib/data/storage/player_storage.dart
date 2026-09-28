@@ -16,8 +16,19 @@ import 'file_safe.dart';
 class PlayerStorage {
   PlayerStorage._();
 
+  /// Constructor for a test double. [PlayerStorage._] is private, so a fake in
+  /// another library could not otherwise subclass this to avoid the filesystem.
+  @visibleForTesting
+  PlayerStorage.forTesting();
+
   static PlayerStorage? _instance;
   static PlayerStorage get instance => _instance ??= PlayerStorage._();
+
+  /// Test-only override for the singleton, to inject a fake that returns a
+  /// synthetic roster without touching the filesystem. Matches
+  /// `UniverseStorage.instanceForTest`; pass `null` to restore the real one.
+  @visibleForTesting
+  static set instanceForTest(PlayerStorage? storage) => _instance = storage;
 
   String? _cachedPath;
 

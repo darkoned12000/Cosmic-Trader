@@ -40,6 +40,30 @@ class BountyBoard extends ChangeNotifier {
   List<Bounty> get active => List.unmodifiable(_active);
   List<PaidBounty> get paid => List.unmodifiable(_paid);
 
+  /// Test-only: swap the live board contents wholesale.
+  ///
+  /// [post] cannot be used to set this up — it validates against the live NPC
+  /// roster and debits the poster's credits, neither of which a widget test can
+  /// satisfy. This exists so a screen that reads the board can be driven with a
+  /// known set of contracts, including ones whose target is deliberately absent.
+  @visibleForTesting
+  void replaceForTest(List<Bounty> bounties) {
+    _active
+      ..clear()
+      ..addAll(bounties);
+  }
+
+  /// Test-only: skip the disk read in [ensureLoaded].
+  ///
+  /// Without this, a widget test that injects contracts still awaits
+  /// `BountyStorage`, which needs `path_provider` — unavailable in `flutter_test`
+  /// and left pending rather than throwing, so the screen sits on its spinner
+  /// forever instead of failing loudly. Set it to true alongside
+  /// [replaceForTest].
+  @visibleForTesting
+  set skipDiskLoadForTest(bool value) => _skipDiskLoad = value;
+  bool _skipDiskLoad = false;
+
   /// Federation bounty for a notoriety level: 0 below 50, otherwise
   /// notoriety × 100 clamped to [5000, 100000]. Pure rule for tests.
   static int fedAmount(double notoriety) {
@@ -131,6 +155,7 @@ class BountyBoard extends ChangeNotifier {
   Future<void> ensureLoaded() async {
     if (_loaded) return;
     _loaded = true;
+    if (_skipDiskLoad) return;
     final data = await BountyStorage.instance.loadAll();
     // Merge, don't replace (bounty review M3): posts landing mid-load
     // used to be wiped when the disk snapshot applied. In-memory marks

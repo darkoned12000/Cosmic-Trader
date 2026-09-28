@@ -3,9 +3,21 @@ import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 // Deliberate dependency: the model resolves portrait IDs, and the registry
 // that owns those IDs lives with the avatar widgets. `avatar_catalog.dart`
-// imports this file for the enums back, so the two form a legal import cycle —
-// kept harmless by keeping the catalog free of any `package:flutter` import, so
-// the data layer never drags the widget layer in with it.
+// imports this file for the enums back, so the two form a legal import cycle.
+//
+// A peer review pointed out the old comment here gave false comfort. What keeps
+// the cycle harmless is narrower than "the data layer never drags in Flutter":
+// it is that `avatar_catalog.dart` itself imports no `package:flutter`, so
+// following the cycle does not reach a widget. This file *does* import
+// `package:flutter/foundation.dart`, for `@immutable` — `package:meta` would be
+// the honest choice, but it is not a declared dependency and adding one to fix a
+// comment is the wrong trade. So the accurate statement is the narrow one above,
+// not the broad one that was there.
+///
+/// The real fix for the cycle is to lift the enums and `AvatarStyle` into a
+// `avatar_types.dart` that depends on neither, leaving types <- catalog <-
+// selection. That is a restructure, not a drive-by, and it is the thing to do if
+// the cycle ever costs more than the comment says it does.
 import 'package:cosmic_trader/widgets/avatar/avatar_catalog.dart';
 
 /// A pilot species, one per playable faction.
@@ -41,12 +53,18 @@ enum AvatarSpecies {
     }
   }
 
-  /// The species backing [fc].
+  /// The species backing [fc] on the **player** path.
   ///
-  /// Pirates have no species of their own — the design doc (§11) reuses Terran
-  /// as a stand-in until pirates become selectable anywhere. Mapping them here
-  /// (rather than throwing) keeps a hand-edited or future pirate save resolvable
-  /// to a valid portrait instead of a missing-asset box.
+  /// Total by design: a hand-edited or future save must resolve to a valid
+  /// portrait rather than a missing-asset box, so pirates fall back to Terran
+  /// here instead of throwing.
+  ///
+  /// This is *not* how pirate NPCs get their species. Pirates are not a race —
+  /// they are defectors from all three — so `NpcPortraits` picks a species from
+  /// the NPC's own id across all of [values], and sets
+  /// [AvatarAffiliation.pirate]. The Terran fallback here only ever applies to a
+  /// *player* selection, and pirates are not selectable (see
+  /// [FactionClass.isSelectable]), so it should never be reached in practice.
   static AvatarSpecies forFaction(FactionClass fc) {
     switch (fc) {
       case FactionClass.duran:
@@ -67,6 +85,62 @@ enum AvatarSpecies {
     }
     return fallback;
   }
+}
+
+/// Who a pilot fights for, independent of what they are.
+///
+/// **Deliberately not a fourth species.** Pirates are described in-world as
+/// people who have left their own faction and banded together for profit, so
+/// their bodies are ordinary Duran, Vinari, or Terran — a pirate Duran is still
+/// scaled, horned, and green. Making them a species would have been the easy
+/// route (one enum value, one art file) and it would have been wrong twice over:
+/// it would contradict the lore, and it would replace a variety problem with an
+/// art problem, because every pirate would then share one silhouette and one
+/// palette instead of a mixture of three.
+///
+/// This is the only thing about a pirate that changes, and it changes only what
+/// they **wear** and how they were **generated** — never their anatomy:
+///
+///  - **Colour scheme** — darker garments, trim, hair dyes, and marking pigment
+///    ([AvatarPalette]).
+///  - **Garment** — the species' own garment construction, in darker cloth.
+///  - **Markings** — scar pigment instead of decorative pigment, and the Duran and
+///    Vinari draw a *scar* rather than their native marking ([avatar_duran_art.dart],
+///    [avatar_terran_art.dart], [avatar_vinari_art.dart]).
+///  - **Scowl** — a [Scowl] on every expression, so a pirate reads as mean rather
+///    than merely unsmiling ([avatar_species_art.dart]).
+///  - **Generation** — a higher chance of markings, and the smiling expression is
+///    never drawn, both in [AvatarCatalog.seededStyleFor]. A hard life leaves a
+///    record, and more of it on somebody who chose that life.
+///
+/// Skin and eyes are deliberately untouched. A pirate is still a Duran, Vinari, or
+/// Terran underneath; only the clothes are defected. Darker *skin* would be
+/// inventing a fourth race, which is the thing this enum exists to avoid.
+///
+/// Not persisted on a player selection. Pirates are not selectable — see
+/// [FactionClass.isSelectable] — so this only ever appears on a derived NPC
+/// portrait, which is rebuilt from the NPC id on every load.
+enum AvatarAffiliation {
+  native,
+  pirate;
+
+  /// The faction whose colour identifies this pilot on the ring and backdrop.
+  ///
+  /// A pirate is a pirate regardless of species, so the ring must be the pirate
+  /// colour and not the colour of the faction they left — otherwise a pirate
+  /// Duran wears Hegemony red and reads as a loyalist at a glance.
+  ///
+  /// Takes [species] as well as the affiliation because a native pilot's colour
+  /// comes from their species. Both the painter and `AvatarPortraitView` need this
+  /// answer and must never disagree about it, which is why it is resolved here
+  /// rather than in either caller.
+  static FactionClass factionColorFor(
+    AvatarAffiliation affiliation,
+    AvatarSpecies species,
+  ) =>
+      affiliation == AvatarAffiliation.pirate
+          ? FactionClass.pirate
+          : species.faction;
 }
 
 /// A visual presentation style, not biological sex. The design doc treats
@@ -574,9 +648,21 @@ class AvatarSelection {
   AvatarStyle get effectiveStyle =>
       style ?? AvatarCatalog.seededStyleFor(portraitId);
 
-  /// A copy with [newStyle] applied, always re-sanitized so a caller cannot
-  /// push out-of-range variants into the persisted state.
-  AvatarSelection withStyle(AvatarStyle? newStyle) => copyWith(style: newStyle);
+  /// A copy with [newStyle] applied, re-sanitized so a caller cannot push
+  /// out-of-range variants into the persisted state.
+  ///
+  /// Passing `null` **clears** the style, returning the pilot to their catalogue
+  /// seed. A peer review caught that this did nothing: it forwarded to
+  /// `copyWith(style: null)`, and `copyWith` resolves a nullable argument with
+  /// `?? this.style`, so the old style was kept and the "reset" was a silent
+  /// no-op. The `clearStyle` flag is the only way through that field, and it was
+  /// already there and simply not used here.
+  ///
+  /// The old doc claimed the result was "always re-sanitized" and nothing
+  /// sanitized it; that is now true.
+  AvatarSelection withStyle(AvatarStyle? newStyle) => newStyle == null
+      ? copyWith(clearStyle: true)
+      : copyWith(style: newStyle.sanitized());
 
   /// A copy with a freshly re-rolled [AvatarStyle], so the pilot's whole
   /// appearance changes — outfit, hair, eyes, markings, expression, and skin
@@ -711,13 +797,28 @@ class AvatarSelection {
         ? AvatarStyle.fromJson(rawStyle.cast<String, dynamic>()).sanitized()
         : null;
 
+    // Presentation is derived from the **resolved portrait**, not read from the
+    // save. A peer review caught that the two could disagree: `portraitId` above is
+    // repaired to the faction default when the stored one is stale or foreign, but
+    // `presentation` was taken from JSON regardless, so a hand-edited save could
+    // produce a "female" tab sitting over `duran_male_lancer_01`. The catalogue's
+    // own `defaultFor` insists the tab and the artwork must not disagree, and a
+    // stored field is the wrong place to settle that when the portrait already
+    // knows. A stored presentation is honoured only when it matches.
+    final portrait = AvatarCatalog.byId(portraitId);
+    final storedPresentation =
+        AvatarPresentation.fromName(json['presentation']);
+    final presentation =
+        portrait != null && storedPresentation == portrait.presentation
+            ? storedPresentation
+            : (portrait?.presentation ?? fallback.presentation);
+
     return AvatarSelection(
       schemaVersion: json['schemaVersion'] is int
           ? json['schemaVersion'] as int
           : currentSchemaVersion,
       species: resolvedSpecies,
-      presentation: AvatarPresentation.fromName(json['presentation'],
-          fallback: fallback.presentation),
+      presentation: presentation,
       portraitId: portraitId,
       source: resolvedSource,
       // Retained even for a preset source so a pending custom upload can fall

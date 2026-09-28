@@ -123,7 +123,11 @@ class AvatarAxisCatalog {
 
   static const Map<AvatarSpecies, List<String>> _hairLabels = {
     AvatarSpecies.duran: ['Low ridge', 'Swept crest', 'Spike crown'],
-    AvatarSpecies.vinari: ['Drift crown', 'Halo of light', 'Tall crown'],
+    // The Vinari `hair` axis is a silhouette axis, not a surface one — the three
+    // forms are the "tendril fall" and "bioluminescent frill" from the design
+    // doc's layer catalogue, because the species had no way to vary its outline
+    // at all before this.
+    AvatarSpecies.vinari: ['Crown of light', 'Tendril fall', 'Frill fan'],
     AvatarSpecies.terran: ['Swept back', 'Tall crest', 'Forward fin'],
   };
 

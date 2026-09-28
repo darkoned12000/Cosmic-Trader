@@ -38,6 +38,7 @@ class AvatarPortraitPainter extends CustomPainter {
     required this.portrait,
     this.style,
     this.selected = false,
+    this.scowlOverride,
   });
 
   final AvatarPortrait portrait;
@@ -50,6 +51,11 @@ class AvatarPortraitPainter extends CustomPainter {
   /// Distinct from [AvatarCanvas.showRing]'s outer border.
   final bool selected;
 
+  /// Test seam, forwarded to [AvatarDrawContext.scowlOverride]. `null` in normal
+  /// use. See that field for why comparing a pirate against a native cannot
+  /// measure the scowl reliably.
+  final Scowl? scowlOverride;
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
@@ -57,15 +63,21 @@ class AvatarPortraitPainter extends CustomPainter {
     if (w <= 0 || h <= 0) return;
 
     final species = portrait.species;
-    final accent = factionColor(species.faction);
+    // Resolved on the portrait, not from `species.faction`, so a pirate is
+    // orange whatever species they are. A pirate Duran wearing the Duran accent
+    // would read as a loyalist at a glance.
+    final accent = factionColor(portrait.accentFaction);
     final rng = math.Random(portrait.drawSeed);
     final s = (style ?? portrait.seededStyle).sanitized();
 
     // Colours come from the species palette, not the faction colour. Faction
-    // identity stays on the ring and the backdrop.
+    // identity stays on the ring and the backdrop. `affiliation` swaps in the
+    // pirate cloth/dye tables — the species decides the *anatomy*, the
+    // affiliation decides what they are wearing.
+    final affiliation = portrait.affiliation;
     final skin = AvatarPalette.skin(species, s.tone);
-    final cloth =
-        AvatarPalette.outfit(species, s.outfitTone, portrait.presentation);
+    final cloth = AvatarPalette.outfit(
+        species, s.outfitTone, portrait.presentation, affiliation);
     final minDim = math.min(w, h);
     double u(double v) => v * minDim;
 
@@ -82,10 +94,12 @@ class AvatarPortraitPainter extends CustomPainter {
       skin: skin,
       skinShadow: Color.lerp(skin, Colors.black, 0.42)!,
       skinLight: Color.lerp(skin, Colors.white, 0.30)!,
-      hair: AvatarPalette.hair(species, s.hair, s.hairColor),
+      hair: AvatarPalette.hair(species, s.hair, s.hairColor, affiliation),
       cloth: cloth,
-      clothTrim: AvatarPalette.trim(species, s.outfitTone, s.trimColor),
-      plateLight: AvatarPalette.plateHighlight(species, s.outfitTone),
+      clothTrim:
+          AvatarPalette.trim(species, s.outfitTone, s.trimColor, affiliation),
+      plateLight:
+          AvatarPalette.plateHighlight(species, s.outfitTone, affiliation),
       accent: accent,
       headCenter: Offset(0.5 * w, 0.42 * h),
       headR: u(headWidth),
@@ -93,6 +107,7 @@ class AvatarPortraitPainter extends CustomPainter {
       shoulderWidth: 0.40 + rng.nextDouble() * 0.14,
       jawTaper: _jawTaperFor(portrait.presentation, rng),
       rng: rng,
+      scowlOverride: scowlOverride,
     );
 
     final art = SpeciesArt.of(species);
@@ -151,6 +166,10 @@ class AvatarPortraitPainter extends CustomPainter {
     art.eyes(ctx);
     art.expression(ctx);
     art.crest(ctx);
+    // 8. Worn accessories, on top of the head and unclipped. A distinct step from
+    //    `appendages` because those go *behind* the head on purpose — see
+    //    SpeciesArt.accessories for the case that forced the split.
+    art.accessories(ctx);
 
     // No inner white rim light: at 48-112px it sat close enough to the outer
     // faction ring to read as a muddy double edge.
@@ -173,6 +192,7 @@ class AvatarPortraitPainter extends CustomPainter {
   bool shouldRepaint(AvatarPortraitPainter oldDelegate) {
     return oldDelegate.portrait.id != portrait.id ||
         oldDelegate.style != style ||
-        oldDelegate.selected != selected;
+        oldDelegate.selected != selected ||
+        oldDelegate.scowlOverride != scowlOverride;
   }
 }

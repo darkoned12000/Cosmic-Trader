@@ -106,7 +106,7 @@ class AvatarPortraitView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = factionColor(portrait.species.faction);
+    final accent = factionColor(portrait.accentFaction);
     final label = semanticLabel ?? '${portrait.label} portrait';
 
     return Semantics(
