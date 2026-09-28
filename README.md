@@ -11,14 +11,73 @@ vessel, and decide how you want to make your mark among rival factions and indep
 
 ## Screenshots
 
-Screenshots are coming soon. Suggested shots: galaxy map, port trading, ship status, and planetary
-management.
+These are current screenshots as of 09/27/2026, this may not be the final look and functionality. 
+The game is still being worked on and tested, and I change look/feel as I play test Cosmic Trader.
+If you have any recommendations for changes let me know.
+<!-- Add screenshots here -->
+<table>
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/login_screen.png">
+        <img src="docs/screenshots/login_screen.png" alt="Login Screen" width="350">
+      </a>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/main_screen.png">
+        <img src="docs/screenshots/main_screen.png" alt="Main Screen (Sector View)" width="350">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/ship_view.png">
+        <img src="docs/screenshots/ship_view.png" alt="Ship View" width="350">
+      </a>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/computer_view.png">
+        <img src="docs/screenshots/computer_view.png" alt="Computer View" width="350">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/faction_pick_and_avatar.png">
+        <img src="docs/screenshots/faction_pick_and_avatar.png" alt="Faction Selection and Avatar Selection" width="350">
+      </a>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/galaxy_map.png">
+        <img src="docs/screenshots/galaxy_map.png" alt="Galaxy Map" width="350">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/hack_a_port.png">
+        <img src="docs/screenshots/hack_a_port.png" alt="Hacking a Port" width="350">
+      </a>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/planet_view.png">
+        <img src="docs/screenshots/planet_view.png" alt="Planet View" width="350">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/screenshots/port_view.png">
+        <img src="docs/screenshots/port_view.png" alt="Port View" width="350">
+      </a>
+    </td>
+    <td align="center">
+      <a href="docs/screenshots/settings_section.png">
+        <img src="docs/screenshots/settings_section.png" alt="Settings View" width="350">
+      </a>
+    </td>
+  </tr>
+</table>
 
-<!-- Add screenshots here when ready. Example:
-![Galaxy map](docs/screenshots/galaxy-map.png)
-![Port trading](docs/screenshots/port-trading.png)
-![Ship status](docs/screenshots/ship-status.png)
--->
 
 ## What you can do
 

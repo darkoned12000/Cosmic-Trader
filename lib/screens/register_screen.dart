@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/core/app_exit.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
+import 'package:cosmic_trader/data/models/avatar_selection.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/settings_storage.dart';
 import 'package:cosmic_trader/screens/game_shell.dart';
+import 'package:cosmic_trader/widgets/avatar/avatar_gallery.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -30,9 +34,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _selectedShip = 'Starhawk Skiff';
   bool _unlockAllShips = true;
 
+  /// Pilot portrait for the new account. Preselected to the faction default so
+  /// this step stays skippable — Continue works without touching the gallery.
+  late AvatarSelection _selectedAvatar;
+
   @override
   void initState() {
     super.initState();
+    // Seeded here rather than lazily inside the step builder: build() must stay
+    // read-only, since it can run more than once without any user action
+    // (theme change, hot reload, a parent rebuild).
+    _selectedAvatar = AvatarSelection.defaultFor(_selectedFaction);
     _loadSettings();
   }
 
@@ -113,6 +125,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _passwordController.text,
         faction: _selectedFaction,
         shipName: _selectedShip,
+        avatar: _selectedAvatar,
       );
 
       if (mounted) {
@@ -325,12 +338,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _buildFactionStep() {
     final factions =
         FactionClass.values.where((f) => f != FactionClass.pirate).toList();
+    // Read-only: the selection is seeded in initState and only ever changed
+    // through the faction handler or the gallery's onChanged.
+    final avatar = _selectedAvatar;
+
     return RadioGroup<FactionClass>(
       groupValue: _selectedFaction,
       onChanged: (value) {
         setState(() {
           _selectedFaction = value!;
           _selectedShip = ShipDefinition.getDefaultInterceptor(value).name;
+          // The previous portrait belongs to the old faction's species, so
+          // re-point it at the new faction's curated default.
+          _selectedAvatar = AvatarSelection.defaultFor(value);
         });
       },
       child: Column(
@@ -347,18 +367,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
           const SizedBox(height: 24),
           for (final faction in factions)
             Card(
+              // A faint permanent tint of the faction's own colour, so an
+              // unselected card still reads as "one of three distinct
+              // factions" rather than as an inert row.
+              color: faction == _selectedFaction
+                  ? null
+                  : factionColor(faction).withValues(alpha: 0.05),
               child: ListTile(
                 leading: Icon(
+                  // Chosen to gesture at the faction's own lore rather than
+                  // reading as generic Material symbols next to the
+                  // lore-accurate portrait gallery directly below these cards.
                   faction == FactionClass.duran
-                      ? Icons.local_fire_department_rounded
+                      // Clawed/mandibled: "scaly, insectoid warriors"
+                      ? Icons.radar_rounded
                       : faction == FactionClass.vinari
-                          ? Icons.auto_awesome_rounded
-                          : Icons.storefront_rounded,
-                  color: faction == FactionClass.duran
-                      ? Colors.red.shade400
-                      : faction == FactionClass.vinari
-                          ? Colors.teal.shade400
-                          : Colors.amber.shade400,
+                          // Drifting wisps: "glowing forms like living auroras"
+                          ? Icons.blur_on_rounded
+                          // Coin/cargo: "practical jumpsuits or merchant finery"
+                          : Icons.account_balance_wallet_rounded,
+                  // Faction colour comes from the shared palette, matching the
+                  // gallery sitting directly below these cards.
+                  color: factionColor(faction),
                 ),
                 title: Text(
                   faction.displayName,
@@ -381,7 +411,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     .withValues(alpha: 0.1),
               ),
             ),
-          const SizedBox(height: 24),
+          SizedBox(height: UiScale.spacing(24)),
+          AvatarGallery(
+            species: AvatarSpecies.forFaction(_selectedFaction),
+            selection: avatar,
+            onChanged: (value) => setState(() => _selectedAvatar = value),
+          ),
+          SizedBox(height: UiScale.spacing(24)),
           Row(
             children: [
               Expanded(

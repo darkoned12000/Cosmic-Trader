@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:crypto/crypto.dart';
+import 'package:cosmic_trader/data/models/avatar_selection.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
@@ -117,6 +118,13 @@ class Player {
   /// claims against these ids through its Claim action.
   final List<String> recentKills;
 
+  // ── Appearance ──────────────────────────────────────────────
+  /// Chosen pilot portrait, or `null` for accounts saved before avatars
+  /// existed. Left nullable deliberately: that makes migration inert (no
+  /// backfill pass over `players.json`) and self-healing, since
+  /// [effectiveAvatar] resolves a valid faction default on read.
+  final AvatarSelection? avatar;
+
   Player({
     this.id = '',
     this.username = '',
@@ -166,6 +174,7 @@ class Player {
     this.lastHackReward,
     this.notoriety = 0.0,
     this.recentKills = const [],
+    this.avatar,
   });
 
   /// Records a kill for bounty claims (newest first, capped at 50).
@@ -222,6 +231,17 @@ class Player {
   }
 
   bool ownsPort(String portName) => ownedPorts.contains(portName);
+
+  /// The portrait to actually draw for this player.
+  ///
+  /// Always a valid, renderable selection. This is the single place screens
+  /// should read — it repairs a stale save whose portrait no longer exists in
+  /// the catalogue, and a species that disagrees with [faction] (for example
+  /// after a future faction change), rather than showing wrong-faction art or a
+  /// missing-asset box. Accounts saved before avatars existed resolve here to
+  /// their faction's curated default, so no migration pass is needed.
+  AvatarSelection get effectiveAvatar =>
+      (avatar ?? AvatarSelection.defaultFor(faction)).forFaction(faction);
 
   int factionStandingWith(FactionClass target) {
     return factionStandings[target.name] ??
@@ -295,6 +315,7 @@ class Player {
     String? lastHackReward,
     double? notoriety,
     List<String>? recentKills,
+    AvatarSelection? avatar,
   }) {
     return Player(
       id: id ?? this.id,
@@ -345,6 +366,11 @@ class Player {
       lastHackReward: lastHackReward ?? this.lastHackReward,
       notoriety: notoriety ?? this.notoriety,
       recentKills: recentKills ?? this.recentKills,
+      // Mirrors every other field's `?? this.x` semantics. Note this means a
+      // selection can never be set back to null through copyWith — which is
+      // fine, because "reset" is expressed as an explicit faction default
+      // rather than as an absent value.
+      avatar: avatar ?? this.avatar,
     );
   }
 
@@ -398,10 +424,18 @@ class Player {
       'lastHackReward': lastHackReward,
       'notoriety': notoriety,
       'recentKills': recentKills,
+      'avatar': avatar?.toJson(),
     };
   }
 
   factory Player.fromJson(Map<String, dynamic> json) {
+    // Hoisted out of the literal so the avatar decode can repair against the
+    // same faction the rest of the record is built with.
+    final faction = FactionClass.values.firstWhere(
+      (e) => e.name == json['faction'],
+      orElse: () => FactionClass.trader,
+    );
+
     return Player(
       id: json['id'] as String? ?? '',
       username: json['username'] as String? ?? '',
@@ -456,10 +490,7 @@ class Player {
       installedModules: (json['installedModules'] as Map<String, dynamic>?)
               ?.cast<String, int>() ??
           {},
-      faction: FactionClass.values.firstWhere(
-        (e) => e.name == json['faction'],
-        orElse: () => FactionClass.trader,
-      ),
+      faction: faction,
       factionStandings:
           (json['factionStandings'] as Map?)?.cast<String, int>() ?? const {},
       successfulHacks: json['successfulHacks'] as int? ?? 0,
@@ -476,6 +507,16 @@ class Player {
       lastHackReward: json['lastHackReward'] as String?,
       notoriety: (json['notoriety'] as num?)?.toDouble() ?? 0.0,
       recentKills: (json['recentKills'] as List?)?.cast<String>() ?? const [],
+      // Pre-avatar saves have no key at all. Staying null (rather than
+      // backfilling) keeps the migration inert; `effectiveAvatar` resolves a
+      // faction default on read. A malformed map is handed to the tolerant
+      // decoder, which repairs it against the same faction as the record.
+      avatar: json['avatar'] is Map
+          ? AvatarSelection.fromJson(
+              (json['avatar'] as Map).cast<String, dynamic>(),
+              fallbackFaction: faction,
+            )
+          : null,
     );
   }
 

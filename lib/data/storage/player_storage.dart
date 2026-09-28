@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:cosmic_trader/data/models/avatar_selection.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -99,12 +100,18 @@ class PlayerStorage {
   /// Register a new player. Ship stats derived from [shipName] template.
   /// Refuses when the roster can't be verified (storage review C1): a
   /// failed load must never let a duplicate username through.
+  ///
+  /// [avatar] is the portrait chosen during account creation. A `null` (or a
+  /// selection that does not belong to [faction]) falls back to that faction's
+  /// curated default, so a new account is never created with an unrenderable
+  /// portrait.
   Future<Player> register(
     String username,
     String password, {
     FactionClass faction = FactionClass.trader,
     String shipName = 'Starhawk Skiff',
     GameSettings? settings,
+    AvatarSelection? avatar,
   }) async {
     final players = await loadPlayers();
     if (_lastLoadFailed) {
@@ -161,6 +168,8 @@ class PlayerStorage {
       credits: settings?.initCredits ?? 1000000,
       researchPoints: 0.0,
       faction: faction,
+      avatar:
+          (avatar ?? AvatarSelection.defaultFor(faction)).forFaction(faction),
     );
 
     players.add(player);

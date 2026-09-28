@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/tw_layout.dart';
+import 'package:cosmic_trader/core/ui_scale.dart';
+import 'package:cosmic_trader/data/models/avatar_selection.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
@@ -8,6 +11,8 @@ import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/screens/avatar_editor_screen.dart';
+import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/shared/panel_card.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/tow_service.dart';
@@ -327,7 +332,9 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         crossAxisCount: 2,
         mainAxisSpacing: 16,
         crossAxisSpacing: 16,
-        mainAxisExtent: 440,
+        // Raised from 440 to fit the pilot portrait and the extra Change
+        // Appearance row in _playerInfoCard without overflowing the cell.
+        mainAxisExtent: 520,
       ),
       itemBuilder: (context, index) => cards[index],
     );
@@ -387,7 +394,10 @@ class _ShipStatusViewState extends State<ShipStatusView> {
       icon: Icons.person_rounded,
       title: 'Player Info',
       children: [
-        _detailRow(cs, 'Username', widget.player.username),
+        _identityRow(theme, cs),
+        SizedBox(height: UiScale.spacing(8)),
+        Divider(color: cs.surfaceContainerHighest),
+        SizedBox(height: UiScale.spacing(4)),
         _shipNameRow(cs),
         _detailRow(cs, 'Ship Class', _formatClassName(widget.player.shipClass)),
         _detailRow(
@@ -400,6 +410,15 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         Divider(color: cs.surfaceContainerHighest),
         const SizedBox(height: 8),
         ListTile(
+          leading: Icon(Icons.face_rounded,
+              size: 20, color: cs.onSurface.withValues(alpha: 0.6)),
+          title: const Text('Change Appearance'),
+          trailing: Icon(Icons.chevron_right_rounded,
+              size: 20, color: cs.onSurface.withValues(alpha: 0.4)),
+          onTap: _changeAppearance,
+          contentPadding: EdgeInsets.zero,
+        ),
+        ListTile(
           leading: Icon(Icons.lock_rounded,
               size: 20, color: cs.onSurface.withValues(alpha: 0.6)),
           title: const Text('Change Password'),
@@ -410,6 +429,74 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         ),
       ],
     );
+  }
+
+  /// Portrait beside the pilot's name, with the faction accent and the saved
+  /// portrait's callsign. Reads [Player.effectiveAvatar] so a legacy account
+  /// with no saved selection still shows its faction default rather than a gap.
+  Widget _identityRow(ThemeData theme, ColorScheme cs) {
+    final player = widget.player;
+    final accent = factionColor(player.faction);
+    return Row(
+      children: [
+        AvatarCanvas(selection: player.effectiveAvatar, size: 64),
+        SizedBox(width: UiScale.spacing(12)),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                player.username,
+                style:
+                    const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+                // maxLines pairs with ellipsis: without it the text can wrap to
+                // a second line before truncating, which would blow the card's
+                // fixed grid cell height.
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                player.faction.displayName,
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Opens the appearance editor. The draft is only committed to the player
+  /// once the editor returns a selection, so Cancel leaves the account alone.
+  Future<void> _changeAppearance() async {
+    final result = await Navigator.of(context).push<AvatarSelection>(
+      MaterialPageRoute(
+        builder: (context) => AvatarEditorScreen(
+          faction: widget.player.faction,
+          initialSelection: widget.player.avatar,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    if (result == widget.player.avatar) return;
+
+    final updated = widget.player.copyWith(avatar: result);
+    if (!await PlayerStorage.instance.updatePlayer(updated)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save your new portrait')),
+      );
+      return;
+    }
+    widget.onPlayerUpdate(updated);
   }
 
   Widget _solarArrayCard(ColorScheme cs) {
