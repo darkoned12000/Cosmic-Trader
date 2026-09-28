@@ -678,17 +678,24 @@ class TerranArt extends SpeciesArt {
               hair,
             );
           case 2: // short spikes
+            // Irregular and forward-swept on purpose. A symmetric row of
+            // evenly-sized triangles read as a *crown* rather than hair, and on
+            // a pale dye it read unmistakably as royalty. Real spiked hair is
+            // uneven and combed, so the heights vary and the peaks rake to one
+            // side.
             final spike = Path()..moveTo(o.dx - r * 0.90, o.dy - r * 0.26);
-            for (var i = 0; i < 4; i++) {
+            const heights = [1.06, 0.86, 1.00, 0.80];
+            const rakes = [-0.14, 0.02, -0.06, 0.10];
+            for (var i = 0; i < heights.length; i++) {
               final x0 = o.dx - r * 0.90 + i * r * 0.48;
               spike
-                ..lineTo(x0 + r * 0.10, o.dy - r * (1.30 + 0.14 * (i % 2)))
-                ..lineTo(x0 + r * 0.40, o.dy - r * 0.62);
+                ..lineTo(x0 + r * (0.10 + rakes[i]), o.dy - r * heights[i])
+                ..lineTo(x0 + r * 0.42, o.dy - r * 0.58);
             }
             spike
               ..lineTo(o.dx + r * 0.90, o.dy - r * 0.24)
               ..quadraticBezierTo(
-                  o.dx, o.dy - r * 0.80, o.dx - r * 0.90, o.dy - r * 0.26)
+                  o.dx, o.dy - r * 0.72, o.dx - r * 0.90, o.dy - r * 0.26)
               ..close();
             c.fill(spike, hair);
           default: // close-cropped

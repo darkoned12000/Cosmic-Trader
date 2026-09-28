@@ -43,8 +43,69 @@ class AvatarCanvas extends StatelessWidget {
   final String? semanticLabel;
 
   @override
+  Widget build(BuildContext context) => AvatarPortraitView(
+        portrait: _resolve(),
+        // Only pass a style when the player has chosen one, so an un-customised
+        // portrait falls back to the seeded look.
+        style: selection.style,
+        size: size,
+        showRing: showRing,
+        selected: selected,
+        semanticLabel: semanticLabel,
+      );
+
+  /// Never null and never throws: an unusable selection falls back to the
+  /// species default so a pilot always has a face.
+  AvatarPortrait _resolve() {
+    final byId = AvatarCatalog.byId(selection.portraitId);
+    if (byId != null && byId.species == selection.species) return byId;
+
+    if (selection.source == AvatarSource.custom) {
+      // Custom uploads (design doc §7) are not implemented yet, and a saved
+      // custom file may be missing on a new device. Either way the selected
+      // preset stays valid as a fallback, so use it rather than showing a hole.
+      debugPrint(
+        '[AvatarCanvas] Custom avatar "${selection.customFile}" unavailable '
+        '— falling back to preset ${selection.portraitId}',
+      );
+    }
+    return AvatarCatalog.defaultFor(selection.species);
+  }
+}
+
+/// Draws an **already-resolved** [AvatarPortrait].
+///
+/// Split out of [AvatarCanvas] so callers that hold a portrait rather than a
+/// selection can skip the catalogue lookup entirely — NPC portraits, whose ids
+/// are derived per-NPC and deliberately absent from [AvatarCatalog.portraits].
+///
+/// Everything about *drawing* lives here, so there is still exactly one place
+/// that learns how portraits render when the drawing model changes. Splitting
+/// the view out adds no second painting path.
+class AvatarPortraitView extends StatelessWidget {
+  const AvatarPortraitView({
+    super.key,
+    required this.portrait,
+    this.style,
+    this.size = 96,
+    this.showRing = true,
+    this.selected = false,
+    this.semanticLabel,
+  });
+
+  final AvatarPortrait portrait;
+
+  /// Explicit appearance. `null` uses the portrait's seeded look, which is what
+  /// gives every NPC a distinct face without any of them being customised.
+  final AvatarStyle? style;
+
+  final double size;
+  final bool showRing;
+  final bool selected;
+  final String? semanticLabel;
+
+  @override
   Widget build(BuildContext context) {
-    final portrait = _resolve();
     final accent = factionColor(portrait.species.faction);
     final label = semanticLabel ?? '${portrait.label} portrait';
 
@@ -70,9 +131,7 @@ class AvatarCanvas extends StatelessWidget {
                 size: Size.square(size),
                 painter: AvatarPortraitPainter(
                   portrait: portrait,
-                  // Only pass a style when the player has chosen one, so an
-                  // un-customised portrait falls back to the seeded look.
-                  style: selection.style,
+                  style: style,
                   selected: selected,
                 ),
               ),
@@ -81,23 +140,5 @@ class AvatarCanvas extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  /// Never null and never throws: an unusable selection falls back to the
-  /// species default so a pilot always has a face.
-  AvatarPortrait _resolve() {
-    final byId = AvatarCatalog.byId(selection.portraitId);
-    if (byId != null && byId.species == selection.species) return byId;
-
-    if (selection.source == AvatarSource.custom) {
-      // Custom uploads (design doc §7) are not implemented yet, and a saved
-      // custom file may be missing on a new device. Either way the selected
-      // preset stays valid as a fallback, so use it rather than showing a hole.
-      debugPrint(
-        '[AvatarCanvas] Custom avatar "${selection.customFile}" unavailable '
-        '— falling back to preset ${selection.portraitId}',
-      );
-    }
-    return AvatarCatalog.defaultFor(selection.species);
   }
 }

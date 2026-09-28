@@ -9,6 +9,8 @@ import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
+import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
@@ -577,8 +579,23 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     );
   }
 
+  /// Height of one entry tile.
+  ///
+  /// Shared by the tile and [_listHeight] so the scroll extent cannot drift from
+  /// what the tiles actually are — the same lesson as the gallery's thumbnail
+  /// strip, whose hard-coded `thumbnailSize + spacing(30)` overflowed as soon as
+  /// a caller passed a different size.
+  ///
+  /// Fixed height is only safe because the tile's captions are capped to one
+  /// line, so the content cannot grow. 120 is the measured minimum: it has to fit
+  /// a 46px portrait, a two-line caption block, and the expanded interaction
+  /// buttons, and 112 overflowed by 4px in the expanded state.
+  /// `test/npc_portrait_widget_test.dart` guards both the collapsed and expanded
+  /// tile at 360px and 420px.
+  static const double _kEntryTileHeight = 120.0;
+
   double _listHeight(int entryCount) {
-    const tileHeight = 96.0;
+    const tileHeight = _kEntryTileHeight;
     const separatorHeight = 6.0;
     const maxVisible = 5;
     final total =
@@ -637,8 +654,10 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
 
   Widget _entryTile(_SectorEntry entry) {
     final isSelected = _selectedId == entry.id;
+    final npc = entry.npcShip;
 
     return Container(
+      height: _kEntryTileHeight,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: entry.color.withValues(alpha: isSelected ? 0.2 : 0.1),
@@ -650,14 +669,27 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
         children: [
           Row(
             children: [
-              Icon(entry.icon, size: 18, color: entry.color),
+              // NPCs get a face; planets, hazards, and anomalies keep their
+              // icon, because there is nothing to depict a mountain as.
+              if (npc != null)
+                AvatarPortraitView(
+                  portrait: NpcPortraits.of(npc),
+                  size: 46,
+                )
+              else
+                Icon(entry.icon, size: 18, color: entry.color),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       entry.label,
+                      // Single-line: the tile has a fixed height, and a long
+                      // ship name wrapping would overflow the panel.
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -667,6 +699,8 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
                     ),
                     Text(
                       entry.detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.white54,
                         fontSize: 10,
@@ -686,10 +720,10 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
                 ),
             ],
           ),
-          if (isSelected) ...[
-            const SizedBox(height: 8),
-            _interactionButtons(entry),
-          ] else
+          const Spacer(),
+          if (isSelected)
+            _interactionButtons(entry)
+          else
             TextButton(
               onPressed: () {
                 setState(() => _selectedId = entry.id);

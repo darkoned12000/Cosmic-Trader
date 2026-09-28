@@ -183,6 +183,7 @@ lib/
                                      applicability, read/write/reset. No axis renders as integers
       avatar_designer.dart        -- tabbed per-axis editor: tab strip, axis rows, per-axis reset,
                                      per-axis lock toggle, reroll + full reset
+      npc_portrait.dart           -- derives an NPC face from its id. Flutter-free, stores nothing
   services/
     energy_service.dart           -- B1 turn → energy rules: warp/scan action costs scaled by
                                      distance + engine efficiency, refuel pricing/clamping,
@@ -211,7 +212,7 @@ lib/
       port_combat_service.dart    -- port combat resolution engine (shared siege core) with defense stats
 ```
 
-## File inventory (120 source files, 51 test files, 422 tests passing)
+## File inventory (121 source files, 53 test files, 436 tests passing)
 
 | Path | Role |
 |------|------|
@@ -258,7 +259,7 @@ lib/
 | `lib/screens/computer_screen.dart` | Computer tool hub (7 tools: Banking, Port Report, Economy Report, Bounty Board, Knowledge Base, Ports Guide, Rankings) |
 | `lib/screens/settings_screen.dart` | Universe gen form + commodity editor + theme/audio/video/font + Automation (dev console, tick controls, grants/drains, diagnostics) |
 | `lib/screens/economy_report_screen.dart` | Session trade metrics report (totals, avg-vs-base, faction net/loot/holdings, copy, reset) |
-| `lib/screens/bounty_board_screen.dart` | Bounty Board (active/claim/post with type-ahead, paid history) |
+| `lib/screens/bounty_board_screen.dart` | Bounty Board (active/claim/post with type-ahead, paid history). Shows a target face when the NPC is still in the roster; a missing target gets none |
 | `lib/screens/knowledge_base_screen.dart` | Faction lore browser |
 | `lib/screens/faction_rankings_screen.dart` | Leaderboard with faction tabs |
 | `lib/screens/ports_knowledge_base.dart` | Port mechanics reference guide |
@@ -289,10 +290,11 @@ lib/
 | `lib/widgets/avatar/avatar_vinari_art.dart` | Vinari: non-humanoid luminous form (no ears/nose/mouth/sclera), drift motes, three shroud sets |
 | `lib/widgets/avatar/avatar_terran_art.dart` | Terran: presentation-specific skulls, heavier male brow and lid, ears, gear slot, zip/buttons/harness |
 | `lib/widgets/avatar/avatar_portrait_painter.dart` | Orchestration only — layer order, palette lookup, context build. **Placeholder art overall**; this is the one file to change when real portrait assets land |
-| `lib/widgets/avatar/avatar_canvas.dart` | Size-clipped portrait renderer with faction ring, semantics, and total fallback to the species default |
+| `lib/widgets/avatar/avatar_canvas.dart` | `AvatarCanvas` resolves a selection then delegates to `AvatarPortraitView`, which does the drawing. One painting path, two entry points |
 | `lib/widgets/avatar/avatar_gallery.dart` | Reusable picker: presentation tabs, large preview, thumbnail strip, faction flavour line, and one Reroll action. `showPreview: false` and `locked` let the editor reuse it without duplicating its preview or bypassing its locks |
 | `lib/widgets/avatar/avatar_axis_catalog.dart` | Axis metadata: named options, swatches, per-species applicability, and read/write/reset per axis. Adding an axis is one entry here, not a new block of UI |
 | `lib/widgets/avatar/avatar_designer.dart` | Tabbed per-axis editor: text-only tab strip, one row per axis with named option chips, per-axis reset, per-axis lock toggle, reroll + full reset |
+| `lib/widgets/avatar/npc_portrait.dart` | Derives an NPC's portrait from its id. Stores nothing — no `NpcShip` field, no `npcs.json` change. Flutter-free |
 | `lib/widgets/sector_view_widgets/action_log_provider.dart` | ChangeNotifier log singleton |
 | `lib/widgets/sector_view_widgets/action_log_panel.dart` | Color-coded log display |
 | `lib/widgets/sector_view_widgets/tactical_map.dart` | Sector tactical overview |
@@ -514,10 +516,10 @@ Bundled assets (declared in `pubspec.yaml`):
 ## Known issues / technical debt
 
 - `core/theme.dart` (TWTheme) is unused — theme built inline in main.dart from ThemeService
-- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (422 tests) before committing
+- `flutter analyze` is clean (0 issues); verify with `flutter analyze` + `flutter test` (436 tests) before committing
 - Repeated UI patterns (cards, stat bars, pills) duplicated across screens → **A2 shared widget library**: `lib/widgets/shared/` ships `PanelCard`, `StatBar` (inline + stacked layouts), `HudPill` (radius/padding/font/icon overrides), `DataTableShell` (all density-aware via `UiScale.spacing()`). Adopted in `ship_status.dart` (5 panels), `port_trade_view.dart` (pills + trade table), `ship_status_summary.dart` (4 bars), `planet_screen.dart` (resource/defense bars), `faction_rankings_screen.dart` (stat pills). Screens whose cards use distinct visual families (radius-12 banded headers, padding-20 accent cards, ExpansionTile settings cards, hero/terminal styles) were audited and intentionally left as-is rather than forced.
 - No lint/format CI pipeline
-- Test coverage: 422 tests across 51 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
+- Test coverage: 436 tests across 53 files (unit + widget); generator/AI/economy paths covered, UI screens thinly covered
 - **Avatar art is procedural, by decision — not a placeholder for art yet to be commissioned.** `avatar_portrait_painter.dart` orchestrates; the species live behind the `SpeciesArt` seam in `avatar_duran_art.dart` / `avatar_vinari_art.dart` / `avatar_terran_art.dart`. `player-avatar.md` §2 records why, and what was given up. Two things to hold onto: the species seam is where new anatomy goes, and `player-avatar.md` §6.4 explains why every visual change must be verified by **rendering PNG contact sheets and looking at them** — reading the code missed bugs that were obvious on screen. The painter's quality ceiling is a live risk; if it can't be raised, the migration is an art pack, and the seam means `AvatarCanvas` is the only file that changes. Custom uploads are deferred; `AvatarSource.custom` exists in the schema and falls back to the selected preset.
 - **Do not derive avatar skin from `factionColor()`.** An early build did, and it produced green Traders and red Duran. `AvatarPalette` owns skin/garment/eye/hair per species; `FactionPalette` owns the ring and backdrop only. `test/avatar_catalog_test.dart` asserts the two never collide and that the lore colour bands hold (Terrans warm, Duran never red, Vinari always bluish).
 - Avatar customisation is **per-axis, not reroll-only** — the appearance editor has six tabs of named options, per-axis reset, and per-axis locks. The per-axis swatch rows were originally removed because the design doc warned against a field grid before a real art set existed; that reasoning expired when procedural became the permanent art direction rather than a placeholder. Locks are the mitigation for the combinatorics risk: 14 axes produce far more combinations than anyone has visually reviewed, and a lock lets a player re-roll everything *except* the axes they have settled. **The customisation layer is complete** — see `player-avatar.md` §6.
@@ -576,6 +578,7 @@ See README.md for full roadmap. Key items remaining:
 - **`AvatarStyle.copyWith` cannot clear a nullable slot.** It resolves `?? this.x`, so `copyWith(eyeColor: null)` keeps the old value. Any "return this axis to its seed" path must use the explicit `clearEyeColor` / `clearBackdrop` / … flags, or the Reset button silently does nothing on every colour slot (whose seeds are all `null`).
 - **Per-axis locks are transient by design and must stay out of the schema.** They describe how a player wants to re-roll, not what their pilot is, and are spent at Save. `AxisStyleAxis` lives in `lib/data/models/avatar_selection.dart` rather than beside the editor UI so `AvatarStyle.rerolled` can honour locks without the data layer importing widgets. `rerolled` rolls from the **current** style, not from neutral, because a lock has nothing to hold otherwise — with no locks the two are indistinguishable. `test/avatar_selection_test.dart` asserts the style's JSON stays a flat set of ints with no lock key.
 - **Never assert a random outcome in a test.** "After a random re-roll this axis should differ from its seed" is true 3 times in 4 for a 3-option axis, and produced three separate flaky tests. Use a **forced generator** — `int nextInt(int max) => max - 1` against a base whose every axis is `0` — so anything that gets rolled is guaranteed to differ. Also note `pumpWidget` with an identical widget tree **reuses the existing `State`**, so a test asserting "this does not survive reopening" must pump something else in between to actually destroy it.
+- **NPC portraits: two live gaps.** (1) Pirates map to `AvatarSpecies.terran`, so ~1 NPC in 7 shares the human pool and a pirate can draw the same face as a Trader — the faction ring is the only disambiguator. (2) The NPC art bar is **higher** than the player's, because nobody chose the face, so *every* combination must hold. A 48-face-per-faction sweep found two defects no test would have (Duran horns inheriting the skin tone into a bone-coloured plume; the Terran "short spikes" reading as a crown) — both invisible in the 27 seeded looks, because no seed paired the offending tone with the offending shape. **Re-run a sweep after any species-art change.** The Vinari would fail such a sweep on variety: `horns` is Duran-only and their `hair` options barely differ on screen, so a Vinari roster reads as one silhouette in several tints. Both gaps are art work, not model.
 - **A3 look & feel wave 1** — persistent HUD strip (sector name/credits/turns/hull/shields, faction ambiance accent) on both layouts; single `faction_colors.dart` palette adopted across all 7 color-coded surfaces; 7 procedural SFX cues bundled + wired (buy/sell/hack/laser/warp/lottery/land); zebra rows option in `DataTableShell` (used by the port trade table); bundled Audiowide sci-fi display typeface selectable in the font picker. Remaining from the A3 spec: sortable Port Report columns, hover cursors/keyboard shortcuts, forced header typeface
 - **A3 playtest fixes** — SFX/music were silent because `AssetSource` paths were double-prefixed (`assets/` + `assets/…` → `assets/assets/…`); `playSfx`/`playMusic` now strip the prefix before handing to `AudioCache` and log failures instead of swallowing them (regression-guarded in `test/sfx_assets_test.dart`); font dropdown keyed by family names so a scanned bundled typeface no longer trips the "exactly one item" assertion (`test/font_settings_widget_test.dart`); warp visual transition removed (jumps are instant, warp SFX cue kept, `lib/widgets/warp_transition.dart` + its test deleted); the Sector panel became "Ship Inventory" (drones/cargo only — hull/shields moved to the HUD strip), and the FONTS settings gained a help dialog for bundling custom fonts
 - **Planet system (phase 1)** — enhanced `Planet` model (10 types, atmospheres, colonies, Citadel levels, defenses, image pools), `PlanetScreen` with scan/claim/transfers/level-up, homeworld assignment in the generator, planet markers on maps; automation/invasion pending

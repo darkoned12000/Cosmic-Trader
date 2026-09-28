@@ -1,7 +1,8 @@
 # Player Avatar System — Design & Implementation Plan
 
 **Status:** Art direction **settled** (procedural). Phases 1–4 and 6 complete. Uploads (phase 5)
-deferred by choice. Nothing else outstanding.
+deferred by choice. **Remaining work is prioritised in §13** — start with the Vinari silhouette,
+which is a live quality defect rather than a feature.
 **Scope:** Give each pilot a visual identity chosen during account creation, persist it on the
 `Player`, show it on Ship Status, and let the player customise it afterwards.
 **Related docs:** `planets.md` (same doc-driven pattern), `AGENTS.md` (architecture, commands,
@@ -21,6 +22,7 @@ pilot, with:
 3. A **customisation layer** afterwards, so a pilot can adjust an axis at a time rather than
    re-rolling everything.
 4. The portrait rendered prominently on Ship Status.
+5. The same pipeline giving every **NPC** a stable, derived face — see §12.
 
 ---
 
@@ -95,7 +97,7 @@ Each faction's existing `appearance` string is the authoritative art direction, 
 | `trader` | *"Diverse Terrans in practical jumpsuits or merchant finery"* | Human anatomy — ears, nose, mouth, sclera. Variety is carried by **kit**, which is what the lore actually describes. |
 
 `pirate` exists in the enum but is **excluded from registration** (also excluded from
-`Faction.allFactions()`), so it gets no species. See §10 for a later reuse.
+`Faction.allFactions()`), so it gets no species — see §13.2.
 
 **Colour ownership is the rule most easily broken.** `AvatarPalette` owns skin, garment, eye, hair,
 and marking pigment per species. `FactionPalette` owns the ring, the backdrop bloom, and insignia —
@@ -599,7 +601,7 @@ falls back to the selected preset today.
 
 ## 9. Files
 
-**New — avatar system (13)**
+**New — avatar system (14)**
 
 | File | Responsibility |
 |---|---|
@@ -611,13 +613,14 @@ falls back to the selected preset today.
 | `lib/widgets/avatar/avatar_vinari_art.dart` | Vinari art |
 | `lib/widgets/avatar/avatar_terran_art.dart` | Terran art |
 | `lib/widgets/avatar/avatar_portrait_painter.dart` | Orchestration only. **The one file to change when the drawing model changes** |
-| `lib/widgets/avatar/avatar_canvas.dart` | Clipped renderer, faction ring, semantics, fallback |
+| `lib/widgets/avatar/avatar_canvas.dart` | `AvatarCanvas` resolves a selection then delegates; `AvatarPortraitView` draws an already-resolved portrait. Faction ring, semantics, fallback |
 | `lib/widgets/avatar/avatar_gallery.dart` | Reusable picker: presentation tabs, preview, thumbnails, Reroll. `showPreview: false` and `locked` let the editor reuse it without duplicating its preview or bypassing its locks |
 | `lib/widgets/avatar/avatar_axis_catalog.dart` | Axis metadata: named options, swatches, per-species applicability, read/write, reset. Adding an axis is one entry here |
 | `lib/widgets/avatar/avatar_designer.dart` | Tabbed per-axis editor: tab strip, axis rows, per-axis reset, per-axis lock toggle, reroll + full reset |
+| `lib/widgets/avatar/npc_portrait.dart` | Derives an NPC's face from its id. Flutter-free. Nothing stored — see §12 |
 | `lib/screens/avatar_editor_screen.dart` | Save/Cancel draft wrapper around a pinned preview + the designer |
 
-**Modified (4)**
+**Modified (6)**
 
 | File | Change |
 |---|---|
@@ -625,18 +628,22 @@ falls back to the selected preset today.
 | `lib/data/models/player.dart` | nullable `avatar`, `copyWith`, JSON, `effectiveAvatar` |
 | `lib/data/storage/player_storage.dart` | `register()` takes an `AvatarSelection` |
 | `lib/screens/ship_status.dart` | portrait in Player Info, Change Appearance row, grid cell 440 → 520 |
+| `lib/widgets/sector_view_widgets/sector_interaction_panel.dart` | NPC face in the entry tile; tile height shared with the scroll extent |
+| `lib/screens/bounty_board_screen.dart` | roster lookup by target id; target face, omitted when the NPC is gone |
 | `AGENTS.md` | file inventory, test count, avatar known-issues |
 
 **Not modified, and no longer needed:** `pubspec.yaml` (no portrait asset directory),
 `file_safe.dart` (no byte writes while uploads are deferred).
 
-**Tests (6):** `avatar_selection_test.dart` (round-trip, null-means-coupled, coercion, per-axis lock
+**Tests (8):** `avatar_selection_test.dart` (round-trip, null-means-coupled, coercion, per-axis lock
 semantics), `avatar_catalog_test.dart` (completeness, seed determinism, lore colour bands, species
 distinctness), `avatar_axis_catalog_test.dart` (option counts vs their source, contiguity, labels
 and swatches, applicability, write/read round trip, reset), `avatar_gallery_test.dart` (selection,
 registration flow, Ship Status), `avatar_designer_test.dart` (tab reachability at 430px and 360px,
 pinned preview, per-axis reset, locks, no overflow — loads a real font), `avatar_outfit_render_test.dart`
-(rendered-pixel guard — standalone file, see §6.4).
+(rendered-pixel guard — standalone file, see §6.4), `npc_portrait_test.dart` (determinism, species
+mapping, no catalogue collision, roster variety), `npc_portrait_widget_test.dart` (panel layout,
+tile height, per-NPC derivation).
 
 ---
 
@@ -651,8 +658,9 @@ pinned preview, per-axis reset, locks, no overflow — loads a real font), `avat
 | **5 — Upload** | **Deferred** | Not scheduled. Analysis preserved in §8. |
 | **6 — Designer** | **Done in substance** | The original asked for a *layered artist-authored asset composer*. What shipped is a *procedural parameter designer*: 14 axes, 6 decoupled, all named and per-axis editable, with per-axis reset, full reset, and per-axis locks. That is the whole customisation layer. |
 
-**Nothing outstanding in the customisation layer.** The next candidates are elsewhere: the
-combinatorics risk is now mitigated but not eliminated, and uploads (§8) remain deferred by choice.
+**Nothing outstanding in the customisation layer.** Remaining work is prioritised in **§13**; the two
+species-art items there (Vinari silhouette, pirate species) are the ones that still affect quality
+rather than adding scope.
 
 ---
 
@@ -663,43 +671,208 @@ combinatorics risk is now mitigated but not eliminated, and uploads (§8) remain
    raised acceptably, the migration is to an art pack — and the model, catalogue, and editor are
    already asset-agnostic enough to survive that.
 2. **Combinatorics.** 14 axes produce far more combinations than anyone has visually reviewed, and
-   some will be unattractive. Per-axis locks (§6.3) mitigate this by letting a player protect the
-   axes they have settled, but they do not remove it: an unlocked axis can still land somewhere
-   unreviewed. Enforce only authored-sane options, and do not expose unconstrained combinations.
-3. **Previewing is the only review mechanism.** Nothing in the test suite can tell you a portrait
+   some will be unattractive. Per-axis locks (§6.3) mitigate this for players by letting them protect
+   the axes they have settled. For **NPCs** the risk is sharper still, because nobody chose: every
+   combination must hold, not just the ones a player selected. A 48-face sweep already found two art
+   defects this way (§12), and found that the Vinari barely vary at all — a live, unresolved item.
+3. **Species variety is uneven.** The Duran and Terran have a large silhouette-changing axis; the
+   Vinari do not, so a Vinari roster reads as one silhouette in several tints. Any future species
+   needs at least one axis that genuinely changes the head shape, or it will look repetitive at
+   roster scale.
+4. **Previewing is the only review mechanism.** Nothing in the test suite can tell you a portrait
    looks good, and the same is true of the editor's *usability* — a passing widget test says the
    Face tab builds, not that it is readable. Screenshotting the editor is what found the option-list
    crash that emptied the tab, the pinned preview that was not pinned, and the tab strip whose last
    tab could not be tapped. Render-and-look is mandatory, and it has caught bugs every test passed.
-4. **Coordinate contract.** Pixel values and fractional helpers in the same expression class. Already
+5. **Coordinate contract.** Pixel values and fractional helpers in the same expression class. Already
    caused one silent, fully-passing regression; now pixel-guarded.
-5. **Draw-order is part of the save format.** `AvatarDrawContext.rng` is a shared sequence, so
+6. **Draw-order is part of the save format.** `AvatarDrawContext.rng` is a shared sequence, so
    adding a draw to any layer shifts every later consumer. Layers drawn before the species slots
    must use `scoped(key)`, never `rng`.
-6. **Lore drift.** An axis that contradicts the `appearance` string is a bug even if it looks good.
+7. **Lore drift.** An axis that contradicts the `appearance` string is a bug even if it looks good.
    The Vinari-with-a-nose build is the cautionary example.
-7. **Registration friction.** Customisation must stay out of account creation. If the editor ever
+8. **Registration friction.** Customisation must stay out of account creation. If the editor ever
    feels like it belongs in registration, it is too heavy.
-8. **Faction colour leaking into skin.** Has happened once. The palette test exists to keep it from
+9. **Faction colour leaking into skin.** Has happened once. The palette test exists to keep it from
    happening again.
-9. **Storage reliability.** `savePlayers` swallows errors. Fine today; a blocker for anything
+10. **Storage reliability.** `savePlayers` swallows errors. Fine today; a blocker for anything
    transactional.
-10. **Accessibility.** Every option needs a text label and a visible selected state. Never rely on
+11. **Accessibility.** Every option needs a text label and a visible selected state. Never rely on
    colour alone, and never on species alone.
-11. **Defaulting.** Avoid a neutral/androgyne unexplained default for existing accounts. Defaults
+12. **Defaulting.** Avoid a neutral/androgyne unexplained default for existing accounts. Defaults
     should be recognisably someone.
 
 ---
 
-## 12. Follow-ons
+## 12. NPC portraits — **done, with one species gap**
 
-- **NPC portraits** — reuse the catalogue and `AvatarCanvas` with stable NPC seeds, so comms and the
-  bounty board show faces. Highest-value next item; the pipeline already exists.
-- **HUD / comms thumbnail** — small `AvatarCanvas` in the HUD strip or communications panel.
-- **Unlockable cosmetics** — headgear, capes, insignia bought with scrap metal/tech or earned via
-  the hacking codex and faction standing. Once the editor has locks, gating options is a small step.
-- **Shareable avatar codes** — the style is 14 small ints plus a seed ID; trivially serialisable for
-  sharing or server sync.
-- **Pirate species** — scarred Terran/Duran variants, once pirates are selectable anywhere.
-- **Crew roster** — multiple avatars per ship.
-- **Real art, if the plateau is ever hit** — see risk 1. The seam is one branch in `AvatarCanvas`.
+`lib/widgets/avatar/npc_portrait.dart` derives a face for every NPC from its id. **Flutter-free**,
+like the catalogue, so it is callable from the data layer and testable without a binding.
+
+```
+id        = 'npc_${npc.id}'                 // UUID minted by NpcShip.create, already in npcs.json
+species   = AvatarSpecies.forFaction(npc.faction)
+presentation = derived from the id
+style     = null → the painter uses portrait.seededStyle
+```
+
+### Why derived rather than stored
+
+An NPC needs *identity* (a stable, repeatable face), not *persistence* (a face someone chose). So
+nothing is stored: no portrait field on `NpcShip`, no `npcs.json` change.
+
+- **Zero migration.** Every existing save has faces on first render.
+- **Unlimited variety.** NPCs are *not* drawn from the 27 catalogue entries — each gets its own
+  seed, so a roster of hundreds shows no repeats. Drawing from the catalogue would repeat constantly
+  at NPC scale.
+- **Free regeneration.** Regenerating the universe mints new ids, so all faces are new with no
+  bookkeeping.
+
+Presentation is derived because NPC models carry no gender field. It uses a different XOR salt from
+`seededStyleFor`, so presentation is not correlated with the first style axis the style draws — else
+every NPC would land on one presentation/style pairing.
+
+**A respawned pilot gets a new face**, because `repopulation_service.dart` calls `NpcShip.create`,
+which mints a new UUID. That is intended and consistent: `create` also regenerates the pilot name and
+ship, so it genuinely is a different person. Faces are not sticky to a station.
+
+### Integration
+
+`AvatarCanvas` was split so callers holding a portrait can skip the catalogue lookup —
+`AvatarPortraitView` does the drawing, `AvatarCanvas` still resolves-then-delegates for players. One
+painting path, not two.
+
+Live on two surfaces, both wired to real NPCs:
+
+- **Sector interaction panel** — a face in place of the faction icon, for NPC entries only. Planets,
+  hazards, and anomalies keep their icons; there is nothing to depict a mountain as.
+- **Bounty board** — a face on the target card, *only when the target is still in the roster*. A
+  destroyed or missing NPC simply gets no portrait; the card stays fully usable, so a missing face
+  must never be an error state.
+
+The comms panel is **not** wired — its chat tab is mock data with a sender string, not `NpcShip`s, so
+there is nothing to derive from yet.
+
+### The pirate gap
+
+`AvatarSpecies.forFaction` maps `pirate` → `AvatarSpecies.terran`, so roughly **one NPC in seven is
+drawn from the human pool**, and a pirate and a Trader share the entire species pool. The same face
+can appear on both; the faction ring is the only thing distinguishing them. A dedicated pirate species
+is a deliberate follow-on, and `NpcPortraits` is the only place that would need to change.
+
+### Rendering at NPC scale found two art defects
+
+The bar for NPCs is **higher** than for players: a player picks from named options they have
+previewed and can lock the axes they care about, but *nobody chose an NPC's face*. Every combination
+has to hold up. A 48-face sweep per faction at 96px and 48px found:
+
+1. **Duran horns inherited the skin tone.** A horn only 18% toward black picked up the tone of a pale
+   complexion, and a 30%-to-white highlight then made it the brightest thing in frame — a
+   bone-coloured crest that read as a feather or a bird's plume. Now 52% to black with a 16% highlight.
+   Invisible until arbitrary tones met arbitrary horn shapes, because no seeded look paired a pale
+   tone with a big horn.
+2. **Terran "short spikes" read as a crown.** A symmetric row of evenly-sized triangles is a crown,
+   and on a pale dye it read unmistakably as royalty. Now uneven heights with a forward rake.
+
+### The Vinari variety problem — **unresolved, and the most significant finding**
+
+The same sweep showed the Vinari produce far less variety than the other two species, and the reason
+is structural:
+
+| Species | Silhouette-changing axes |
+|---|---|
+| Duran | `horns` (3, large) + `hair`/crest (3, visible) + `outfit` (3, visible armour) |
+| Terran | `hair` (3 per presentation, very visible) + `outfit` (3) |
+| **Vinari** | `hair` (drift crown — near-invisible) + `outfit` (3 subtle shrouds) |
+
+The Vinari have **no analogue of `horns`**, and their `hair` options barely differ on screen, so three
+options on that axis are really one. 48 derived faces read as near-identical teardrops differing mainly
+in skin tint. The lore fidelity is right — no ears, nose, mouth, or sclera, luminous core, drift motes
+— but the *variety* is not there.
+
+The fix is art, not model: the Vinari need one axis that genuinely changes the head silhouette
+(a crest/frill/appendage form), or their existing `hair` options need to be made visually distinct.
+This is deliberately **not** attempted here, because it is a species-art change rather than
+plumbing, and the same decision sits behind the pirate species.
+
+---
+
+## 13. Remaining work — prioritized
+
+The build is done. This is what is left, in the order it is worth doing. Two items are
+**unresolved quality problems**, not features, and one of them should probably go first.
+
+### 13.1 Fix first — the Vinari silhouette
+
+**Not a feature. A live defect, and the most significant finding of the whole build.**
+
+The NPC render sweep (§12) showed 48 derived Vinari reading as near-identical teardrops differing
+mainly in skin tint. The cause is structural: `horns` is Duran-only, and the Vinari `hair` options
+barely differ on screen, so three options on that axis are effectively one. A Vinari roster will look
+repetitive to any player who scans a sector.
+
+Affects **every** playable Vinari and every Vinari NPC, and it undermines the variety that was the
+*main* reason to choose procedural art in the first place (§2). Unlockables built on a
+one-silhouette species compound the problem rather than helping.
+
+Needed: one axis that genuinely changes the Vinari head silhouette — a crest, frill, or appendage
+form with three visibly distinct states. Pure art; the `SpeciesArt` seam and the axis plumbing
+already exist.
+
+### 13.2 Pirate species
+
+`AvatarSpecies` gains a fourth value so `forFaction(pirate)` stops falling through to
+`AvatarSpecies.terran` (§12). Right now ~1 NPC in 7 is drawn from the human pool and a pirate can
+draw the same face as a Trader, with only the faction ring distinguishing them.
+
+Scope beyond the art: `AvatarCatalog` entries or a derived seed, `AvatarPalette` entries,
+`AvatarAxisCatalog` option labels, and a decision about whether pirates stay excluded from
+registration (they should — they are not a playable faction, only an NPC one). `NpcPortraits` is the
+single place that maps faction → species.
+
+Worth doing **with** 13.1, not after: both are species art, and both benefit from the same sweep pass.
+
+### 13.3 Faction power rankings — faces for Most Wanted / Top 10 Pilots
+
+Both lists live in `faction_rankings_screen.dart` and already distinguish `isNpc`.
+
+**Not a drop-in.** `_TopEntity` currently carries only `name`, `faction`, `powerScore`, `credits`,
+`portsOwned`, `kills`, `isNpc` — it **discards the identity a portrait needs**. `NpcPortraits` derives
+from `NpcShip.id` and a player face needs `Player.avatar`, and neither survives into the projection.
+
+So this is: add an id (or the resolved portrait) to `_TopEntity`, populate it at the two construction
+sites — where `player` / `npc` are both still in hand — then render. Small, but it is a data change
+first, not a cosmetic one. Same lesson as the bounty board, where the board happened to keep only a
+`targetId` and needed a roster lookup added.
+
+### 13.4 Comms panel — chat and mail
+
+**Also bigger than it looks.** The panel's chat tab is fed by `_mockChatMessages` — a list of
+`(sender: String, …)` records, not `NpcShip`s. There is no NPC to derive a face from, so portraits
+cannot be the first change here. The real work is **wiring the panel to real NPCs and real mail
+senders**, at which point faces fall out for free via `NpcPortraits.of` / `AvatarCanvas`.
+
+Treat as a communications feature with portraits attached, not a portrait task.
+
+### 13.5 Unlockable cosmetics
+
+Headgear, capes, insignia bought with scrap metal/tech or earned via the hacking codex and faction
+standing. The editor already has per-axis rows, per-axis locks, and a declarative
+`avatar_axis_catalog.dart`, so gating an option is one entry plus an ownership check.
+
+Open design question, deliberately undecided: unlocking a *slot* (you may now re-roll `gear`) is
+much cheaper than unlocking an *option* (`goggles` is yours, you may still re-roll away from it).
+The latter needs the option list to become per-player state, which is a real model change.
+
+### 13.6 Small and cheap
+
+- **HUD thumbnail** — a small `AvatarPortraitView` in the HUD strip. One widget.
+- **Shareable avatar codes** — the style is 14 small ints plus a seed ID, trivially serialisable. An
+  NPC's face is shareable by copying its UUID.
+
+### 13.7 Deliberately still deferred
+
+- **Uploads** (§8). Deferred by choice; procedural generation removes most of the appeal.
+- **Crew roster** — multiple avatars per ship. A schema decision, not a UI one.
+- **Real art, if the procedural plateau is ever hit** — see risk 1. The seam means `AvatarCanvas` is
+  the only file that changes.

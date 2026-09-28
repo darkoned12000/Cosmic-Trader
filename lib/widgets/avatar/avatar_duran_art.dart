@@ -62,7 +62,13 @@ class DuranArt extends SpeciesArt {
         2 => 0.55,
         _ => 0.28,
       };
-      final horn = Color.lerp(c.skinShadow, Colors.black, 0.18)!;
+      // Chitin, not skin. A horn only 18% toward black inherits the *tone* of a
+      // pale complexion, and a 30%-to-white highlight then made those horns the
+      // brightest thing in frame — a bone-coloured crest that read as a feather
+      // or a bird's plume rather than part of the creature. Only visible once
+      // arbitrary skin tones and horn shapes were combined at NPC scale, since
+      // the catalogue's seeded looks never paired a pale tone with a big horn.
+      final horn = Color.lerp(c.skinShadow, Colors.black, 0.52)!;
       c.fill(
         Path()
           ..moveTo(o.dx + side * r * 0.50, o.dy - r * 0.62)
@@ -88,7 +94,7 @@ class DuranArt extends SpeciesArt {
               o.dy - r * (length * 0.62),
               o.dx + side * r * (0.30 + lean * curl),
               o.dy - r * (length * 0.96)),
-        Color.lerp(horn, Colors.white, 0.30)!,
+        Color.lerp(horn, Colors.white, 0.16)!,
         width: math.max(1, c.u(0.012)),
       );
       if (c.style.horns == 2) {

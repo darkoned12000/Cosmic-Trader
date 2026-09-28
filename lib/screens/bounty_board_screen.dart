@@ -8,6 +8,8 @@ import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
+import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
+import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/shared/data_table_shell.dart';
 import 'package:cosmic_trader/widgets/shared/panel_card.dart';
 
@@ -34,6 +36,15 @@ class BountyBoardScreen extends StatefulWidget {
 
 class _BountyBoardScreenState extends State<BountyBoardScreen> {
   List<NpcShip> _npcs = [];
+
+  /// Roster indexed by id, for drawing a face on a bounty target.
+  ///
+  /// A bounty only stores a `targetId` and a name, so a portrait needs the ship
+  /// back. A target that has been destroyed, or that is somehow not in the
+  /// roster, simply gets no portrait — the card is still fully usable without
+  /// one, so a missing face must never be an error state.
+  Map<String, NpcShip> _npcById = const {};
+
   NpcShip? _target;
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
@@ -94,6 +105,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
       if (mounted) {
         setState(() {
           _npcs = npcs.where((n) => !n.isDestroyed).toList();
+          _npcById = {for (final n in _npcs) n.id: n};
         });
       }
     } catch (e) {
@@ -218,6 +230,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
     final claimable = kills.contains(g.targetId);
     final soonest =
         g.marks.map((b) => b.expiresAt).reduce((a, b) => a.isBefore(b) ? a : b);
+    final targetNpc = _npcById[g.targetId];
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
@@ -227,6 +240,13 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
       ),
       child: ExpansionTile(
         dense: true,
+        // A face when the target is still in the roster; nothing when it is not.
+        leading: targetNpc == null
+            ? null
+            : AvatarPortraitView(
+                portrait: NpcPortraits.of(targetNpc),
+                size: 40,
+              ),
         title: Row(
           children: [
             Expanded(
