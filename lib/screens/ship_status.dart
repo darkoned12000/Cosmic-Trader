@@ -955,32 +955,126 @@ class _ShipStatusViewState extends State<ShipStatusView> {
     );
   }
 
+  /// Cargo and equipment, kept apart because they obey different rules.
+  ///
+  /// **Cargo** is the resource types, and they share one hold against a shared
+  /// capacity — every unit of ore displaces a unit of organics. **Equipment** is
+  /// the ordnance: Genesis Torpedoes, Atomic Detonators and whatever else gets
+  /// added. It is carried on the ship and takes **no** hold space, so a full hold
+  /// is never a reason to be short of torpedoes, and buying one does not make
+  /// the hold tighter.
+  ///
+  /// The card used to be called "Cargo Hold & Components" and showed only a
+  /// capacity number, which made the two look like one thing when they are the
+  /// only two things in this game that behave differently.
   Widget _shipCargoCard(ThemeData theme, ColorScheme cs) {
+    final p = widget.player;
+    final cargo = p.cargo.entries.where((e) => e.value > 0).toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final equipment = <(String, int, String)>[
+      ('Genesis Torpedo', p.genesisTorpedoes, 'Creates a random world'),
+      ('Atomic Detonator', p.atomicDetonators, 'Frees a sector slot'),
+    ];
+    final held = equipment.where((e) => e.$2 > 0).toList();
+
     return PanelCard(
       icon: Icons.inventory_2_rounded,
-      title: 'Cargo Hold & Components',
+      title: 'Cargo & Equipment',
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Capacity',
-              style: TextStyle(
-                color: cs.onSurface.withValues(alpha: 0.6),
-                fontSize: 13,
-              ),
-            ),
-            Text(
-              '${widget.player.cargoSize}',
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                fontSize: 13,
-              ),
-            ),
+            Text('Hold capacity',
+                style: TextStyle(
+                    color: cs.onSurface.withValues(alpha: 0.6), fontSize: 13)),
+            Text('${p.cargoUsed} / ${p.maxCargo}',
+                style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                    fontFamily: 'monospace')),
           ],
         ),
+        const SizedBox(height: 12),
+        Text('CARGO — uses hold slots',
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: cs.onSurface.withValues(alpha: 0.45))),
+        const SizedBox(height: 6),
+        if (cargo.isEmpty)
+          Text('Empty',
+              style: TextStyle(
+                  fontSize: 12, color: cs.onSurface.withValues(alpha: 0.4)))
+        else
+          for (final e in cargo)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(_titleCase(e.key),
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+                  Text(_compact(e.value),
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+        const SizedBox(height: 12),
+        Text('EQUIPMENT — no hold slots',
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: cs.onSurface.withValues(alpha: 0.45))),
+        const SizedBox(height: 6),
+        if (held.isEmpty)
+          Text('None carried',
+              style: TextStyle(
+                  fontSize: 12, color: cs.onSurface.withValues(alpha: 0.4)))
+        else
+          for (final e in held)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.$1, style: const TextStyle(fontSize: 12)),
+                        Text(e.$3,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: cs.onSurface.withValues(alpha: 0.45))),
+                      ],
+                    ),
+                  ),
+                  Text('${e.$2}',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
       ],
     );
+  }
+
+  static String _titleCase(String s) =>
+      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+  static String _compact(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
   }
 
   Widget _shipResourcesCard(ThemeData theme, ColorScheme cs) {

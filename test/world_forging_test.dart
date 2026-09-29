@@ -97,18 +97,25 @@ void main() {
       expect(sector.planets, isEmpty);
     });
 
-    test('it is refused when the hold is full', () {
-      // Torpedoes are cargo-bounded, and the *fired* one needs a slot for the
-      // world it becomes once the player fills the hold with something else.
+    test('a full hold is no reason to be short of a torpedo', () {
+      // Torpedoes are **equipment**, not cargo: they are carried on the ship
+      // rather than in the hold, so ore filling every slot must not stop a
+      // launch. This replaced a guard that asserted the opposite - that a full
+      // hold refuses the launch - which was true of the first implementation and
+      // wrong about the item. A capacity limit a player cannot see and cannot
+      // clear would read as a bug, and `cargoPerUnit` is 0 precisely so the
+      // accounting is not even possible to get wrong.
       final sector = orbit();
-      final (result, _) = WorldForging.launch(
+      final (result, world) = WorldForging.launch(
         player: pilot(torpedoes: 1, cargoUsed: 100, maxCargo: 100),
         sector: sector,
         cap: 3,
         rng: math.Random(1),
       );
-      expect(result, LaunchResult.holdFull);
-      expect(sector.planets, isEmpty);
+      expect(result, LaunchResult.launched);
+      expect(world, isNotNull);
+      expect(WorldForging.cargoPerUnit, 0,
+          reason: 'the bound is the absence of one, not a small number');
     });
 
     test('the new name is not one already in the sector', () {

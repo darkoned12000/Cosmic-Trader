@@ -357,14 +357,56 @@ The warning must be explicit and unmissable, and the roll must be visible: a sil
 destruction of a 1M-citadel colony would read as a bug, not as a risk the player
 accepted.
 
+### DONE — colony controls read at a glance
+
+**The level gate colours the requirement, not the total.** Each row prints
+`have / need`, and only the **need** is coloured — red when unmet, green when met.
+The first number is what the world actually has and stays in the normal text
+colour, because colouring it too would colour every cell in the card and say
+nothing the figures do not. This went through two earlier versions: a trailing
+`✓` that appeared only on success (so the two states were told apart by the
+*absence* of a character), and then a tick-or-cross icon column, which was
+unambiguous but added a fourth column to every row for a binary the numbers
+already carry.
+
+**A colony track row had two `−` buttons, and asking what they did was a fair
+question.** One sat either side of the count, and both pulled colonists off the
+track — but the leading one was enabled only when the track held a full step, so
+on any colony smaller than a step it rendered greyed out and read as a dead
+control while the other worked. The duplicate is gone. What remains is a `+`/`−`
+pair that moves colonists **between the reserve and the track**, which a bare pair
+of glyphs on a row of numbers does not communicate, so each button now names its
+source or destination in a tooltip and the card says it in prose.
+
 ### DONE — Genesis Torpedo and Atomic Detonator
 
 Sold at **hardware emporiums only**, which is true by construction: the emporium
 widget is only reachable from a port with `isHardwareEmporium`, so there is no gate
-in the new tab to forget. Both are **cargo-bounded** (one slot each) and both can
-be **returned for half price** — without that, a player who fills the hold with
-ordnance has no way to get the space back, and a dead end that locks up cargo is
-worse than a bad purchase.
+in the new tab to forget.
+
+**Both are equipment, not cargo, and take no hold space.** The first design made them
+cargo-bounded at one slot each, which looked like a tidy way to stop stockpiling
+and was wrong: it conflated the two systems the game otherwise keeps apart. A hold
+full of ore would have been a reason to be short of torpedoes, and the player would
+have had to dump cargo they needed in order to make the purchase worth making. The
+Ship screen now states the split directly — **Cargo** is the resource types and
+shares one hold against a shared capacity, **Equipment** is the ordnance and takes
+no hold space at all. `WorldForging.cargoPerUnit` is `0`, so the accounting is not
+merely correct but *impossible* to get wrong.
+
+Both can be **returned for half price**. Without that, money spent on a roll that
+went badly is money the player can never get back, which turns a bad launch into a
+dead end rather than a lesson.
+
+**The type really is random, and that is a decision rather than an omission.**
+Twenty to thirty planet explosions a day in the galactic log was authentic TW2002,
+and chasing the world you want by paying for the rolls is the price of a credit
+sink that never saturates — a world is permanent, so there is always another empty
+sector. Ten types means an expected **ten rolls** to get a specific one, each
+costing a torpedo and a detonator. Type *profiles* (pick Fertile / Industrial /
+Barren, roll within) would cut that to about three and are the obvious mitigation
+**if** it turns out to be wearing — but that is a change to the item, and it should
+be made after playtesting rather than before.
 
 - `Planet.fromGenesis` — a torpedoed world starts unscanned, unowned, unpopulated,
   at 1.0 efficiency and no defence. A generated world carries a roll, a defence
@@ -372,8 +414,8 @@ worse than a bad purchase.
   new one has no history to differ by, so it starts at the honest baseline.
 - `WorldForging` (new) owns the rules, rather than methods on `Planet`. These are
   the first things in the game that create and destroy the object the rest of the
-  planet system is built around, so the slot cap, cargo bound, over-stack warning
-  and collision dice need one home a screen cannot half-implement.
+  planet system is built around, so the slot cap, over-stack warning and collision
+  dice need one home a screen cannot half-implement.
 - The sector panel gains a `LAUNCH TORPEDO` entry when the player holds any. It is
   an action on the **orbit**, not a button on a world.
 

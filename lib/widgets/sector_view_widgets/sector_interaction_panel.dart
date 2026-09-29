@@ -838,18 +838,14 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       _toast('No Genesis Torpedoes. Hardware emporiums stock them.');
       return;
     }
-    if (result == LaunchResult.holdFull) {
-      _toast('Cargo hold is full — no room for the torpedo.');
-      return;
-    }
     if (world == null) return;
 
     // The torpedo is consumed even when the launch over-stacks: the item was
     // fired, and owning the risk is the whole point.
-    final spent = widget.player.copyWith(
-      genesisTorpedoes: widget.player.genesisTorpedoes - 1,
-      cargoUsed: widget.player.cargoUsed + WorldForging.cargoPerUnit,
-    );
+    // No cargo accounting: a torpedo is equipment, not cargo, so a full hold is
+    // no reason to be short of one.
+    final spent = widget.player
+        .copyWith(genesisTorpedoes: widget.player.genesisTorpedoes - 1);
     widget.onPlayerUpdate(spent);
     await UniverseStorage.instance.saveSectors([sector]);
     ActionLogProvider.global.trade(

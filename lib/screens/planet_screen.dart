@@ -1191,56 +1191,64 @@ class _PlanetScreenState extends State<PlanetScreen> {
     return n.toString();
   }
 
-  /// A level-gate row: `have / need` plus a green tick or a red cross.
+  /// A level-gate row: `have / need`, with the **requirement** coloured.
   ///
-  /// The tick used to be a trailing `✓` glyph inside the value string, and it
-  /// only appeared on success — a missed requirement showed nothing at all, so
-  /// the two states were told apart by the absence of a character rather than by
-  /// what you saw. A cross is an explicit "not yet", which is the state a player
-  /// is actually looking for.
+  /// Two iterations on this. It started as a trailing `✓` glyph, which only
+  /// appeared on success — a missed requirement showed nothing, so the two states
+  /// were told apart by the absence of a character. That became a green tick or
+  /// a red cross, which was unambiguous but noisy: a fourth icon column on every
+  /// row, for a binary the numbers already carry.
   ///
-  /// The mark is a **Widget**, not a glyph, so it takes the theme's success and
-  /// error colours. A coloured `✓` character would need a font that has one, and
-  /// the default test font renders every glyph as a full-width box.
+  /// It is now just the colour of the **required** figure. Red means not yet,
+  /// green means met, and the first number — what the world actually has — stays
+  /// in the normal text colour, because colouring the total too would colour
+  /// every cell in the card and tell you nothing the numbers do not.
+  ///
+  /// Colour alone is not an accessible signal, so the row also carries a
+  /// semantic label; see the comment on the test that checks it.
   Widget _requirementRow(String label, int have, int need, ColorScheme cs) {
     final met = have >= need;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: TextStyle(
-                  color: cs.onSurface.withValues(alpha: 0.6),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500)),
-          const SizedBox(width: 8),
-          // The mark is fixed-width so the numbers do not shift sideways when a
-          // requirement is met — a row that reflows as you gain resources reads
-          // as a glitch.
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: Icon(
-              met ? Icons.check_circle_rounded : Icons.cancel_rounded,
-              size: 14,
-              color:
-                  met ? Colors.green.shade400 : cs.error.withValues(alpha: 0.7),
-              semanticLabel: met ? 'requirement met' : 'requirement not met',
-            ),
-          ),
-          Flexible(
-            child: Text(
-              '${_formatNumber(have)} / ${_formatNumber(need)}',
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+    return Semantics(
+      // `container: true` is what makes this its **own** node. Without it
+      // `Semantics` only annotates, and the label merges into an ancestor's
+      // node — where it is indistinguishable from every other row and cannot be
+      // addressed on its own. `excludeSemantics` then drops the inner Text so
+      // the raw "250 / 250" is not announced as well.
+      container: true,
+      label: '$label requirement ${met ? 'met' : 'not met'}',
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: TextStyle(
+                    color: cs.onSurface.withValues(alpha: 0.6),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500)),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                '${_formatNumber(have)} / ${_formatNumber(need)}',
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace'),
+                  fontFamily: 'monospace',
+                  // Only the *need* is coloured, so the eye lands on the
+                  // target rather than on the number that is merely your
+                  // current position.
+                  color: met
+                      ? Colors.green.shade400
+                      : cs.error.withValues(alpha: 0.85),
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1407,13 +1415,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 ),
               ),
             ),
-            if (canAssign)
-              _stepButton(
-                icon: Icons.remove,
-                enabled: count >= step,
-                onTap: () => _adjustWorkforce(planet, track, -step),
-              ),
-            const SizedBox(width: 6),
             SizedBox(
               width: 58,
               child: Text(
@@ -1452,15 +1453,25 @@ class _PlanetScreenState extends State<PlanetScreen> {
               // disabled for not fitting 100. Enabled on `> 0`, not `>= step`.
               _stepButton(
                 icon: Icons.add,
+                // Names the source, because a bare +/- pair on a row of numbers
+                // does not say where the colonists come from. It is the reserve —
+                // the implicit `population - on tracks` figure three rows above —
+                // and the tooltip is the only place that says so.
+                tooltip: producible
+                    ? 'Assign from reserve (${_formatNumber(planet.reserveColonists)} idle)'
+                    : 'Cannot produce this - the reserve is not assignable here',
                 enabled: producible && planet.reserveColonists > 0,
                 onTap: () => _adjustWorkforce(planet, track,
                     _effectiveStep(step, 1, planet.reserveColonists)),
               ),
               _stepButton(
                 icon: Icons.remove,
+                tooltip: 'Return to reserve',
                 // Remove stays enabled even on a dead track: a colony generated
                 // before a world became unable to produce something should not be
-                // stuck holding colonists who will never work again.
+                // stuck holding colonists who will never work again. That is also
+                // why the step is clamped to what is actually on the track rather
+                // than being the full step.
                 enabled: count > 0,
                 onTap: () => _adjustWorkforce(
                     planet, track, -_effectiveStep(step, -1, count)),
@@ -1516,8 +1527,11 @@ class _PlanetScreenState extends State<PlanetScreen> {
             const SizedBox(height: 8),
             Text(
               canAssign
-                  ? 'Reserve colonists are not on a track. They still eat, and '
-                      'they are who you draw from when you reassign a workforce.'
+                  ? '+ moves colonists off the reserve and onto the track; '
+                      '\u2212 brings them back. The reserve is everyone not on a '
+                      'track \u2014 they still eat. Note the drones are not '
+                      'production: they are your haul crew, and they do not work '
+                      'this planet\u2019s stores.'
                   : 'This world is not yours to reassign.',
               style: TextStyle(
                 fontSize: 10,
@@ -1586,9 +1600,10 @@ class _PlanetScreenState extends State<PlanetScreen> {
     required IconData icon,
     required bool enabled,
     required VoidCallback onTap,
+    String? tooltip,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
+    final button = SizedBox(
       width: 26,
       height: 24,
       child: Material(
@@ -1609,6 +1624,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
         ),
       ),
     );
+    if (tooltip == null) return button;
+    // Wrapping rather than putting the text in the row: a workforce row is four
+    // numbers wide and there is no room to spell out what each glyph does. This
+    // is the fix for a genuine confusion - a bare +/- pair on a row of numbers
+    // does not say that the pair *moves colonists between two places*, which is
+    // the only thing these buttons do.
+    return Tooltip(message: tooltip, child: button);
   }
 
   Widget _buildLevelUpSection(Planet planet, ColorScheme cs) {

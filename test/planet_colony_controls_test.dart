@@ -8,6 +8,7 @@ import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/planet_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -36,6 +37,40 @@ class _FaithfulUniverse extends UniverseStorage {
     }
     _blob = _encode(existing);
   }
+}
+
+/// Every non-empty label in the built semantics tree, in document order.
+///
+/// Walks the tree rather than using `find.bySemanticsLabel`, and that is not a
+/// stylistic choice. The finder could not see these nodes at all while the
+/// wrapping `Semantics` was `container: false` — it only annotates, so each
+/// label merged into the nearest ancestor and became indistinguishable from its
+/// neighbours. A guard built on the finder reported green while a screen reader
+/// would have read the whole card as one run of text.
+///
+/// So this asserts what a user actually receives: a **standalone node per
+/// requirement**, discoverable in the tree.
+List<String> semanticsLabels(WidgetTester tester) {
+  final labels = <String>[];
+  void walk(SemanticsNode? node) {
+    if (node == null) return;
+    final label = node.getSemanticsData().label;
+    if (label.isNotEmpty) labels.add(label);
+    node.visitChildren((child) {
+      walk(child);
+      return true;
+    });
+  }
+
+  // `pipelineOwner` is deprecated in favour of `rootPipelineOwner`, but the
+  // replacement is empty under `testWidgets` — the test binding's semantics owner
+  // hangs off the deprecated getter, and the modern one returns a node with no
+  // labels, which reads as "the screen has no semantics" rather than as a
+  // failure. Verified by dumping both. The ignore is deliberate and scoped to
+  // this one line; the rest of the project is on the modern API.
+  // ignore: deprecated_member_use
+  walk(tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode);
+  return labels;
 }
 
 void main() {
@@ -81,6 +116,14 @@ void main() {
   });
   tearDown(() => UniverseStorage.instanceForTest = null);
 
+  /// The compact form the screen renders, so a needle matches what is on screen
+  /// rather than the raw integer.
+  String shortForm(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
+  }
+
   Player playerWith({int cargoUsed = 0, Map<String, int> cargo = const {}}) =>
       Player(
         name: 'Tester',
@@ -123,10 +166,24 @@ void main() {
       (await store.loadUniverse()).first.planets.first;
 
   group('level-gate rows', () {
-    testWidgets('a met requirement is a green tick, an unmet one a red cross',
+    /// The row whose text is exactly `have / need`.
+    ///
+    /// Matched on the **whole** row text. An earlier version searched for a
+    /// needle like "250" and took the first `/`-bearing match, which is a
+    /// different row entirely — the level gate, the colony card and the
+    /// transfers rows all print slash-separated figures.
+    Text? rowFor(WidgetTester tester, int have, int need) {
+      final target = '${shortForm(have)} / ${shortForm(need)}';
+      for (final t in tester.widgetList<Text>(find.byType(Text))) {
+        if (t.data == target) return t;
+      }
+      return null;
+    }
+
+    testWidgets('a met requirement reads green and an unmet one red',
         (tester) async {
       final cost = Planet.levelUpCosts.first;
-      // Stock everything except organics, so both states are on screen at once.
+      // Met on everything except organics, so both states are on screen at once.
       planet.storedMinerals = cost.requiredMinerals;
       planet.storedIndustrial = cost.requiredIndustrial;
       planet.population = cost.requiredColonists;
@@ -134,55 +191,137 @@ void main() {
       await store.saveSectors([sector]);
       await pump(tester, playerWith());
 
-      expect(find.byIcon(Icons.check_circle_rounded), findsNWidgets(3),
-          reason: 'colonists, minerals and industrial are met');
-      expect(find.byIcon(Icons.cancel_rounded), findsOneWidget,
-          reason: 'organics is one short');
+      expect(
+          rowFor(tester, cost.requiredColonists, cost.requiredColonists)
+              ?.style
+              ?.color,
+          Colors.green.shade400,
+          reason: 'colonists are met');
+      expect(
+          rowFor(tester, cost.requiredMinerals, cost.requiredMinerals)
+              ?.style
+              ?.color,
+          Colors.green.shade400,
+          reason: 'minerals are met');
+      expect(
+          rowFor(tester, cost.requiredIndustrial, cost.requiredIndustrial)
+              ?.style
+              ?.color,
+          Colors.green.shade400,
+          reason: 'industrial is met');
+
+      final unmet =
+          rowFor(tester, cost.requiredOrganics - 1, cost.requiredOrganics);
+      expect(unmet, isNotNull, reason: 'sanity: the organics row is on screen');
+      expect(unmet!.style?.color, isNot(Colors.green.shade400),
+          reason: 'organics is one short and must not read as met');
+      expect(unmet.style?.color, isNotNull,
+          reason: 'unmet must be visibly distinct, not merely un-green');
     });
 
-    testWidgets('every requirement row carries a mark, met or not',
+    testWidgets('there are no tick or cross marks left in the row',
         (tester) async {
-      // Under-stocked on purpose. The default fixture is over-stocked, so every
-      // requirement is met and the "nothing is met" claim would be vacuous.
-      planet
-        ..population = 0
-        ..storedMinerals = 0
-        ..storedOrganics = 0
-        ..storedIndustrial = 0;
+      final cost = Planet.levelUpCosts.first;
+      planet.storedMinerals = cost.requiredMinerals;
+      planet.storedOrganics = cost.requiredOrganics;
       await store.saveSectors([sector]);
       await pump(tester, playerWith());
 
-      expect(find.byIcon(Icons.cancel_rounded), findsNWidgets(4),
-          reason: 'no row may be left ambiguous');
+      // The marks were a fourth icon column for a binary the numbers already
+      // carry. A RenderFlex overflow or a stray icon would both show here.
       expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
+      expect(find.byIcon(Icons.cancel_rounded), findsNothing);
+      expect(find.textContaining('\u2713'), findsNothing,
+          reason: 'and no tick glyph hiding in a string either');
     });
 
-    testWidgets('the marks carry a semantic label, not just a colour',
+    testWidgets('each label is its own node, not merged into a neighbour',
         (tester) async {
-      planet
-        ..population = 0
-        ..storedMinerals = 0
-        ..storedOrganics = 0
-        ..storedIndustrial = 0;
-      await store.saveSectors([sector]);
+      // This is the check that actually closes the gap. `container: true` on the
+      // `Semantics` wrapper is what makes each requirement a standalone node; with
+      // the default (`container: false`) the label only annotates, merges into
+      // whatever ancestor is nearest, and a screen reader reads every label in
+      // the card as one long run — or drops them.
+      //
+      // The earlier version of this guard asserted only that the `Semantics`
+      // widget carried a label, which passed even while the tree could not see
+      // it. The tree walk below is the property a user actually gets.
+      final handle = tester.ensureSemantics();
       await pump(tester, playerWith());
 
-      // Asserted on the widget property, **not** through `find.bySemanticsLabel`:
-      // the enclosing Row merges the marks' semantics away, so the label never
-      // appears as its own node and a semantics-tree finder sees nothing at all.
-      // This proves the label is *set*, which is what the code is responsible
-      // for; it does not prove the label survives into an accessibility tree,
-      // and that is a gap rather than a check.
-      //
-      // It is worth having anyway: colour alone is not a signal a player can
-      // read, and a glyph renders as a full-width box in the default test font.
-      final marks =
-          tester.widgetList<Icon>(find.byIcon(Icons.cancel_rounded)).toList();
-      expect(marks, hasLength(4));
-      for (final m in marks) {
-        expect(m.semanticLabel, isNotNull,
-            reason: 'a colour-only mark conveys nothing to a screen reader');
+      final labels = semanticsLabels(tester);
+      handle.dispose();
+
+      for (final expected in const [
+        'Colonists requirement met',
+        'Minerals requirement met',
+        'Organics requirement met',
+        'Industrial requirement met',
+      ]) {
+        expect(labels, contains(expected),
+            reason: 'the tree exposes no standalone node for "$expected". '
+                'Semantics needs container: true or it merges into a parent.');
       }
+    });
+
+    testWidgets('an unmet requirement says so in words, not only in colour',
+        (tester) async {
+      final cost = Planet.levelUpCosts.first;
+      planet.storedOrganics = cost.requiredOrganics - 1;
+      await store.saveSectors([sector]);
+
+      final handle = tester.ensureSemantics();
+      await pump(tester, playerWith());
+      final labels = semanticsLabels(tester);
+      handle.dispose();
+
+      expect(labels, contains('Organics requirement not met'),
+          reason:
+              'colour is not an accessible signal; the state is stated too');
+      expect(labels, isNot(contains('Organics requirement met')),
+          reason: 'and the wording must follow the state, not lag behind it');
+    });
+  });
+
+  group('each track row has exactly one of each button', () {
+    testWidgets('one add and one remove per track, not two of either',
+        (tester) async {
+      // A track row used to carry a `\u2212` on *both* sides of its count, and the
+      // two did the same thing: both pulled colonists off the track and returned
+      // them to the reserve. They were not equivalent, though \u2014 the leading
+      // one was enabled only when the track held a full step, so on any colony
+      // smaller than a step it rendered greyed out and read as a dead control
+      // while the trailing one worked. Asked directly, nobody could say what
+      // either button was for.
+      //
+      // The count is asserted per icon across the whole colony card: four tracks
+      // \u00d7 one pair. The transfer steppers elsewhere on the screen use
+      // `remove_rounded`, and the workforce ones use a bare `remove`, so the bare
+      // glyph is what selects these and nothing else.
+      await pump(tester, playerWith());
+
+      expect(find.byIcon(Icons.add), findsNWidgets(4),
+          reason: 'one assign button per production track');
+      expect(find.byIcon(Icons.remove), findsNWidgets(4),
+          reason: 'a second remove per row would be a duplicate control');
+    });
+
+    testWidgets('the buttons say what they move', (tester) async {
+      // The reason the question could not be answered: a bare +/- pair on a row
+      // of numbers does not say that the pair moves colonists between two
+      // places, which is the only thing they do. The tooltip is the only place
+      // that says so, so it has to be there.
+      await pump(tester, playerWith());
+      final tooltips = tester
+          .widgetList<Tooltip>(find.byType(Tooltip))
+          .map((t) => '${t.message}')
+          .toList();
+
+      expect(tooltips.where((m) => m.startsWith('Assign from reserve')),
+          hasLength(4),
+          reason: 'each add button names its source');
+      expect(tooltips.where((m) => m == 'Return to reserve'), hasLength(4),
+          reason: 'each remove button names its destination');
     });
   });
 

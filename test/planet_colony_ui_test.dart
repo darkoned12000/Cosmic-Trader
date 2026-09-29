@@ -29,6 +29,25 @@ String compact(int n) {
   return '\$n';
 }
 
+/// The tooltip on the **colonists** transfer row.
+///
+/// Scoped rather than "the only Tooltip on screen". The workforce steppers are
+/// tooltipped too \u2014 they move colonists between the reserve and a track, and
+/// a bare +/- pair does not say so \u2014 so `find.byType(Tooltip)` stopped being
+/// unique and threw "Too many elements". A finder that happens to be unique is a
+/// finder that will silently find a *different* tooltip the day someone adds
+/// another; this one names the row it means.
+Tooltip _colonistTooltip(WidgetTester tester) {
+  final matches = tester
+      .widgetList<Tooltip>(find.byType(Tooltip))
+      .where((t) => '${t.message}'.contains('ship from'))
+      .toList();
+  expect(matches, hasLength(1),
+      reason: 'expected exactly one colonist-supply tooltip; the workforce '
+          'steppers are tooltipped as well and are not this one');
+  return matches.single;
+}
+
 void main() {
   // The default test font draws every glyph as a full-width box, so text
   // measures roughly 2x too wide and a layout assertion at 430px fails for
@@ -153,7 +172,7 @@ void main() {
         'the bubble explains the source, the distance and the fuel cost',
         (tester) async {
       await pump(tester);
-      final tooltip = tester.widget<Tooltip>(find.byType(Tooltip));
+      final tooltip = _colonistTooltip(tester);
       final message = tooltip.message as String;
       expect(message, contains('ship from'),
           reason: 'where colonists come from is the headline fact');
@@ -167,8 +186,7 @@ void main() {
         (tester) async {
       // The fixture universe has no homeworlds, so the faction is an exile.
       await pump(tester);
-      final message =
-          tester.widget<Tooltip>(find.byType(Tooltip)).message as String;
+      final message = _colonistTooltip(tester).message as String;
       expect(message, contains('exile'));
       expect(message, contains('Recapture your homeworld'),
           reason: 'the tooltip should say how to make the rate go away');

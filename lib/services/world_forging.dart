@@ -16,9 +16,6 @@ enum LaunchResult {
   /// The player has no torpedoes.
   noTorpedoes,
 
-  /// The hold is full, so there is nowhere to put one.
-  holdFull,
-
   /// Already at the cap. **This is not a refusal** — see
   /// [Sector.launchWorld], which allows over-stacking deliberately. The result
   /// exists so the screen can show the gravity warning after the fact.
@@ -39,7 +36,13 @@ class WorldForging {
   WorldForging._();
 
   /// Cargo slots one unit of each item occupies.
-  static const int cargoPerUnit = 1;
+  ///
+  /// **Zero.** These are *equipment*, not cargo: they are carried on the ship
+  /// rather than in the hold, so they do not compete with ore for space and a
+  /// full hold is no reason to be short of torpedoes. The Ship screen labels the
+  /// distinction directly — "Cargo" is the resource types that use slots,
+  /// "Equipment" is everything else.
+  static const int cargoPerUnit = 0;
 
   /// Picks a world type at random from the ten.
   ///
@@ -72,9 +75,6 @@ class WorldForging {
   }) {
     if (player.genesisTorpedoes <= 0) {
       return (LaunchResult.noTorpedoes, null);
-    }
-    if (player.cargoUsed >= player.maxCargo) {
-      return (LaunchResult.holdFull, null);
     }
 
     // Pre-launch the sector is only *full*; firing is what makes it over.
@@ -125,14 +125,7 @@ class WorldForging {
     );
     return (
       DetonateResult.destroyed,
-      player.copyWith(
-        atomicDetonators: player.atomicDetonators - 1,
-        // Clamped: the two counters are meant to stay in step, but a save edit
-        // or a legacy value can desync them, and a *negative* hold reads as a
-        // nonsense figure on the HUD and would then be used as the space budget
-        // for every other purchase.
-        cargoUsed: (player.cargoUsed - cargoPerUnit).clamp(0, player.maxCargo),
-      ),
+      player.copyWith(atomicDetonators: player.atomicDetonators - 1),
     );
   }
 

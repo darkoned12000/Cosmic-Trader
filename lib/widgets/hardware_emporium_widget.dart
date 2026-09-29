@@ -7,7 +7,6 @@ import 'package:cosmic_trader/data/models/port.dart';
 
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
-import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 
@@ -37,7 +36,7 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
     'SHIELDS',
     'ENGINES',
     'MODULES',
-    'ORDNANCE',
+    'EQUIPMENT',
     'SCRAP',
   ];
 
@@ -138,7 +137,7 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
                           onPlayerUpdate: _updatePlayer,
                           category: HardwareCategory.engine),
                       _ModulesTab(player: p, onPlayerUpdate: _updatePlayer),
-                      _OrdnanceTab(player: p, onPlayerUpdate: _updatePlayer),
+                      _ConsumablesTab(player: p, onPlayerUpdate: _updatePlayer),
                       _ScrapTab(player: p, onPlayerUpdate: _updatePlayer),
                     ],
                   ),
@@ -1738,11 +1737,11 @@ class _ItemCard extends StatelessWidget {
 /// limit. Both can be **returned for half price**, which matters: without it a
 /// player who fills the hold with ordnance has no way to get the space back, and
 /// a dead end that locks up cargo is worse than a bad purchase.
-class _OrdnanceTab extends StatelessWidget {
+class _ConsumablesTab extends StatelessWidget {
   final Player player;
   final Function(Player) onPlayerUpdate;
 
-  const _OrdnanceTab({required this.player, required this.onPlayerUpdate});
+  const _ConsumablesTab({required this.player, required this.onPlayerUpdate});
 
   /// Fraction of the purchase price returned when selling an item back.
   static const double _returnRate = 0.5;
@@ -1753,39 +1752,36 @@ class _OrdnanceTab extends StatelessWidget {
         _ => 0,
       };
 
-  /// The count this item's counter moves by, and the resulting player.
-  ({Player next, int delta}) _apply(String id, int sign) {
+  /// The player after one buy (`sign` +1) or one return (`sign` -1).
+  ///
+  /// **No `cargoUsed` on either side.** These are equipment, carried on the ship
+  /// rather than in the hold, so neither buying nor returning one moves the hold
+  /// figure. The first version wrote `cargoUsed +/- cargoPerUnit` on both paths;
+  /// it was a no-op only because `cargoPerUnit` happens to be 0, which makes the
+  /// line an accounting accident waiting for someone to retune the constant. The
+  /// rule is now stated by its absence, and
+  /// `test/ship_cargo_equipment_test.dart` holds it in place.
+  ///
+  /// Affordability and stock are checked on the buttons, not here. A guard
+  /// duplicated into the handler is a guard that can disagree with the button,
+  /// and the one that was here (`credits < 0`) was both dead and wrong — a pilot
+  /// with no credits is not negative, and the button had already refused.
+  Player _apply(String id, int sign) {
     final held = _held(id);
-    if (sign > 0) {
-      if (player.credits < 0) return (next: player, delta: 0);
-      return (
-        next: player.copyWith(
-          credits: player.credits - _priceOf(id) * sign,
-          genesisTorpedoes: sign > 0 && id == 'genesisTorpedo'
-              ? held + sign
-              : player.genesisTorpedoes,
-          atomicDetonators: sign > 0 && id == 'atomicDetonator'
-              ? held + sign
-              : player.atomicDetonators,
-          cargoUsed: player.cargoUsed + sign * WorldForging.cargoPerUnit,
+    final credits = sign > 0
+        ? player.credits - _priceOf(id)
+        : player.credits + (_priceOf(id) * _returnRate).round();
+    return switch (id) {
+      'genesisTorpedo' => player.copyWith(
+          credits: credits,
+          genesisTorpedoes: (held + sign).clamp(0, held),
         ),
-        delta: sign,
-      );
-    }
-    return (
-      next: player.copyWith(
-        credits: player.credits + (_priceOf(id) * _returnRate * -sign).round(),
-        genesisTorpedoes: id == 'genesisTorpedo'
-            ? (held + sign).clamp(0, held)
-            : player.genesisTorpedoes,
-        atomicDetonators: id == 'atomicDetonator'
-            ? (held + sign).clamp(0, held)
-            : player.atomicDetonators,
-        cargoUsed: (player.cargoUsed + sign * WorldForging.cargoPerUnit)
-            .clamp(0, player.maxCargo),
-      ),
-      delta: sign,
-    );
+      'atomicDetonator' => player.copyWith(
+          credits: credits,
+          atomicDetonators: (held + sign).clamp(0, held),
+        ),
+      _ => player,
+    };
   }
 
   int _priceOf(String id) => itemsForCategory(HardwareCategory.consumable)
@@ -1796,7 +1792,6 @@ class _OrdnanceTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final items = itemsForCategory(HardwareCategory.consumable);
-    final free = player.maxCargo - player.cargoUsed;
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -1814,8 +1809,9 @@ class _OrdnanceTab extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Each unit takes ${WorldForging.cargoPerUnit} cargo slot. '
-                  'Hold space free: ${_format(free)} of ${_format(player.maxCargo)}.',
+                  'Equipment, not cargo: these ride on the ship rather than in '
+                  'the hold, so a hold full of ore is no reason to be short of '
+                  'them. Unused ordnance can be returned for half price.',
                   style: TextStyle(
                       fontSize: 12,
                       color: cs.onSurface.withValues(alpha: 0.85)),
@@ -1869,15 +1865,14 @@ class _OrdnanceTab extends StatelessWidget {
                       IconButton(
                         tooltip: 'Return one',
                         onPressed: _held(item.id) > 0
-                            ? () => onPlayerUpdate(_apply(item.id, -1).next)
+                            ? () => onPlayerUpdate(_apply(item.id, -1))
                             : null,
                         icon: const Icon(Icons.remove_circle_outline),
                       ),
                       const SizedBox(width: 4),
                       FilledButton.icon(
-                        onPressed: player.credits >= item.priceCredits &&
-                                free >= WorldForging.cargoPerUnit
-                            ? () => onPlayerUpdate(_apply(item.id, 1).next)
+                        onPressed: player.credits >= item.priceCredits
+                            ? () => onPlayerUpdate(_apply(item.id, 1))
                             : null,
                         icon: const Icon(Icons.add, size: 16),
                         label: const Text('Buy'),
