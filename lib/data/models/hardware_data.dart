@@ -10,6 +10,11 @@ enum HardwareCategory {
   engine,
   weapon,
   module,
+
+  /// Consumed rather than installed. The Genesis Torpedo and the Atomic
+  /// Detonator are **perishable ordnance**, not anything that goes in a socket,
+  /// so they get their own tab and their own counters.
+  consumable,
 }
 
 // ── Hardware Item ──────────────────────────────────────
@@ -438,6 +443,43 @@ const int scrapMetalPurchasePrice = 5000;
 const int scrapTechPurchaseBundle = 5;
 const int scrapTechPurchasePrice = 5000;
 
+/// The two world-shaping consumables.
+///
+/// **Hardware emporiums only**, and that is automatic: the emporium widget is
+/// only reachable from a port with `isHardwareEmporium`, so anything in the
+/// catalogue is emporium-only by construction rather than by a check someone
+/// can forget to write.
+///
+/// They are **cargo-bounded** - one slot each - so they cannot be stockpiled
+/// without paying for the hold. That is deliberate: the classic game answered
+/// "credits have no sink" with an item that is always useful and always heavy.
+List<HardwareItem> _generateConsumables() => [
+      HardwareItem(
+        id: 'genesisTorpedo',
+        name: 'Genesis Torpedo',
+        description:
+            'Converts an empty orbit into a new world. The type is drawn at '
+            'random from all ten, so a sector full of worlds you cannot use '
+            'is best cleared with a detonator and re-rolled.',
+        category: HardwareCategory.consumable,
+        level: 1,
+        priceCredits: 250000,
+        statLine: 'Creates 1 world - 1 cargo slot',
+      ),
+      HardwareItem(
+        id: 'atomicDetonator',
+        name: 'Atomic Detonator',
+        description:
+            'Vaporises a world you do not want, freeing its slot in the sector. '
+            'It destroys the colony along with it, so it is a demolition '
+            'tool and not a reset button.',
+        category: HardwareCategory.consumable,
+        level: 1,
+        priceCredits: 120000,
+        statLine: 'Destroys 1 world - 1 cargo slot',
+      ),
+    ];
+
 // ── Master item list ───────────────────────────────────
 List<HardwareItem> _allItems = [];
 
@@ -449,6 +491,7 @@ List<HardwareItem> get allHardwareItems {
       ..._generateShields(),
       ..._generateEngines(),
       ..._generateModules(),
+      ..._generateConsumables(),
     ];
   }
   return _allItems;

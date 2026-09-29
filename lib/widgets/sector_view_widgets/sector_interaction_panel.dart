@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart' hide Hero;
 import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
@@ -10,6 +12,7 @@ import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
@@ -35,8 +38,14 @@ class SectorInteractionPanel extends StatefulWidget {
   final int fedSpaceEnd;
   final VoidCallback? onLandOnPlanet;
 
-  /// Universe settings for post-death clone reissue in player combat.
+  /// Universe settings, for post-death clone reissue in player combat and for
+  /// `planetsPerSector` when firing a Genesis Torpedo.
   final GameSettings settings;
+
+  /// Worlds a sector may hold before a torpedo would over-stack it. Fixed at
+  /// universe creation, so every sector in a given galaxy obeys the same
+  /// physics.
+  int get worldCap => settings.planetsPerSector;
 
   const SectorInteractionPanel({
     super.key,
@@ -128,6 +137,28 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       ));
     }
 
+    // A torpedo is fired at an **orbit**, not at a world, so it gets its own
+    // entry rather than a button on some existing world. Shown whenever there
+    // is room, and kept when over-stacked: firing past the cap is allowed, it
+    // is just a warning (see `WorldForging`).
+    if (widget.player.genesisTorpedoes > 0) {
+      final used = s.worldSlotsUsed;
+      // At the cap is *full*, not unstable: the warning is for the shot that
+      // would go past it.
+      final over = used >= widget.worldCap;
+      entries.add(_SectorEntry(
+        id: 'genesis_${s.id}',
+        type: _EntryType.genesis,
+        label: over ? 'LAUNCH (UNSTABLE)' : 'LAUNCH TORPEDO',
+        detail: over
+            ? 'NO FREE SLOTS · $used/${widget.worldCap} worlds · collision risk'
+            : 'Creates a random world · ${widget.player.genesisTorpedoes} held '
+                '· $used/${widget.worldCap} slots used',
+        color: over ? Colors.red.shade400 : Colors.deepPurple.shade300,
+        icon: Icons.blur_circular_rounded,
+      ));
+    }
+
     return entries;
   }
 
@@ -197,6 +228,11 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
           ),
         );
       });
+      return;
+    }
+
+    if (entry.type == _EntryType.genesis) {
+      _launchTorpedo();
       return;
     }
 
@@ -749,7 +785,102 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     );
   }
 
+  /// Fires a Genesis Torpedo into this sector.
+  ///
+  /// The over-stack case asks first, and the dialog is unmissable on purpose: a
+  /// silent destabilisation that destroys a million-colonist colony overnight
+  /// reads as a bug, not as a risk the player chose to take.
+  Future<void> _launchTorpedo() async {
+    final sector = widget.currentSector;
+    final over = sector.isFull(widget.worldCap);
+
+    if (over) {
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: Icon(Icons.warning_amber_rounded, color: Colors.red.shade400),
+          title: const Text('Unstable orbit'),
+          content: Text(
+            '${sector.name} already holds ${sector.worldSlotsUsed} worlds '
+            'against a limit of ${widget.worldCap}.\n\n'
+            'Over-stacking is legal, and it is also a weapon: a gravity check is '
+            'rolled every 24 hours and two colliding worlds are destroyed, '
+            'colony and all. The roll does not care that you are watching.\n\n'
+            'Fire anyway?',
+            style: const TextStyle(height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade700,
+                  foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Fire torpedo'),
+            ),
+          ],
+        ),
+      );
+      if (go != true) return;
+    }
+
+    final (result, world) = WorldForging.launch(
+      player: widget.player,
+      sector: sector,
+      cap: widget.worldCap,
+      rng: Random(),
+    );
+
+    if (result == LaunchResult.noTorpedoes) {
+      _toast('No Genesis Torpedoes. Hardware emporiums stock them.');
+      return;
+    }
+    if (result == LaunchResult.holdFull) {
+      _toast('Cargo hold is full — no room for the torpedo.');
+      return;
+    }
+    if (world == null) return;
+
+    // The torpedo is consumed even when the launch over-stacks: the item was
+    // fired, and owning the risk is the whole point.
+    final spent = widget.player.copyWith(
+      genesisTorpedoes: widget.player.genesisTorpedoes - 1,
+      cargoUsed: widget.player.cargoUsed + WorldForging.cargoPerUnit,
+    );
+    widget.onPlayerUpdate(spent);
+    await UniverseStorage.instance.saveSectors([sector]);
+    ActionLogProvider.global.trade(
+      'Genesis Torpedo fired in ${sector.name}: a new ${world.planetType} '
+      'world, ${world.name}',
+    );
+    widget.onRefreshNpcs?.call();
+    if (!mounted) return;
+    setState(() {});
+    _toast(over
+        ? '${world.planetType} world created — ${sector.name} is now UNSTABLE'
+        : '${world.planetType} world created: ${world.name}');
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(message, style: const TextStyle(fontSize: 12)),
+        duration: const Duration(seconds: 3),
+      ));
+  }
+
   Widget _interactionButtons(_SectorEntry entry) {
+    // A torpedo is fired at the orbit, not at a world, so it has no per-world
+    // buttons — the entry itself is the action.
+    if (entry.type == _EntryType.genesis) {
+      return const SizedBox.shrink();
+    }
+
     if (entry.type == _EntryType.planet) {
       return Wrap(
         spacing: 6,
@@ -850,7 +981,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   }
 }
 
-enum _EntryType { hazard, anomaly, npc, planet }
+enum _EntryType { hazard, anomaly, npc, planet, genesis }
 
 class _SectorEntry {
   final String id;

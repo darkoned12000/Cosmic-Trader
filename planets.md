@@ -357,6 +357,52 @@ The warning must be explicit and unmissable, and the roll must be visible: a sil
 destruction of a 1M-citadel colony would read as a bug, not as a risk the player
 accepted.
 
+### DONE — Genesis Torpedo and Atomic Detonator
+
+Sold at **hardware emporiums only**, which is true by construction: the emporium
+widget is only reachable from a port with `isHardwareEmporium`, so there is no gate
+in the new tab to forget. Both are **cargo-bounded** (one slot each) and both can
+be **returned for half price** — without that, a player who fills the hold with
+ordnance has no way to get the space back, and a dead end that locks up cargo is
+worse than a bad purchase.
+
+- `Planet.fromGenesis` — a torpedoed world starts unscanned, unowned, unpopulated,
+  at 1.0 efficiency and no defence. A generated world carries a roll, a defence
+  level and a starting store, all of which are *differences between worlds*; a
+  new one has no history to differ by, so it starts at the honest baseline.
+- `WorldForging` (new) owns the rules, rather than methods on `Planet`. These are
+  the first things in the game that create and destroy the object the rest of the
+  planet system is built around, so the slot cap, cargo bound, over-stack warning
+  and collision dice need one home a screen cannot half-implement.
+- The sector panel gains a `LAUNCH TORPEDO` entry when the player holds any. It is
+  an action on the **orbit**, not a button on a world.
+
+**Over-stacking is allowed, and is a weapon.** A fourth world in a three-world
+sector raises an unmissable warning and then a **24-hour gravity check**; a bad
+roll destroys a **pair** — two bodies meeting is the fiction, and losing a pair
+makes over-stacking a real gamble rather than a slow tax. Hard-blocking it would
+remove the torpedo's only offensive use and make the detonator pointless: a
+capacity limit can be waited out, a hazard has to be answered. It is also how
+players attacked a target's *economy* rather than their hulls.
+
+**The collision roll is wall-clock, not game ticks, and deliberately so.**
+Construction counts ticks because a build is the player's own progress and must
+not complete while they sleep. A collision is the opposite — a background hazard,
+meant to bite an abandoned sector, and the only thing that makes over-stacking a
+decision. Odds worsen with each world past the cap: at a cap of 3, one extra world
+is a 1-in-8 daily loss and three extras is 1-in-2, a sector that eats itself
+within a week of being abandoned.
+
+**A full sector is not an over-stacked one.** `isFull(cap)` (`>=`) and
+`isOverStacking(cap)` (`>`) are separate predicates doing different jobs — the
+first is the pre-launch question, the second is the state the collision roll acts
+on. Conflating them described a sector holding exactly its cap as gravitationally
+unstable, which is both wrong and the reason a guard passed against a fault.
+
+**`worldSlotsUsed` counts living worlds, not total.** A destroyed world stays in
+the list so it can still be drawn and argued about, but it holds no orbital slot —
+that is exactly what makes the detonate-then-re-roll loop work.
+
 ### DECISION — Genesis Torpedo and Atomic Detonator
 
 The torpedo creates a world in a sector; the type is **random**. The detonator
@@ -488,7 +534,7 @@ sequence.
 | 1 | ~~**`Sector.planets` list + per-planet id + save migration**~~ | **DONE** | Eight files read `sector.planet`. Every other step touches the same files — doing them on the 1:1 model means doing them twice. |
 | 2 | Harsh types -> organics 0; remove upkeep/starvation | Small | Creates the gaps that make step 3 meaningful |
 | 3 | ~~`Dep`/`Wdr` -> cargo; delete `_transferPrices`~~ | **DONE** | The hauler. **Built before step 2, reversing the documented order** — see below. |
-| 4 | Genesis Torpedo + Atomic Detonator + collision rolls | Medium | Needs 2 and 3: planting a complement is worthless if goods cannot move |
+| 4 | ~~Genesis Torpedo + Atomic Detonator + collision rolls~~ | **DONE** | Needs 2 and 3: planting a complement is worthless if goods cannot move |
 | 5 | Per-type production caps | Small | Stops a large colony printing without limit |
 | 6 | Per-commodity port counterparties + `(i)` bubbles | Medium | Now answerable, because there is a reason to care which port |
 | 7 | The exchange | Medium | **Last, deliberately** — see above |

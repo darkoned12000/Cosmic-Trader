@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 
@@ -161,6 +163,89 @@ class Sector {
       return <Planet>[Planet.fromJson(legacy)];
     }
     return <Planet>[];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Genesis Torpedo / Atomic Detonator
+  // ---------------------------------------------------------------------------
+
+  /// How many **living** worlds the sector's physics allows.
+  ///
+  /// Living, not total: a destroyed world is kept in [planets] so it can still
+  /// be drawn and argued about, but it is not occupying orbital real estate.
+  /// That is what makes the detonate-then-re-roll loop work — the slot the
+  /// detonator frees is the one the next torpedo fills.
+  int get worldSlotsUsed => livingPlanets.length;
+
+  /// Slots left before the sector is over-stacked.
+  int freeSlots(int cap) {
+    final left = cap - worldSlotsUsed;
+    return left < 0 ? 0 : left;
+  }
+
+  /// Whether the sector is **full** — every slot the universe allows is taken.
+  ///
+  /// This is the pre-launch question: firing here would exceed the cap. It is
+  /// deliberately not the same predicate as [isOverStacking], and conflating the
+  /// two is a real bug this was caught by. A sector holding exactly [cap] worlds
+  /// is at capacity, not over it, so its gravity is still fine and it should not
+  /// be described as unstable.
+  bool isFull(int cap) => worldSlotsUsed >= cap;
+
+  /// Whether the sector is **over** the cap and therefore gravitationally
+  /// unstable. This is the state the 24-hour collision roll acts on, and it is
+  /// strictly past the cap — a legal system cannot collide, so there is nothing
+  /// to decide about one.
+  bool isOverStacking(int cap) => worldSlotsUsed > cap;
+
+  /// Adds a torpedoed world. Returns it, or null if there is nothing to add to.
+  ///
+  /// Over-stacking is **allowed on purpose**. The classic game made it a weapon:
+  /// a fourth world in a three-world sector destabilises the system, and the
+  /// owner has to clear it before the dice roll comes up. Hard-blocking it would
+  /// remove the only offensive use of the torpedo and make the detonator
+  /// pointless — a capacity limit can be waited out, a hazard has to be answered.
+  Planet? launchWorld(Planet world) {
+    if (world.isDestroyed) return null;
+    planets.add(world);
+    return world;
+  }
+
+  /// Detonates [world], freeing its slot. Returns false if it is not here.
+  bool detonateWorld(Planet world) {
+    final i = planets.indexWhere((p) => p.id == world.id);
+    if (i < 0) return false;
+    planets[i].destroy();
+    return true;
+  }
+
+  /// Rolls one 24-hour gravity check on an over-stacked system.
+  ///
+  /// Returns the worlds **destroyed** by a collision, empty when the system
+  /// holds. Only over-stacked sectors roll at all — a legal system cannot
+  /// collide, so there is nothing to decide.
+  ///
+  /// The odds worsen with each world past the cap, and a collision takes the
+  /// **pair** rather than a lone world: two bodies meeting is the fiction, and
+  /// losing a pair makes over-stacking a real gamble instead of a slow tax.
+  /// Living worlds only, so a corpse is never the casualty.
+  List<Planet> rollCollision(int cap, math.Random rng) {
+    final over = worldSlotsUsed - cap;
+    if (over <= 0) return <Planet>[];
+    // 1-in-N per day per world past the cap. At 3 the cap, one extra world is a
+    // 1-in-8 daily loss; three extras is 1-in-2, which is a sector that eats
+    // itself within a week of being abandoned.
+    final chance = 1.0 / (8 * over);
+    if (rng.nextDouble() >= chance) return <Planet>[];
+
+    final living = livingPlanets.toList();
+    if (living.length < 2) return <Planet>[];
+    living.shuffle(rng);
+    final lost = <Planet>[living.first, living[1]];
+    for (final p in lost) {
+      p.destroy();
+    }
+    return lost;
   }
 
   static const int _gridSize = 5;

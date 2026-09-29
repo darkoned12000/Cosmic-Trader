@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
+import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
 
@@ -36,6 +37,7 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
     'SHIELDS',
     'ENGINES',
     'MODULES',
+    'ORDNANCE',
     'SCRAP',
   ];
 
@@ -136,6 +138,7 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
                           onPlayerUpdate: _updatePlayer,
                           category: HardwareCategory.engine),
                       _ModulesTab(player: p, onPlayerUpdate: _updatePlayer),
+                      _OrdnanceTab(player: p, onPlayerUpdate: _updatePlayer),
                       _ScrapTab(player: p, onPlayerUpdate: _updatePlayer),
                     ],
                   ),
@@ -1722,5 +1725,180 @@ class _ItemCard extends StatelessWidget {
       return '${(value / 1000).toStringAsFixed(0)}K cr';
     }
     return '$value cr';
+  }
+}
+
+/// Hardware emporium: the Genesis Torpedo and the Atomic Detonator.
+///
+/// **The only place either can be bought.** That is true by construction rather
+/// than by a check — this widget is only reachable from a port with
+/// `isHardwareEmporium` — so there is no gate here to forget.
+///
+/// Both are **cargo-bounded**: one slot each, so the hold is the stockpile
+/// limit. Both can be **returned for half price**, which matters: without it a
+/// player who fills the hold with ordnance has no way to get the space back, and
+/// a dead end that locks up cargo is worse than a bad purchase.
+class _OrdnanceTab extends StatelessWidget {
+  final Player player;
+  final Function(Player) onPlayerUpdate;
+
+  const _OrdnanceTab({required this.player, required this.onPlayerUpdate});
+
+  /// Fraction of the purchase price returned when selling an item back.
+  static const double _returnRate = 0.5;
+
+  int _held(String id) => switch (id) {
+        'genesisTorpedo' => player.genesisTorpedoes,
+        'atomicDetonator' => player.atomicDetonators,
+        _ => 0,
+      };
+
+  /// The count this item's counter moves by, and the resulting player.
+  ({Player next, int delta}) _apply(String id, int sign) {
+    final held = _held(id);
+    if (sign > 0) {
+      if (player.credits < 0) return (next: player, delta: 0);
+      return (
+        next: player.copyWith(
+          credits: player.credits - _priceOf(id) * sign,
+          genesisTorpedoes: sign > 0 && id == 'genesisTorpedo'
+              ? held + sign
+              : player.genesisTorpedoes,
+          atomicDetonators: sign > 0 && id == 'atomicDetonator'
+              ? held + sign
+              : player.atomicDetonators,
+          cargoUsed: player.cargoUsed + sign * WorldForging.cargoPerUnit,
+        ),
+        delta: sign,
+      );
+    }
+    return (
+      next: player.copyWith(
+        credits: player.credits + (_priceOf(id) * _returnRate * -sign).round(),
+        genesisTorpedoes: id == 'genesisTorpedo'
+            ? (held + sign).clamp(0, held)
+            : player.genesisTorpedoes,
+        atomicDetonators: id == 'atomicDetonator'
+            ? (held + sign).clamp(0, held)
+            : player.atomicDetonators,
+        cargoUsed: (player.cargoUsed + sign * WorldForging.cargoPerUnit)
+            .clamp(0, player.maxCargo),
+      ),
+      delta: sign,
+    );
+  }
+
+  int _priceOf(String id) => itemsForCategory(HardwareCategory.consumable)
+      .firstWhere((i) => i.id == id)
+      .priceCredits;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final items = itemsForCategory(HardwareCategory.consumable);
+    final free = player.maxCargo - player.cargoUsed;
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cs.tertiaryContainer.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: cs.tertiary.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline_rounded, size: 16, color: cs.tertiary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Each unit takes ${WorldForging.cargoPerUnit} cargo slot. '
+                  'Hold space free: ${_format(free)} of ${_format(player.maxCargo)}.',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.85)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        for (final item in items) ...[
+          Card(
+            elevation: 0,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(item.name,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14)),
+                      ),
+                      Text('${_format(item.priceCredits)} cr',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                              color: cs.primary)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.description,
+                    style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: cs.onSurface.withValues(alpha: 0.75)),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Text('Held: ${_held(item.id)}',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface.withValues(alpha: 0.8))),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: 'Return one',
+                        onPressed: _held(item.id) > 0
+                            ? () => onPlayerUpdate(_apply(item.id, -1).next)
+                            : null,
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                      const SizedBox(width: 4),
+                      FilledButton.icon(
+                        onPressed: player.credits >= item.priceCredits &&
+                                free >= WorldForging.cargoPerUnit
+                            ? () => onPlayerUpdate(_apply(item.id, 1).next)
+                            : null,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Buy'),
+                        style: FilledButton.styleFrom(
+                            visualDensity: VisualDensity.compact),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  static String _format(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
   }
 }

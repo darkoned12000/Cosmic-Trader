@@ -182,6 +182,34 @@ class Planet {
     this.scanned = false,
   }) : id = id ?? const Uuid().v4();
 
+  /// Builds a world from a Genesis Torpedo: empty, unowned, unpopulated.
+  ///
+  /// Deliberately the bare minimum. A generated world carries an efficiency
+  /// roll, a defence level, a starting store and an image, all of which are
+  /// *differences between worlds*; a torpedoed one has no history to differ by,
+  /// so it starts at the honest baseline — 1.0 efficiency, no defence, nothing
+  /// stored, not yet scanned. Everything it becomes, the player does.
+  factory Planet.fromGenesis({
+    required String name,
+    required String planetType,
+    String? id,
+    String? imagePath,
+  }) =>
+      Planet(
+        id: id,
+        name: name,
+        planetType: planetType,
+        atmosphere: planetAtmospheres[planetType]?.atmosphere ?? 'Unknown',
+        productionEfficiency: 1.0,
+        defenseLevel: 0,
+        hull: 0,
+        maxHull: 0,
+        shield: 0,
+        maxShield: 0,
+        imagePath: imagePath,
+        scanned: false,
+      );
+
   /// Renders the world permanently uninhabitable (C4b planet-killer
   /// path): colony zeroed, homeworld status and ownership cleared,
   /// defenses gone. Regeneration tied to this world never resumes —

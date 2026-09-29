@@ -76,6 +76,13 @@ class Player {
 
   // ── Scrap & Modules ─────────────────────────────────────────
   final int scrapMetal;
+
+  /// Genesis Torpedoes held. Each occupies one cargo slot, so the hold bounds
+  /// the stockpile rather than a separate carrying rule.
+  final int genesisTorpedoes;
+
+  /// Atomic Detonators held. Same cargo bound as [genesisTorpedoes].
+  final int atomicDetonators;
   final int scrapTech;
   final Map<String, int> installedModules; // module id → level
 
@@ -161,6 +168,8 @@ class Player {
     this.lastInterestTime,
     this.ownedPorts = const [],
     this.scrapMetal = 0,
+    this.genesisTorpedoes = 0,
+    this.atomicDetonators = 0,
     this.scrapTech = 0,
     this.installedModules = const {},
     this.faction = FactionClass.trader,
@@ -302,6 +311,8 @@ class Player {
     DateTime? lastInterestTime,
     List<String>? ownedPorts,
     int? scrapMetal,
+    int? genesisTorpedoes,
+    int? atomicDetonators,
     int? scrapTech,
     Map<String, int>? installedModules,
     FactionClass? faction,
@@ -353,6 +364,8 @@ class Player {
       lastInterestTime: lastInterestTime ?? this.lastInterestTime,
       ownedPorts: ownedPorts ?? this.ownedPorts,
       scrapMetal: scrapMetal ?? this.scrapMetal,
+      genesisTorpedoes: genesisTorpedoes ?? this.genesisTorpedoes,
+      atomicDetonators: atomicDetonators ?? this.atomicDetonators,
       scrapTech: scrapTech ?? this.scrapTech,
       installedModules: installedModules ?? this.installedModules,
       faction: faction ?? this.faction,
@@ -412,6 +425,8 @@ class Player {
       'ownedPorts': ownedPorts,
       'scrapMetal': scrapMetal,
       'scrapTech': scrapTech,
+      'genesisTorpedoes': genesisTorpedoes,
+      'atomicDetonators': atomicDetonators,
       'installedModules': installedModules,
       'faction': faction.name,
       'factionStandings': factionStandings,
@@ -486,6 +501,8 @@ class Player {
           : null,
       ownedPorts: (json['ownedPorts'] as List?)?.cast<String>() ?? [],
       scrapMetal: json['scrapMetal'] as int? ?? 0,
+      genesisTorpedoes: json['genesisTorpedoes'] as int? ?? 0,
+      atomicDetonators: json['atomicDetonators'] as int? ?? 0,
       scrapTech: json['scrapTech'] as int? ?? 0,
       installedModules: (json['installedModules'] as Map<String, dynamic>?)
               ?.cast<String, int>() ??
