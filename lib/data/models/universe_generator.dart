@@ -85,6 +85,7 @@ class UniverseGenerator {
 
     // === Phase 9: persistent NPC generation ===
     _generateNpcs(sectors, npcs, rng);
+    _recountSectorNpcCounts(sectors, npcs);
     generatedNpcs = List.unmodifiable(npcs);
 
     return sectors;
@@ -103,7 +104,6 @@ class UniverseGenerator {
         y: 0,
         warpRoutes: [],
         hasPort: false,
-        hasPlanet: false,
         navHaz: false,
       ));
     }
@@ -1004,7 +1004,9 @@ class UniverseGenerator {
 
     // Homeworld premiums (BFS rings, max wins on overlap).
     for (final s in sectors) {
-      final planet = s.planet;
+      // Every world, not slot 0: a capital in a three-world sector is a premium
+      // that applies to whichever world carries it.
+      final planet = s.homeworld;
       final homeworldOf = planet?.homeworldOf;
       final good = homeworldOf != null ? preferredGoods[homeworldOf] : null;
       if (planet == null ||
@@ -1073,12 +1075,13 @@ class UniverseGenerator {
   // ---------------------------------------------------------------------------
 
   void _assignPlanets(List<Sector> sectors, math.Random rng) {
-    // FedSpace: guarantee planets in a few sectors
+    final perSector = settings.planetsPerSector.clamp(1, 5);
+
+    // FedSpace: guarantee worlds in a few sectors.
     for (final s in sectors) {
       if (s.id <= settings.fedSpaceEnd) {
         if (!s.hasPlanet && rng.nextDouble() < 0.5) {
-          s.hasPlanet = true;
-          s.planet = _createPlanet(s, rng);
+          _fillSector(s, rng, perSector);
         }
       }
     }
@@ -1086,12 +1089,25 @@ class UniverseGenerator {
     for (final s in sectors) {
       if (s.hasPlanet) continue;
       if (rng.nextDouble() < settings.planetDensity) {
-        s.hasPlanet = true;
-        s.planet = _createPlanet(s, rng);
+        _fillSector(s, rng, perSector);
       }
     }
 
     _assignHomeworlds(sectors, rng);
+  }
+
+  /// Populates a sector with 1..[perSector] worlds, inclusive.
+  ///
+  /// A flat roll over the whole range rather than "one, plus maybe more", because
+  /// the count is a design surface and should be legible: an occupied sector
+  /// averages 2 worlds at the default 3, and a third of them hold exactly one.
+  ///
+  /// Those single-world sectors are deliberate, not leftovers. They are the ones
+  /// with a gap you have to solve — fly to a port and buy, or spend a Genesis
+  /// Torpedo to plant the complement beside it.
+  void _fillSector(Sector s, math.Random rng, int perSector) {
+    final n = 1 + rng.nextInt(perSector);
+    s.planets = List<Planet>.generate(n, (_) => _createPlanet(s, rng));
   }
 
   void _assignHomeworlds(List<Sector> sectors, math.Random rng) {
@@ -1122,17 +1138,22 @@ class UniverseGenerator {
   /// tiny universes with no eligible ground.
   void _assignOutposts(List<Sector> sectors, math.Random rng) {
     var placed = 0;
-    final pool = sectors
-        .where((s) =>
-            s.id > settings.fedSpaceEnd &&
-            s.hasPlanet &&
-            s.planet != null &&
-            !s.planet!.isHomeworld)
-        .toList();
+    // Worlds, not sectors — and two outposts in the *same* sector would read as
+    // one pirate holding three worlds, which is a different statement entirely.
+    // The sector travels with the world because `Planet` deliberately has no
+    // back-reference to its sector: a planet's owner is the only thing that
+    // needs to know where it lives.
+    final usedSectors = <int>{};
+    final pool = <(int, Planet)>[
+      for (final s in sectors)
+        if (s.id > settings.fedSpaceEnd)
+          for (final p in s.planets)
+            if (!p.isHomeworld) (s.id, p),
+    ];
     pool.shuffle(rng);
-    for (final s in pool) {
+    for (final (sectorId, p) in pool) {
       if (placed >= 2) break;
-      final p = s.planet!;
+      if (!usedSectors.add(sectorId)) continue;
       p.isHomeworld = true;
       p.homeworldOf = FactionClass.pirate;
       p.owner = null;
@@ -1150,26 +1171,31 @@ class UniverseGenerator {
   void _assignOneHomeworld(List<Sector> sectors, math.Random rng,
       FactionClass faction, bool backup) {
     {
-      // Faction homeworld type preferences
+      // Faction homeworld type preferences.
+      //
+      // Collects **worlds**, not sectors. A sector can hold three worlds, so
+      // testing `sector.planet` (slot 0) would pick a capital out of a sector
+      // that holds a better candidate in slot 2 — and could pick a non-homeworld
+      // as the capital while a homeworld sits beside it.
       final preferredTypes = _homeworldTypes(faction);
-      final candidates = <Sector>[];
+      final candidates = <Planet>[];
       for (final s in sectors) {
         if (s.id <= settings.fedSpaceEnd) continue;
-        if (!s.hasPlanet || s.planet == null) continue;
-        if (s.planet!.isHomeworld) continue; // claimed by an earlier faction
-        if (preferredTypes.contains(s.planet!.planetType)) {
-          candidates.add(s);
+        for (final p in s.planets) {
+          if (p.isHomeworld) continue; // claimed by an earlier faction
+          if (preferredTypes.contains(p.planetType)) candidates.add(p);
         }
       }
-      // Pick a random preferred sector, or any planet sector
+      // Prefer a world whose type the faction likes; otherwise any world that
+      // is not already somebody's capital.
       final pool = candidates.isNotEmpty
           ? candidates
-          : sectors
-              .where((s) =>
-                  s.hasPlanet &&
-                  s.id > settings.fedSpaceEnd &&
-                  !(s.planet?.isHomeworld ?? false))
-              .toList();
+          : [
+              for (final s in sectors)
+                if (s.id > settings.fedSpaceEnd)
+                  for (final p in s.planets)
+                    if (!p.isHomeworld) p,
+            ];
       if (pool.isEmpty) {
         // Create a planet in a random plantless non-FedSpace sector.
         // (Review batch 2: the old code drew one random sector and
@@ -1186,21 +1212,43 @@ class UniverseGenerator {
           return;
         }
         final sector = plantless[rng.nextInt(plantless.length)];
-        sector.hasPlanet = true;
-        sector.planet = _createPlanet(sector, rng);
+        sector.planets = [_createPlanet(sector, rng)];
         final type = faction == FactionClass.duran
             ? 'Lava'
             : faction == FactionClass.vinari
                 ? 'Terran'
                 : 'Desert';
-        sector.planet =
-            _setupHomeworld(sector.planet!, faction, type, rng, backup);
+        _becomeHomeworld(
+            sectors, sector.planets.first, faction, type, rng, backup);
         return;
       }
       final chosen = pool[rng.nextInt(pool.length)];
-      chosen.planet = _setupHomeworld(
-          chosen.planet!, faction, chosen.planet!.planetType, rng, backup);
+      _becomeHomeworld(
+          sectors, chosen, faction, chosen.planetType, rng, backup);
     }
+  }
+
+  /// Replaces [planet] with a homeworld version of itself, in place.
+  ///
+  /// `_setupHomeworld` builds a **new** `Planet` rather than mutating, which was
+  /// invisible when a sector held one world and `sector.planet = ...` was the
+  /// whole update. With three worlds in a list it has to be spliced back at the
+  /// right index, or the capital silently becomes the sector's first world and
+  /// the chosen type is lost.
+  void _becomeHomeworld(List<Sector> sectors, Planet planet,
+      FactionClass faction, String type, math.Random rng, bool backup) {
+    final built = _setupHomeworld(planet, faction, type, rng, backup);
+    for (final s in sectors) {
+      final i = s.planets.indexOf(planet);
+      if (i >= 0) {
+        s.planets[i] = built;
+        return;
+      }
+    }
+    // Unreachable: every candidate planet came out of a sector in this list.
+    // Failing loudly beats a capital that exists in no sector and never spawns.
+    throw StateError(
+        'homeworld candidate ${planet.name} (${planet.id}) is not in any sector');
   }
 
   List<String> _homeworldTypes(FactionClass faction) {
@@ -1391,9 +1439,71 @@ class UniverseGenerator {
           'Placed $factionCount ${factionEntry.key.name} NPCs across ${sectorsUsed.length} sectors');
     }
 
-    // Reconcile the display counts with ground truth: the xCount fields
-    // were rolled independently above and the galaxy map reads them, so
-    // recount from the real roster instead of showing phantom ships.
+    _guaranteeNpcRoster(sectors, npcs, rng);
+  }
+
+  /// Guarantees at least one ship per faction that has a nonzero density.
+  ///
+  /// NPC placement is an independent coin flip per sector, so on a small
+  /// universe the whole roster can come up empty — an 8-sector galaxy genuinely
+  /// produced zero ships for all four factions. That is a **latent bug that
+  /// multi-planet sectors exposed**: filling a sector with up to three worlds
+  /// draws more from the shared `Random`, which shifts every downstream roll, so
+  /// a seed that used to yield a populated galaxy can now yield a barren one.
+  ///
+  /// The underlying fragility is the real defect, not the seed. A galaxy with
+  /// no ships in it is broken regardless of size — the player warps into an
+  /// empty universe, the faction rankings are blank, and the bounty board never
+  /// populates. `RepopulationService` floor recovery would eventually trickle
+  /// ships in, but only from a *controlled* homeworld and only one per tick.
+  ///
+  /// This mirrors the minimum guarantees already made for ports ("Ensure
+  /// FedSpace sectors have ports") and port trade characters ("Ensures at least
+  /// one 'S' and one 'B'"). The densities still decide how *numerous* each
+  /// faction is; they just no longer get to decide whether one exists.
+  void _guaranteeNpcRoster(
+    List<Sector> sectors,
+    List<NpcShip> npcs,
+    math.Random rng,
+  ) {
+    final eligible = [
+      for (final s in sectors)
+        if (s.id > settings.fedSpaceEnd) s,
+    ];
+    if (eligible.isEmpty) return;
+
+    final densities = {
+      FactionClass.trader: settings.traderDensity,
+      FactionClass.duran: settings.duranDensity,
+      FactionClass.vinari: settings.vinariDensity,
+      FactionClass.pirate: settings.pirateDensity,
+    };
+
+    for (final entry in densities.entries) {
+      if (entry.value <= 0) continue;
+      if (npcs.any((n) => n.faction == entry.key && !n.isDestroyed)) continue;
+      final sector = eligible[rng.nextInt(eligible.length)];
+      npcs.add(NpcShip.create(
+        faction: entry.key,
+        shipDef: ShipDefinition
+            .allShips[rng.nextInt(ShipDefinition.allShips.length)],
+        currentSectorId: sector.id,
+        startingCredits: settings.npcStartingCredits,
+        seed: rng.nextInt(100000),
+      ));
+    }
+  }
+
+  /// Reconciles the per-sector display counts with the real roster.
+  ///
+  /// The `xCount` fields were rolled independently above and the galaxy map
+  /// reads them, so recount from the real roster instead of showing phantom
+  /// ships. This must run **after** [_guaranteeNpcRoster], or the guaranteed
+  /// starter ships would exist with no sector reporting them.
+  void _recountSectorNpcCounts(
+    List<Sector> sectors,
+    List<NpcShip> npcs,
+  ) {
     final byId = {for (final s in sectors) s.id: s};
     for (final s in sectors) {
       s.traderCount = 0;

@@ -11,7 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The colony workforce UI: assignment steppers, the reserve, and the
-/// starvation warning.
+/// colony supply and the workforce lock.
 class _FakeUniverse extends UniverseStorage {
   _FakeUniverse(this.sectors);
   final List<Sector> sectors;
@@ -68,7 +68,6 @@ void main() {
       y: 0,
       warpRoutes: const [],
       planet: planet,
-      hasPlanet: true,
     );
   });
 
@@ -117,11 +116,14 @@ void main() {
       });
     }
 
-    testWidgets('lays out while starving, at phone width', (tester) async {
+    testWidgets('lays out while unsupplied, at phone width', (tester) async {
+      planet.storedMinerals = 0;
       planet.storedOrganics = 0;
+      planet.storedIndustrial = 0;
       await pump(tester, size: const Size(430, 2400));
-      // The warning is the longest string on the card and the most likely to wrap.
-      expect(find.textContaining('Starving'), findsOneWidget);
+      // The warning is the longest string on the card and the most likely to
+      // wrap. A RenderFlex overflow fails the test, so pumping is the assertion.
+      expect(find.textContaining('Stores empty'), findsOneWidget);
     });
   });
 
@@ -286,30 +288,6 @@ void main() {
     });
   });
 
-  group('starvation warning', () {
-    testWidgets('appears when upkeep exceeds stored organics', (tester) async {
-      // Upkeep scales with output, so the fixture has to clear the colony's
-      // actual upkeep rather than a round number from an older scale.
-      planet.storedOrganics = 0;
-      await pump(tester);
-      expect(planet.organicsUpkeep, greaterThan(0), reason: 'sanity');
-      expect(find.textContaining('Starving'), findsOneWidget);
-    });
-
-    testWidgets('stays away when the colony can feed itself', (tester) async {
-      planet.storedOrganics = planet.organicsUpkeep * 2;
-      await pump(tester);
-      expect(find.textContaining('Starving'), findsNothing);
-    });
-
-    testWidgets('stays away on a dead colony', (tester) async {
-      planet
-        ..population = 0
-        ..storedOrganics = 0;
-      await pump(tester);
-      expect(find.textContaining('Starving'), findsNothing);
-    });
-  });
   group('construction panel', () {
     /// Puts the fixture planet in a state where it can pay for the next level.
     void readyToBuild() {
@@ -468,6 +446,138 @@ void main() {
       planet.startConstruction();
       await pump(tester);
       expect(find.text('What does this give me?'), findsNothing);
+    });
+  });
+
+  group('world selector', () {
+    /// Replaces the single-world fixture with a multi-world sector.
+    void useThreeWorlds() {
+      planet = Planet(
+        name: 'Marek',
+        planetType: 'Lava',
+        owner: FactionClass.trader,
+        population: 40000,
+        colonistsMinerals: 20000,
+        storedMinerals: 5100,
+        storedOrganics: 5000,
+        storedIndustrial: 5000,
+        scanned: true,
+      );
+      final second = Planet(
+        name: 'Thalassa',
+        planetType: 'Ocean',
+        owner: FactionClass.trader,
+        population: 120000,
+        colonistsMinerals: 60000,
+        storedMinerals: 6200,
+        storedOrganics: 5000,
+        storedIndustrial: 5000,
+        scanned: true,
+      );
+      final third = Planet(
+        name: 'Aurelia',
+        planetType: 'Terran',
+        owner: FactionClass.trader,
+        population: 250000,
+        colonistsMinerals: 125000,
+        storedMinerals: 7300,
+        storedOrganics: 5000,
+        storedIndustrial: 5000,
+        scanned: true,
+      );
+      sector = Sector(
+        id: 7,
+        name: 'Kronos Reach',
+        x: 0,
+        y: 0,
+        warpRoutes: const [],
+        planets: [planet, second, third],
+      );
+      // The fake universe captured the original sector in setUp, so replacing
+      // the local is not enough — the screen loads from the fake.
+      UniverseStorage.instanceForTest = _FakeUniverse([sector]);
+    }
+
+    testWidgets('lists every world in the sector', (tester) async {
+      useThreeWorlds();
+      await pump(tester);
+      expect(find.text('Worlds in this sector'), findsOneWidget);
+      expect(find.text('Marek'), findsWidgets);
+      expect(find.text('Thalassa'), findsOneWidget);
+      expect(find.text('Aurelia'), findsOneWidget);
+      expect(find.text('3 / 3'), findsOneWidget);
+    });
+
+    testWidgets('tapping a chip switches the whole screen to that world',
+        (tester) async {
+      useThreeWorlds();
+      await pump(tester);
+      expect(find.text('Thalassa'), findsOneWidget);
+
+      // Each world has a distinct mineral store (5.1K / 6.2K / 7.3K), so the
+      // body can be identified by a value only one world produces. Asserting
+      // a tap changed *something* is not enough — the chip and the body both
+      // show the name, so a name assertion cannot tell them apart.
+      // Populations render as standalone text (40.0K / 120.0K / 250.0K).
+      // The stores do **not**: the resources card concatenates them into
+      // "5.1K/1.0M", so a `find.text('5.1K')` would never match and the
+      // assertion would fail for a formatting reason rather than a layout one.
+      expect(find.text('40.0K'), findsWidgets,
+          reason: 'first world is showing');
+      expect(find.text('250.0K'), findsNothing,
+          reason: 'a body field from a world that is not selected');
+
+      await tester.tap(find.text('Aurelia'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('250.0K'), findsWidgets,
+          reason: 'the body is still showing the first world');
+      expect(find.text('40.0K'), findsNothing,
+          reason: 'the old world is still on screen alongside the new one');
+    });
+
+    testWidgets('a tap on an off-screen chip does not silently pass',
+        (tester) async {
+      // The selector is a horizontal scroller, so at a narrow width a later
+      // chip can be off-screen and its tap is a no-op. Asserting the content
+      // changed is the only way to know the tap landed.
+      useThreeWorlds();
+      await pump(tester, size: const Size(320, 2400));
+      await tester.ensureVisible(find.text('Aurelia'));
+      await tester.tap(find.text('Aurelia'));
+      await tester.pumpAndSettle();
+      expect(find.text('250.0K'), findsWidgets,
+          reason: 'the chip tap did not reach the third world');
+    });
+
+    testWidgets('is absent in a single-world sector', (tester) async {
+      // A one-chip selector that can only select what is already selected is
+      // pure noise. Its absence is the assertion.
+      await pump(tester);
+      expect(find.text('Worlds in this sector'), findsNothing);
+    });
+
+    testWidgets('a destroyed world is struck through and unselectable',
+        (tester) async {
+      useThreeWorlds();
+      sector.planets[1].destroy();
+      await pump(tester);
+
+      // Still listed, so the chips do not shift under the player's finger.
+      expect(find.text('Thalassa'), findsOneWidget);
+      expect(find.text('2 / 3'), findsOneWidget,
+          reason: 'living count excludes the corpse');
+
+      await tester.tap(find.text('Thalassa'));
+      await tester.pumpAndSettle();
+      // Selecting a corpse must not blank the screen or throw.
+      expect(find.byType(FilledButton), findsWidgets);
+    });
+
+    testWidgets('lays out the selector at phone width', (tester) async {
+      useThreeWorlds();
+      await pump(tester, size: const Size(430, 2400));
+      expect(find.text('Worlds in this sector'), findsOneWidget);
     });
   });
 }

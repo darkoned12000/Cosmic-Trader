@@ -39,7 +39,6 @@ Sector _homeworld({
     x: 0,
     y: 0,
     warpRoutes: const [],
-    hasPlanet: true,
     planet: planet,
   );
 }
@@ -64,13 +63,13 @@ void main() {
 
       var built = RepopulationService.produce(sectors, [], rng: rng);
       expect(built, isEmpty);
-      expect(sectors[0].planet!.productionTimer, 1);
+      expect(sectors[0].primaryPlanet!.productionTimer, 1);
 
       built = RepopulationService.produce(sectors, [], rng: rng);
       expect(built, hasLength(1));
       expect(built[0].faction, FactionClass.trader);
       expect(built[0].currentSectorId, 11);
-      expect(sectors[0].planet!.productionTimer, 10);
+      expect(sectors[0].primaryPlanet!.productionTimer, 10);
     });
 
     test('captured yards freeze; destroyed worlds are silent', () {
@@ -87,8 +86,8 @@ void main() {
           RepopulationService.produce(sectors, [], rng: math.Random(7));
       expect(built, isEmpty);
       // Captured: frozen mid-countdown. Destroyed: untouched.
-      expect(sectors[0].planet!.productionTimer, 1);
-      expect(sectors[1].planet!.isHomeworld, isFalse);
+      expect(sectors[0].primaryPlanet!.productionTimer, 1);
+      expect(sectors[1].primaryPlanet!.isHomeworld, isFalse);
     });
 
     test('yards stand down at the cap (timer still resets)', () {
@@ -101,7 +100,7 @@ void main() {
       final built =
           RepopulationService.produce(sectors, npcs, rng: math.Random(7));
       expect(built, isEmpty);
-      expect(sectors[0].planet!.productionTimer, 10);
+      expect(sectors[0].primaryPlanet!.productionTimer, 10);
     });
 
     test('below cap each world builds on its own cadence', () {
@@ -113,7 +112,7 @@ void main() {
           RepopulationService.produce(sectors, [], rng: math.Random(7));
       expect(built, hasLength(1));
       expect(built[0].faction, FactionClass.trader);
-      expect(sectors[1].planet!.productionTimer, 2);
+      expect(sectors[1].primaryPlanet!.productionTimer, 2);
     });
   });
 
@@ -129,13 +128,13 @@ void main() {
         {FactionClass.trader: 11},
       );
       // Primary captured: backup takes over (floors + production source).
-      sectors[0].planet!.owner = FactionClass.duran;
+      sectors[0].primaryPlanet!.owner = FactionClass.duran;
       expect(
         RepopulationService.homeworldSectors(sectors),
         {FactionClass.trader: 12},
       );
       // Recapture restores the primary and idles the backup.
-      sectors[0].planet!.owner = FactionClass.trader;
+      sectors[0].primaryPlanet!.owner = FactionClass.trader;
       expect(
         RepopulationService.homeworldSectors(sectors),
         {FactionClass.trader: 11},
@@ -152,10 +151,10 @@ void main() {
       // Primary live: only it builds (backup timer frozen mid-countdown).
       var built = RepopulationService.produce(sectors, [], rng: math.Random(7));
       expect(built.map((n) => n.currentSectorId), [11]);
-      expect(sectors[1].planet!.productionTimer, 1);
+      expect(sectors[1].primaryPlanet!.productionTimer, 1);
 
       // Primary captured: backup's yards warm up.
-      sectors[0].planet!.owner = FactionClass.duran;
+      sectors[0].primaryPlanet!.owner = FactionClass.duran;
       built = RepopulationService.produce(sectors, built, rng: math.Random(7));
       expect(built.map((n) => n.currentSectorId), [12]);
     });
@@ -187,7 +186,6 @@ void main() {
             x: 0,
             y: 0,
             warpRoutes: const [],
-            hasPlanet: true,
             planet: planet),
       ];
       expect(RepopulationService.homeworldSectors(sectors), isEmpty);

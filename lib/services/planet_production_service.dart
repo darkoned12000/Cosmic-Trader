@@ -30,50 +30,56 @@ class PlanetProductionService {
     var organics = 0;
     var industrial = 0;
     var drones = 0;
-    var starving = 0;
-    var lost = 0;
+    var supplyPaid = 0;
+    var unsupplied = 0;
     final overflow = <String>[];
 
     var completed = 0;
     final finished = <String>[];
 
     for (final sector in sectors) {
-      final planet = sector.planet;
-      if (planet == null || planet.isDestroyed) continue;
+      // Every world in the sector, not just the first. A three-world sector is
+      // three colonies earning, and the whole design is that they complement
+      // each other — ticking only slot 0 would run the complementarity loop at a
+      // third of its value and hide the rest entirely.
+      for (final planet in sector.planets) {
+        if (planet.isDestroyed) continue;
 
-      // Construction advances **before** the population check, and deliberately
-      // so: a build already paid for should not stall because the colony is
-      // starving. Halting a Citadel halfway is the only way a starvation event
-      // could feel like a punishment, and it would be the wrong one — the
-      // resources are spent either way.
-      if (planet.isUnderConstruction) {
-        final before = planet.level;
-        planet.advanceConstruction();
-        if (planet.level != before) {
-          completed++;
-          finished.add('${planet.name} -> ${planet.level}');
+        // Construction advances **before** the population check, and deliberately
+        // so: a build already paid for should not stall because the colony is
+        // unfed. Halting a Citadel halfway is the only way an unpaid supply
+        // bill could feel like a punishment, and it would be the wrong one —
+        // the resources are spent either way.
+        if (planet.isUnderConstruction) {
+          final before = planet.level;
+          planet.advanceConstruction();
+          if (planet.level != before) {
+            completed++;
+            finished.add('${planet.name} -> ${planet.level}');
+          }
         }
-      }
 
-      if (planet.population <= 0) continue;
-      colonies++;
-      final report = planet.produce();
-      minerals += report.mineralsGained;
-      organics += report.organicsGained;
-      industrial += report.industrialGained;
-      drones += report.dronesGained;
-      lost += report.colonistsLost;
+        if (planet.population <= 0) continue;
+        colonies++;
+        final report = planet.produce();
+        minerals += report.mineralsGained;
+        organics += report.organicsGained;
+        industrial += report.industrialGained;
+        drones += report.dronesGained;
+        supplyPaid += report.supplyPaid;
 
-      if (report.isStarving) {
-        starving++;
-        GameEventLog.global.system(
-          '[Colony] ${planet.name} (sector #${sector.id}) cannot feed itself: '
-          '${report.organicsShortfall} organics short, '
-          '${report.colonistsLost} colonist(s) lost',
-        );
-      }
-      if (report.storageOverflowed) {
-        overflow.add(planet.name);
+        if (report.isUnsupplied) {
+          unsupplied++;
+          GameEventLog.global.system(
+            '[Colony] ${planet.name} (sector #${sector.id}) cannot cover its '
+            'supply: ${report.supplyShortfall} units short of a '
+            '${_formatShort(planet.supplyDraw)} unit draw. Haul goods in, or '
+            'plant a world beside it that makes what it cannot.',
+          );
+        }
+        if (report.storageOverflowed) {
+          overflow.add(planet.name);
+        }
       }
     }
 
@@ -98,12 +104,20 @@ class PlanetProductionService {
       organics: organics,
       industrial: industrial,
       drones: drones,
-      starving: starving,
-      colonistsLost: lost,
+      supplyPaid: supplyPaid,
+      unsupplied: unsupplied,
       overflowed: overflow.length,
       constructionsCompleted: completed,
     );
   }
+}
+
+/// Compact number for a log line, so a supply shortfall does not read as a wall
+/// of digits.
+String _formatShort(int n) {
+  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+  return '$n';
 }
 
 /// Aggregate result of one production pass, for the tick's own log line.
@@ -113,8 +127,12 @@ class PlanetProductionSummary {
   final int organics;
   final int industrial;
   final int drones;
-  final int starving;
-  final int colonistsLost;
+
+  /// Total units taken across every colony supply draw this tick.
+  final int supplyPaid;
+
+  /// Colonies that could not cover a supply draw.
+  final int unsupplied;
   final int overflowed;
 
   const PlanetProductionSummary({
@@ -123,8 +141,8 @@ class PlanetProductionSummary {
     this.organics = 0,
     this.industrial = 0,
     this.drones = 0,
-    this.starving = 0,
-    this.colonistsLost = 0,
+    this.supplyPaid = 0,
+    this.unsupplied = 0,
     this.overflowed = 0,
     this.constructionsCompleted = 0,
   });
@@ -139,8 +157,7 @@ class PlanetProductionSummary {
   /// `colonies > 0`.
   bool get isQuiet =>
       colonies == 0 &&
-      colonistsLost == 0 &&
-      starving == 0 &&
+      unsupplied == 0 &&
       overflowed == 0 &&
       constructionsCompleted == 0;
 }

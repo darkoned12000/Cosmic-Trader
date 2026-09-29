@@ -320,7 +320,7 @@ class GameTickService {
             '+${colonies.organics} organics, '
             '+${colonies.industrial} industrial, '
             '+${colonies.drones} drones'
-            '${colonies.starving > 0 ? ' · ${colonies.starving} starving' : ''}',
+            '${colonies.unsupplied > 0 ? ' · ${colonies.unsupplied} short of supply' : ''}',
           );
         }
         // No explicit save needed for a finished upgrade: this same pass ends

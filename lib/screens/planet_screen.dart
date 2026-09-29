@@ -51,6 +51,58 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// Cheap digest of everything on the planet screen that the tick can change.
   int _fingerprint = 0;
 
+  /// True while this screen has a write in flight.
+  ///
+  /// The reload in [_syncFromDisk] must not run during one, or it can read the
+  /// file *before* the screen's own write lands and swap in a stale sector,
+  /// visibly undoing the action the player just took.
+  bool _writeInFlight = false;
+
+  /// Writes this screen's copy of [sector] to disk, suppressing the poll.
+  ///
+  /// Every mutating action on this screen has to go through here rather than
+  /// calling [UniverseStorage.saveSectors] directly, because the poll and the
+  /// write race each other.
+  Future<void> _persist(Sector sector) async {
+    _writeInFlight = true;
+    try {
+      await UniverseStorage.instance.saveSectors([sector]);
+    } finally {
+      _writeInFlight = false;
+    }
+  }
+
+  /// Which world in this sector the screen is showing.
+  ///
+  /// `null` means "the first one", which is the right default for a
+  /// single-world sector and the only sane fallback before the universe loads.
+  /// A sector can hold up to `planetsPerSector` worlds, and the screen can only
+  /// show one at a time, so this is state the player controls.
+  String? _selectedPlanetId;
+
+  /// The world to display: the selection if it still exists, else the first
+  /// living one, else the first of any.
+  ///
+  /// Falls back rather than going blank. A world can be destroyed or removed
+  /// while its id is selected, and a screen that renders nothing at all is a
+  /// far worse outcome than one that quietly shows a neighbour.
+  Planet? _resolvePlanet(Sector? sector) =>
+      sector == null ? null : _selectFrom(sector.planets);
+
+  /// Picks the world to display out of [planets], honouring the selection.
+  Planet? _selectFrom(List<Planet> planets) {
+    if (planets.isEmpty) return null;
+    final id = _selectedPlanetId;
+    if (id != null) {
+      for (final p in planets) {
+        if (p.id == id) return p;
+      }
+    }
+    return planets.where((p) => !p.isDestroyed).isNotEmpty
+        ? planets.firstWhere((p) => !p.isDestroyed)
+        : planets.first;
+  }
+
   static int _fingerprintOf(Planet? p) {
     if (p == null) return 0;
     return Object.hash(
@@ -78,13 +130,22 @@ class _PlanetScreenState extends State<PlanetScreen> {
   void initState() {
     super.initState();
     _loadUniverse();
+    // Reload from disk rather than fingerprinting a private copy.
+    //
+    // This screen and [GameTickService] each call `loadUniverse()`, which
+    // **parses a fresh object graph every time**. The tick decrements the
+    // countdown on *its* copy and saves it; this screen was fingerprinting
+    // *its own* copy, which nothing else mutates. So a running build appeared
+    // frozen at whatever it was set to, forever, and then vanished on the way
+    // out. The same divergence hid every production change made by the tick.
+    //
+    // Reading every second is affordable next to a tick that already re-reads
+    // the whole file every 30s, and it is what makes the progress bar move
+    // promptly: the countdown only actually changes once per tick, so this
+    // polls for a change and repaints within a second of it happening.
     _refresh = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      final next = _fingerprintOf(_currentSector?.planet);
-      if (next != _fingerprint) {
-        _fingerprint = next;
-        setState(() {});
-      }
+      _syncFromDisk();
     });
   }
 
@@ -92,6 +153,47 @@ class _PlanetScreenState extends State<PlanetScreen> {
   void dispose() {
     _refresh?.cancel();
     super.dispose();
+  }
+
+  /// Re-reads the universe and swaps in the current sector if it changed.
+  ///
+  /// Swaps the whole list rather than merging, so the screen holds exactly what
+  /// the tick last wrote. Only the selected world's id is carried across, since
+  /// a re-parse produces new object identities and would otherwise reset the
+  /// selection to slot 0 on every poll.
+  Future<void> _syncFromDisk() async {
+    if (_writeInFlight) return;
+    final previousId = _currentSector?.id;
+    final List<Sector> fresh;
+    try {
+      fresh = await UniverseStorage.instance.loadUniverse();
+    } catch (_) {
+      return; // a transient read failure must not blank the screen
+    }
+    if (!mounted || fresh.isEmpty) return;
+    // A write that started while we were reading wins: the file we just read may
+    // predate it, and clobbering it would make a button look inert.
+    if (_writeInFlight) return;
+
+    final next = _fingerprintOf(_resolvePlanetFrom(fresh));
+    if (next == _fingerprint && previousId == _currentSector?.id) {
+      _allSectors = fresh;
+      return;
+    }
+    _fingerprint = next;
+    setState(() {
+      _allSectors = fresh;
+    });
+  }
+
+  /// The selected world, resolving against an explicit sector list.
+  Planet? _resolvePlanetFrom(List<Sector> all) {
+    if (all.isEmpty) return null;
+    final sector = all.firstWhere(
+      (s) => s.id == widget.player.currentSectorId,
+      orElse: () => all.first,
+    );
+    return _selectFrom(sector.planets);
   }
 
   Future<void> _loadUniverse() async {
@@ -120,9 +222,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
 
   Future<void> _scanPlanet() async {
     final sector = _currentSector;
-    if (sector == null || sector.planet == null) return;
+    final planet = _resolvePlanet(sector);
+    if (sector == null || planet == null) return;
 
-    final planet = sector.planet!;
     if (planet.scanned) return;
 
     // Spend energy for the manual scan.
@@ -135,7 +237,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
     widget.onPlayerUpdate(updatedPlayer);
 
     planet.scanned = true;
-    await UniverseStorage.instance.saveSectors([sector]);
+    await _persist(sector);
     ActionLogProvider.global.info(
       'Scan complete: ${planet.name} — ${planet.planetType}',
     );
@@ -159,7 +261,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
 
     final sector = _currentSector;
-    final planet = sector?.planet;
+    final planet = _resolvePlanet(sector);
 
     if (sector == null || planet == null) {
       return Scaffold(
@@ -268,6 +370,10 @@ class _PlanetScreenState extends State<PlanetScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (sector.planets.length > 1) ...[
+              _buildWorldSelector(sector, planet),
+              const SizedBox(height: 12),
+            ],
             // Planet header card — info left, image right
             Card(
               elevation: 0,
@@ -535,16 +641,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
     'drones': 10,
   };
 
-  /// Flat unit prices for everything that is not colonists. Colonists are
-  /// priced by [ColonistSupply] from the real BFS distance to the faction's
-  /// homeworld, because a flat rate made every planet equally cheap to populate.
-  static const _transferPrices = {
-    'minerals': 5,
-    'organics': 8,
-    'industrial': 12,
-    'drones': 10,
-  };
-
   int _storedFor(String type, Planet planet) {
     switch (type) {
       case 'minerals':
@@ -614,13 +710,19 @@ class _PlanetScreenState extends State<PlanetScreen> {
   int _hopsFor(Sector sector) => _cachedHops ??=
       ColonistSupply.hopsBetween(_allSectors, _sourceFor().sectorId, sector.id);
 
-  int _priceFor(String type, Sector sector) {
-    if (type == 'colonists') {
-      return ColonistSupply.pricePerColonist(_hopsFor(sector),
+  /// Price per colonist from the faction's capital. Colonists are the **only**
+  /// transfer that has a price any more.
+  ///
+  /// The flat resource table that used to live here is **deleted rather than
+  /// retuned**. It priced goods that no longer change hands: `Dep` and `Wdr`
+  /// now move units between the hold and the store, and a per-unit credit rate
+  /// for a haul that costs nothing is an invented number on screen. Worse, it
+  /// gave the same minerals three different values within one screen — 5 cr on
+  /// this row, 42.5 cr on the Collect shipment pool, and a live demand-driven
+  /// price at any port.
+  int _priceFor(String type, Sector sector) =>
+      ColonistSupply.pricePerColonist(_hopsFor(sector),
           orphan: _sourceFor().isOrphan);
-    }
-    return _transferPrices[type] ?? 0;
-  }
 
   /// The explanation behind the colonists row's amber info bubble.
   ///
@@ -654,18 +756,43 @@ class _PlanetScreenState extends State<PlanetScreen> {
     final stored = _storedFor(type, planet);
     final max = _maxFor(type, planet);
     final amount = _transferAmounts[type] ?? 10;
-    final pricePerUnit = sector == null ? 0 : _priceFor(type, sector);
+    final isColonists = type == 'colonists';
+
+    // Colonists still ship through ColonistSupply: distance-priced credits plus
+    // a per-shipment energy cost, and the physical cargo half is still to come.
+    // Everything else is now a plain haul between the hold and the store.
+    final pricePerUnit =
+        isColonists && sector != null ? _priceFor(type, sector) : 0;
     final depositCost = amount * pricePerUnit;
-    // Every shipment burns the energy it would cost to fly there, whatever its
-    // size — so batching pays, and a distant empire is a fuel problem.
     final shipmentEnergy = sector == null
         ? 0
         : ColonistSupply.energyPerShipment(widget.player, _hopsFor(sector));
-    final canDeposit = widget.player.credits >= depositCost &&
-        stored + amount <= max &&
-        widget.player.energy >= shipmentEnergy;
-    final canWithdraw =
-        stored >= amount && type != 'colonists'; // can't withdraw colonists
+    final inHold = isColonists ? 0 : (widget.player.cargo[type] ?? 0);
+    final holdSpace = widget.player.maxCargo - widget.player.cargoUsed;
+    // The most that can move in one action: enough goods in the right place, and
+    // enough room on the receiving side. Shared by the `+` ceiling and the Max
+    // button so the number on screen is the number that will be transferred.
+    final storeRoom = max - stored;
+    final maxMovable = isColonists
+        ? 0
+        : (inHold < storeRoom ? inHold : storeRoom).clamp(0, holdSpace);
+
+    // A deposit needs units in the hold and any room on the world; a withdrawal
+    // needs units on the world and any free hold space. Both are gated on
+    // "is this possible **at all**", not on the current stepper amount.
+    //
+    // Gating on the amount made the buttons lie. With 5 free slots and a stepper
+    // reading 10, `10 <= 5` is false, so a player with 1,000 minerals on a
+    // nearby world and a nearly-empty hold saw a dead button and no way to make
+    // the one load that would have fitted. The handlers clamp to
+    // `min(stored, space)`, so the button only has to say "yes, some of this
+    // can move".
+    final canDeposit = isColonists
+        ? (widget.player.credits >= depositCost &&
+            stored + amount <= max &&
+            widget.player.energy >= shipmentEnergy)
+        : (inHold > 0 && stored < max);
+    final canWithdraw = !isColonists && stored > 0 && holdSpace > 0;
     final label = type[0].toUpperCase() + type.substring(1);
 
     return Column(
@@ -729,7 +856,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
             const SizedBox(width: 4),
             Flexible(
               child: Text(
-                '${pricePerUnit}cr',
+                // For resources this used to read a price, which was a lie: no
+                // credits change hands on an unload or a load. What the player
+                // actually needs to see is how much of the goods is already in
+                // the hold, because that is what bounds a deposit.
+                isColonists
+                    ? '${pricePerUnit}cr'
+                    : 'hold ${_formatNumber(inHold)}',
                 textAlign: TextAlign.right,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -761,31 +894,62 @@ class _PlanetScreenState extends State<PlanetScreen> {
               ),
             ),
             _miniStepper(Icons.add_rounded, () {
-              final maxBuy = max - stored;
-              final maxCredits = widget.player.credits ~/
-                  (pricePerUnit > 0 ? pricePerUnit : 1);
-              final maxAmount = type == 'colonists'
-                  ? (max - stored)
-                  : (maxBuy < maxCredits ? maxBuy : maxCredits).clamp(0, max);
-              final next = amount + 10 > maxAmount ? maxAmount : amount + 10;
+              // Bounded by whatever can actually move, so the figure is always
+              // actionable on at least one button rather than reachable on
+              // neither. Colonists have their own ceiling: they cost credits.
+              final int ceiling;
+              if (isColonists) {
+                final byCredits = widget.player.credits ~/
+                    (pricePerUnit > 0 ? pricePerUnit : 1);
+                ceiling = (storeRoom < byCredits ? storeRoom : byCredits)
+                    .clamp(0, max);
+              } else {
+                ceiling = maxMovable;
+              }
+              final next = amount + 10 > ceiling ? ceiling : amount + 10;
               if (next > amount) {
                 setState(() => _transferAmounts[type] = next.clamp(1, max));
               }
             }),
+            // One action instead of a held button's worth of taps. Sets the
+            // amount rather than transferring directly, so the player can see
+            // what is about to move and then press Unload or Load.
+            if (!isColonists && maxMovable > 0)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, right: 2),
+                child: InkWell(
+                  onTap: () => _setTransferMax(type, maxMovable),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text(
+                      'Max',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             const Spacer(),
-            if (type == 'colonists')
+            if (isColonists)
               _miniActionButton(
                   'Recruit', Colors.green, canDeposit && depositCost > 0, () {
-                _transferToPlanet(type, amount, depositCost, planet);
+                _recruitColonists(type, amount, depositCost, planet);
               })
             else ...[
-              _miniActionButton(
-                  'Dep', Colors.blue, canDeposit && depositCost > 0, () {
-                _transferToPlanet(type, amount, depositCost, planet);
+              // Labels say which way the goods move, because "Dep"/"Wdr" is
+              // ambiguous about whether it is the planet or the ship that is
+              // being unloaded. The icons carry the same information.
+              _miniActionButton('Unload', Colors.blue, canDeposit, () {
+                _depositToPlanet(type, amount, planet);
               }),
               const SizedBox(width: 4),
-              _miniActionButton('Wdr', Colors.orange, canWithdraw, () {
-                _transferFromPlanet(type, amount, pricePerUnit, planet);
+              _miniActionButton('Load', Colors.orange, canWithdraw, () {
+                _withdrawToShip(type, amount, planet);
               }),
             ],
           ],
@@ -794,19 +958,36 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
+  /// A compact `-`/`+` control that repeats while held.
+  ///
+  /// Press-and-hold is not a convenience here, it is the difference between
+  /// setting a transfer amount and giving up on it. Absorbing a colony's
+  /// production into a hold takes hundreds of taps of `+10`, and a player who
+  /// cannot do it will simply not use the feature — which is the same failure as
+  /// the feature not existing.
+  ///
+  /// The repeat rate is the same 400ms delay / 80ms interval as
+  /// `lib/widgets/hold_button.dart`, but this is a bare icon rather than a
+  /// labelled button, and `HoldButton` is a `SizedBox(height: 36)` with a
+  /// `FittedBox` label — wrong shape for a 24px square inside a dense row.
   Widget _miniStepper(IconData icon, VoidCallback onPressed) {
-    return Material(
-      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(4),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          padding: const EdgeInsets.all(3),
-          child: Icon(icon, size: 14),
-        ),
+    return _HoldRepeatIcon(
+      onPressed: onPressed,
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        child: Icon(icon, size: 14),
       ),
     );
+  }
+
+  /// Sets a transfer row's amount to everything that can actually move.
+  ///
+  /// Bounded by the *same* constraint the button will apply, so the number on
+  /// screen is the number that will be transferred: the smaller of what is in
+  /// the hold and what has room on the world, and never more than the free
+  /// cargo space. Pressing it twice is harmless, which is the point.
+  void _setTransferMax(String type, int max) {
+    setState(() => _transferAmounts[type] = max < 1 ? 1 : max);
   }
 
   Widget _miniActionButton(
@@ -833,7 +1014,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
-  Future<void> _transferToPlanet(
+  /// Buys colonists from the faction's capital and settles them on the world.
+  ///
+  /// The one transfer that is **not** a haul. Colonists are priced by distance
+  /// from the faction's own homeworld (`15 x hops^1.5`) and every shipment burns
+  /// the energy of flying there, whatever its size, so batching pays. They are
+  /// still an abstract count rather than cargo — the physical hold half is
+  /// outstanding work, recorded in the design doc.
+  Future<void> _recruitColonists(
       String type, int amount, int cost, Planet planet) async {
     final sector = _currentSector;
     if (sector == null || widget.player.credits < cost) return;
@@ -845,70 +1033,131 @@ class _PlanetScreenState extends State<PlanetScreen> {
         ColonistSupply.energyPerShipment(widget.player, _hopsFor(sector));
     if (widget.player.energy < energy) return;
 
+    final moved = amount < planet.colonistMax - planet.population
+        ? amount
+        : planet.colonistMax - planet.population;
+    if (moved <= 0) return;
+    final actualCost = cost ~/ amount * moved;
+
     var updated = widget.player.copyWith(
-      credits: widget.player.credits - cost,
+      credits: widget.player.credits - actualCost,
     );
     if (energy > 0) {
       updated = updated.copyWith(energy: widget.player.energy - energy);
     }
     widget.onPlayerUpdate(updated);
+    planet.population += moved;
 
-    switch (type) {
-      case 'minerals':
-        planet.storedMinerals += amount;
-      case 'organics':
-        planet.storedOrganics += amount;
-      case 'industrial':
-        planet.storedIndustrial += amount;
-      case 'drones':
-        planet.storedDrones += amount;
-      case 'colonists':
-        planet.population += amount;
-    }
-
-    await UniverseStorage.instance.saveSectors([sector]);
+    await _persist(sector);
     ActionLogProvider.global.info(
-      'Transferred $amount $type to ${planet.name} '
-      '($cost cr${energy > 0 ? ', $energy energy' : ''})',
+      'Recruited $moved colonists onto ${planet.name} '
+      '($actualCost cr${energy > 0 ? ', $energy energy' : ''})',
     );
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
 
-  Future<void> _transferFromPlanet(
-      String type, int amount, int pricePerUnit, Planet planet) async {
+  /// Moves units from the ship's hold into the planet's store. Free.
+  ///
+  /// This used to debit credits and energy and then credit the goods into the
+  /// store **without ever touching `player.cargo`**, which made it a
+  /// credits-to-goods printer rather than a transfer: it ignored
+  /// `maxCargo` entirely, so a million minerals went into a hold that fits fifty,
+  /// and there was nothing in the galaxy to haul.
+  ///
+  /// Unloading is free because the ship is already in orbit — the cost of
+  /// getting the goods here was paid at the port, or earned on a colony.
+  Future<void> _depositToPlanet(String type, int amount, Planet planet) async {
+    final sector = _currentSector;
+    if (sector == null) return;
+
+    final held = widget.player.cargo[type] ?? 0;
+    final room = _maxFor(type, planet) - _storedFor(type, planet);
+    final moved = amount < held ? amount : held;
+    final movedFits = moved < room ? moved : room;
+    if (movedFits <= 0) return;
+
+    _applyToStore(type, planet, movedFits);
+    final cargo = Map<String, int>.from(widget.player.cargo);
+    final left = held - movedFits;
+    if (left > 0) {
+      cargo[type] = left;
+    } else {
+      cargo.remove(type);
+    }
+    widget.onPlayerUpdate(widget.player.copyWith(
+      cargo: cargo,
+      cargoUsed: widget.player.cargoUsed - movedFits,
+    ));
+
+    await _persist(sector);
+    ActionLogProvider.global.info(
+      'Unloaded $_format(movedFits) $type to ${planet.name}'
+      '${movedFits < amount ? ' (store was full)' : ''}',
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// Moves units from the planet's store into the ship's hold. Free.
+  ///
+  /// The counterpart to [_depositToPlanet], and it used to be worse: it paid the
+  /// player credits, never touched the hold, and — unlike deposit — charged no
+  /// energy at all. So the same goods had two invented prices (5 cr here, 42.5 cr
+  /// on the Collect button, and a live price at a port) and neither moved a
+  /// single unit into a ship.
+  ///
+  /// Bounded by free cargo space, which is what makes a hauler worth flying.
+  Future<void> _withdrawToShip(String type, int amount, Planet planet) async {
     final sector = _currentSector;
     if (sector == null) return;
 
     final stored = _storedFor(type, planet);
-    final actualAmount = amount > stored ? stored : amount;
-    if (actualAmount <= 0) return;
+    final space = widget.player.maxCargo - widget.player.cargoUsed;
+    final moved = amount < stored ? amount : stored;
+    final movedFits = moved < space ? moved : space;
+    if (movedFits <= 0) return;
 
-    final creditsGained = actualAmount * pricePerUnit;
-
+    _applyToStore(type, planet, -movedFits);
+    final cargo = Map<String, int>.from(widget.player.cargo);
+    cargo[type] = (cargo[type] ?? 0) + movedFits;
     widget.onPlayerUpdate(widget.player.copyWith(
-      credits: widget.player.credits + creditsGained,
+      cargo: cargo,
+      cargoUsed: widget.player.cargoUsed + movedFits,
     ));
+
+    await _persist(sector);
+    ActionLogProvider.global.info(
+      'Loaded $_format(movedFits) $type from ${planet.name}'
+      '${movedFits < amount ? ' (hold is full)' : ''}',
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// Adds (or, for a negative [delta], removes) units on a named store.
+  ///
+  /// Clamped at zero so a withdraw can never drive a store negative if two
+  /// actions land in the same frame.
+  void _applyToStore(String type, Planet planet, int delta) {
+    int apply(int current) {
+      final next = current + delta;
+      return next < 0 ? 0 : next;
+    }
 
     switch (type) {
       case 'minerals':
-        planet.storedMinerals -= actualAmount;
+        planet.storedMinerals = apply(planet.storedMinerals);
       case 'organics':
-        planet.storedOrganics -= actualAmount;
+        planet.storedOrganics = apply(planet.storedOrganics);
       case 'industrial':
-        planet.storedIndustrial -= actualAmount;
+        planet.storedIndustrial = apply(planet.storedIndustrial);
       case 'drones':
-        planet.storedDrones -= actualAmount;
+        planet.storedDrones = apply(planet.storedDrones);
     }
+  }
 
-    await UniverseStorage.instance.saveSectors([sector]);
-    ActionLogProvider.global.info(
-      'Withdrew $actualAmount $type from ${planet.name} (+$creditsGained cr)',
-    );
-    if (mounted) {
-      setState(() {});
-    }
+  static String _format(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
   }
 
   Future<void> _claimPlanet(Planet planet) async {
@@ -923,7 +1172,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
           updatedPlayer.withFactionStandingChange(previousOwner, -3);
     }
     widget.onPlayerUpdate(updatedPlayer);
-    await UniverseStorage.instance.saveSectors([sector]);
+    await _persist(sector);
     ActionLogProvider.global.info(
       '${widget.player.faction.displayName} has claimed ${planet.name}',
     );
@@ -940,6 +1189,60 @@ class _PlanetScreenState extends State<PlanetScreen> {
     if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
     if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
     return n.toString();
+  }
+
+  /// A level-gate row: `have / need` plus a green tick or a red cross.
+  ///
+  /// The tick used to be a trailing `✓` glyph inside the value string, and it
+  /// only appeared on success — a missed requirement showed nothing at all, so
+  /// the two states were told apart by the absence of a character rather than by
+  /// what you saw. A cross is an explicit "not yet", which is the state a player
+  /// is actually looking for.
+  ///
+  /// The mark is a **Widget**, not a glyph, so it takes the theme's success and
+  /// error colours. A coloured `✓` character would need a font that has one, and
+  /// the default test font renders every glyph as a full-width box.
+  Widget _requirementRow(String label, int have, int need, ColorScheme cs) {
+    final met = have >= need;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: TextStyle(
+                  color: cs.onSurface.withValues(alpha: 0.6),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500)),
+          const SizedBox(width: 8),
+          // The mark is fixed-width so the numbers do not shift sideways when a
+          // requirement is met — a row that reflows as you gain resources reads
+          // as a glitch.
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Icon(
+              met ? Icons.check_circle_rounded : Icons.cancel_rounded,
+              size: 14,
+              color:
+                  met ? Colors.green.shade400 : cs.error.withValues(alpha: 0.7),
+              semanticLabel: met ? 'requirement met' : 'requirement not met',
+            ),
+          ),
+          Flexible(
+            child: Text(
+              '${_formatNumber(have)} / ${_formatNumber(need)}',
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _infoRow(String label, String value) {
@@ -1013,6 +1316,23 @@ class _PlanetScreenState extends State<PlanetScreen> {
     return 10;
   }
 
+  /// The step actually used for a move of [delta] colonists.
+  ///
+  /// A fixed step is unusable at the small end: a 900-colony world steps 100 at
+  /// a time, so with 40 colonists in the reserve the add button was **dead** —
+  /// `reserve >= 100` was false and there was no way to move any of them. The
+  /// player saw a full population and four disabled buttons.
+  ///
+  /// So the step is clamped to what is actually available on the side being
+  /// moved. A 40-colonist reserve still moves 40, not "nothing, because 100
+  /// did not fit". `delta` is negative for a removal, hence the sign test.
+  static int _effectiveStep(int step, int delta, int available) {
+    if (available > 0 && step > available) {
+      return delta < 0 ? available : available;
+    }
+    return step;
+  }
+
   /// Moves colonists between the reserve and a production track.
   ///
   /// The reserve is implicit — `population - assigned` — so this can never drive
@@ -1051,14 +1371,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
         planet.colonistsDrones = applied;
     }
 
-    await UniverseStorage.instance.saveSectors([sector]);
+    await _persist(sector);
     if (mounted) setState(() {});
   }
 
   Widget _buildColonyCard(Planet planet, ColorScheme cs) {
     final canAssign = planet.owner == widget.player.faction;
     final step = _workforceStep(planet.population);
-    final starving = planet.organicsUpkeep > planet.storedOrganics;
+    final unsupplied = planet.storesEmpty;
 
     Widget trackRow(
       String label,
@@ -1067,6 +1387,11 @@ class _PlanetScreenState extends State<PlanetScreen> {
       Color colour,
       String track,
     ) {
+      // A track the world cannot produce is **locked**, not merely empty.
+      // A stepper that accepts colonists onto a track yielding nothing looks
+      // like a bug, and a player who cannot see why their organics stay at zero
+      // will assume the mechanic is broken. The label says it outright.
+      final producible = planet.canProduce(track);
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
@@ -1105,7 +1430,11 @@ class _PlanetScreenState extends State<PlanetScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                perTick > 0 ? '+${_formatNumber(perTick)}/tick' : '—',
+                !producible
+                    ? 'cannot produce'
+                    : perTick > 0
+                        ? '+${_formatNumber(perTick)}/tick'
+                        : '—',
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 10,
@@ -1118,10 +1447,23 @@ class _PlanetScreenState extends State<PlanetScreen> {
             ),
             if (canAssign) ...[
               const SizedBox(width: 6),
+              // Each button's step is clamped to what is available on its own
+              // side, so a 40-colonist reserve moves 40 rather than being
+              // disabled for not fitting 100. Enabled on `> 0`, not `>= step`.
               _stepButton(
                 icon: Icons.add,
-                enabled: planet.reserveColonists >= step,
-                onTap: () => _adjustWorkforce(planet, track, step),
+                enabled: producible && planet.reserveColonists > 0,
+                onTap: () => _adjustWorkforce(planet, track,
+                    _effectiveStep(step, 1, planet.reserveColonists)),
+              ),
+              _stepButton(
+                icon: Icons.remove,
+                // Remove stays enabled even on a dead track: a colony generated
+                // before a world became unable to produce something should not be
+                // stuck holding colonists who will never work again.
+                enabled: count > 0,
+                onTap: () => _adjustWorkforce(
+                    planet, track, -_effectiveStep(step, -1, count)),
               ),
             ],
           ],
@@ -1151,11 +1493,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 '${_formatNumber(planet.population)} / ${_formatNumber(planet.colonistMax)}'),
             _infoRow('On tracks', _formatNumber(planet.assignedColonists)),
             _infoRow('Reserve', _formatNumber(planet.reserveColonists)),
-            _infoRow('Organics upkeep',
-                '${_formatNumber(planet.organicsUpkeep)}/tick'),
-            if (starving) ...[
+            _infoRow(
+                'Supply draw',
+                '${_formatNumber(planet.supplyDraw)} every '
+                    '${Planet.supplyInterval} ticks'),
+            _infoRow('Next supply', '${planet.ticksToSupply} ticks'),
+            if (unsupplied) ...[
               const SizedBox(height: 8),
-              _buildStarvationWarning(planet, cs),
+              _buildSupplyWarning(planet, cs),
             ],
             const SizedBox(height: 12),
             trackRow('Minerals', planet.colonistsMinerals, planet.mineralOutput,
@@ -1185,14 +1530,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
-  /// The colony cannot feed itself. Worth a loud, specific line: it is the one
-  /// colony state a player must *act* on, and the per-tick rates above will
-  /// happily keep looking fine while it happens.
-  Widget _buildStarvationWarning(Planet planet, ColorScheme cs) {
-    final short = planet.organicsUpkeep - planet.storedOrganics;
-    final perTick = (planet.population * Planet.maxStarvationRatePerTick)
-        .floor()
-        .clamp(1, planet.population);
+  /// The colony cannot cover its supply draw.
+  ///
+  /// The replacement for the starvation warning, and deliberately softer in
+  /// tone: nobody is dying, the colony is simply drawing on empty stores. The
+  /// fix is a haul or a planted neighbour, not a rescue.
+  Widget _buildSupplyWarning(Planet planet, ColorScheme cs) {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -1206,11 +1549,32 @@ class _PlanetScreenState extends State<PlanetScreen> {
           Icon(Icons.warning_amber_rounded, size: 16, color: cs.error),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              'Starving — ${_formatNumber(short)} organics short per tick. '
-              'About ${_formatNumber(perTick)} colonists are being lost each '
-              'tick. Send organics, or put more colonists on the Organics track.',
-              style: TextStyle(fontSize: 10, color: cs.onErrorContainer),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Stores empty — supply unpaid',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: cs.error,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  planet.canProduce('organics')
+                      ? 'Haul minerals, organics or industrial in, or collect '
+                          'what is already queued.'
+                      : 'This world cannot make organics. Unload organics from '
+                          'your hold, or plant a world beside it that grows '
+                          'them.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.35,
+                    color: cs.onSurface.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1269,10 +1633,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
 
     final canLevel = planet.canStartConstruction;
-    final colonistsOk = planet.population >= cost.requiredColonists;
-    final mineralsOk = planet.storedMinerals >= cost.requiredMinerals;
-    final organicsOk = planet.storedOrganics >= cost.requiredOrganics;
-    final industrialOk = planet.storedIndustrial >= cost.requiredIndustrial;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1297,14 +1657,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        _infoRow('Colonists',
-            '${_formatNumber(planet.population)} / ${_formatNumber(cost.requiredColonists)} ${colonistsOk ? '✓' : ''}'),
-        _infoRow('Minerals',
-            '${_formatNumber(planet.storedMinerals)} / ${_formatNumber(cost.requiredMinerals)} ${mineralsOk ? '✓' : ''}'),
-        _infoRow('Organics',
-            '${_formatNumber(planet.storedOrganics)} / ${_formatNumber(cost.requiredOrganics)} ${organicsOk ? '✓' : ''}'),
-        _infoRow('Industrial',
-            '${_formatNumber(planet.storedIndustrial)} / ${_formatNumber(cost.requiredIndustrial)} ${industrialOk ? '✓' : ''}'),
+        _requirementRow(
+            'Colonists', planet.population, cost.requiredColonists, cs),
+        _requirementRow(
+            'Minerals', planet.storedMinerals, cost.requiredMinerals, cs),
+        _requirementRow(
+            'Organics', planet.storedOrganics, cost.requiredOrganics, cs),
+        _requirementRow(
+            'Industrial', planet.storedIndustrial, cost.requiredIndustrial, cs),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
@@ -1514,6 +1874,61 @@ class _PlanetScreenState extends State<PlanetScreen> {
       ? '1'
       : (v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2));
 
+  /// Chip row for choosing which world in this sector to work with.
+  ///
+  /// Only rendered when the sector holds more than one. Its absence in a
+  /// single-world sector is deliberate: a one-chip selector that can only be
+  /// tapped to select what is already selected is pure noise.
+  ///
+  /// A destroyed world stays in the list rather than disappearing. Removing it
+  /// would shift every chip under the player's finger mid-session, and the
+  /// collision roll can destroy a world while they are looking at it — so it is
+  /// shown struck through and unselectable instead.
+  Widget _buildWorldSelector(Sector sector, Planet current) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('Worlds in this sector',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface.withValues(alpha: 0.7))),
+            const Spacer(),
+            Text('${sector.livingPlanets.length} / ${sector.planets.length}',
+                style: TextStyle(
+                    fontSize: 12, color: cs.onSurface.withValues(alpha: 0.5))),
+          ],
+        ),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final p in sector.planets) ...[
+                ChoiceChip(
+                  label: Text(p.name,
+                      style: TextStyle(
+                        fontSize: 12,
+                        decoration:
+                            p.isDestroyed ? TextDecoration.lineThrough : null,
+                      )),
+                  selected: p.id == current.id,
+                  onSelected: p.isDestroyed
+                      ? null
+                      : (_) => setState(() => _selectedPlanetId = p.id),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   /// Progress panel shown in place of the level gate while a build runs.
   ///
   /// The wording is deliberate on one point: the countdown is **game ticks, not
@@ -1609,12 +2024,20 @@ class _PlanetScreenState extends State<PlanetScreen> {
     final scale = widget.constructionTimeScale;
     if (scale <= 0) {
       if (!planet.levelUp()) return;
-      await UniverseStorage.instance.saveSectors([sector]);
+      await _persist(sector);
       ActionLogProvider.global.info(
         '${planet.name} reached level ${planet.level}',
       );
     } else {
       if (!planet.startConstruction(timeScale: scale)) return;
+      // **Persist before returning.** Omitting this was a live bug: the
+      // countdown and the spent resources existed only in this screen's
+      // in-memory copy of the sector, so leaving the tab threw the build away
+      // and the level gate came back armed, at the same level, with the
+      // resources back in the store. The countdown is the *authoritative*
+      // state of a running build, so it has to reach disk before the player
+      // can navigate away.
+      await _persist(sector);
       final mins = _estimateMinutes(planet.constructionTicksRemaining);
       ActionLogProvider.global.info(
         '${planet.name} began building level ${planet.level + 1}'
@@ -1755,7 +2178,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
         widget.player.copyWith(credits: widget.player.credits + payout),
       );
     }
-    await UniverseStorage.instance.saveSectors([sector]);
+    await _persist(sector);
     ActionLogProvider.global.trade(
       'Collected ${_formatNumber(planet.pendingTotal + collected.values.fold<int>(0, (a, b) => a + b))} units of colony output from ${planet.name} for ${_formatNumber(payout)} cr',
     );
@@ -1790,6 +2213,63 @@ class _PlanetScreenState extends State<PlanetScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A bare icon button that fires once on press and repeats while held.
+///
+/// Mirrors `lib/widgets/hold_button.dart`'s timing (400ms before the first
+/// repeat, 80ms between) but takes a [child] instead of a label, because these
+/// sit as 24px squares inside a dense table row where a 36px labelled button
+/// would not fit and a `FittedBox` label is pointless on a `+` glyph.
+class _HoldRepeatIcon extends StatefulWidget {
+  final VoidCallback onPressed;
+  final Widget child;
+
+  const _HoldRepeatIcon({required this.onPressed, required this.child});
+
+  @override
+  State<_HoldRepeatIcon> createState() => _HoldRepeatIconState();
+}
+
+class _HoldRepeatIconState extends State<_HoldRepeatIcon> {
+  static const _delay = Duration(milliseconds: 400);
+  static const _interval = Duration(milliseconds: 80);
+
+  Timer? _timer;
+
+  void _start() {
+    widget.onPressed();
+    _timer = Timer(_delay, () {
+      _timer = Timer.periodic(_interval, (_) {
+        if (!mounted) {
+          _stop();
+          return;
+        }
+        widget.onPressed();
+      });
+    });
+  }
+
+  void _stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void dispose() {
+    _stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTapDown: (_) => _start(),
+      onTapUp: (_) => _stop(),
+      onTapCancel: _stop,
+      child: widget.child,
     );
   }
 }

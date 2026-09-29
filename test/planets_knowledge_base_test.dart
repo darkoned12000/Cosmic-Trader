@@ -138,18 +138,33 @@ void main() {
         .widgetList<Text>(find.byType(Text))
         .map((t) => t.data ?? '')
         .join('\n');
-    expect(text, contains('P ÷ ${Planet.organicsUpkeepDivisor}'));
+    expect(text, contains('${Planet.supplyInterval} ticks'));
   });
 
-  testWidgets('quotes the starvation rate the model actually uses',
+  testWidgets('quotes the supply share the model actually uses',
       (tester) async {
+    // Rewritten from the starvation-rate guard it replaced. The property is the
+    // same one: the guide must not state a number the model does not use, or a
+    // balance change leaves the reference quietly lying.
     await pumpGuide(tester);
     final text = tester
         .widgetList<Text>(find.byType(Text))
         .map((t) => t.data ?? '')
         .join('\n');
-    final pct = (Planet.maxStarvationRatePerTick * 100).round();
+    final pct = (Planet.supplyShareOfOutput * 100).round();
     expect(text, contains('$pct%'));
+  });
+
+  testWidgets('says plainly that a world can be unable to produce something',
+      (tester) async {
+    // A multiplier of 0.0 in a table is not a warning. The harsh types have a
+    // solvable problem and the guide is where a player would go looking for it.
+    await pumpGuide(tester);
+    final text = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data ?? '')
+        .join('\n');
+    expect(text, contains('cannot make organics'));
   });
 
   testWidgets('states that storage is a per-commodity cap', (tester) async {

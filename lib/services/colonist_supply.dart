@@ -99,10 +99,14 @@ class ColonistSupply {
       );
     }
 
+    // The capital is whichever world in the sector is flagged as the homeworld,
+    // not simply the first one. A capital in slot 2 of a three-world sector is
+    // still the capital, and taking slot 0 would price colonists off a random
+    // frontier world — or find nothing at all.
     Planet? home;
     for (final s in sectors) {
-      if (s.id == homeId && s.planet != null) {
-        home = s.planet;
+      if (s.id == homeId) {
+        home = s.homeworld ?? s.primaryPlanet;
         break;
       }
     }

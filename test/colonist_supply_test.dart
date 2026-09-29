@@ -121,8 +121,11 @@ void main() {
             reason: '$faction should be drawing from its own capital');
         expect(source.isOrphan, isFalse);
 
+        // `.homeworld`, not `primaryPlanet`: a capital can sit in any slot of a
+        // three-world sector, and grabbing slot 0 would test a neighbour while
+        // the assertion still passed on `homeworldOf` being wrong.
         final planet =
-            sectors.firstWhere((s) => s.id == source.sectorId).planet!;
+            sectors.firstWhere((s) => s.id == source.sectorId).homeworld!;
         expect(planet.homeworldOf, faction,
             reason: '${faction.name} was pointed at ${planet.name}, which is '
                 '${planet.homeworldOf?.name}');
@@ -144,11 +147,12 @@ void main() {
       final sectors = _universe(seed: 11, sectors: 100);
       final before = ColonistSupply.sourceFor(sectors, FactionClass.duran);
       final homeSector = sectors.firstWhere((s) => s.id == before.sectorId);
-      final home = homeSector.planet!;
+      final home = homeSector.homeworld!;
 
-      final backup = sectors.firstWhere((s) =>
-          s.planet?.isBackupHomeworld == true &&
-          s.planet?.homeworldOf == FactionClass.duran);
+      // Every world, not slot 0: the reserve capital may share a sector with the
+      // primary it is standing in for.
+      final backup = sectors.firstWhere((s) => s.planets.any(
+          (p) => p.isBackupHomeworld && p.homeworldOf == FactionClass.duran));
       expect(backup.id, isNot(homeSector.id), reason: 'fixture needs a backup');
 
       home.owner = FactionClass.trader; // captured
@@ -162,7 +166,7 @@ void main() {
     test('a destroyed homeworld does not supply colonists', () {
       final sectors = _universe(seed: 11, sectors: 100);
       final source = ColonistSupply.sourceFor(sectors, FactionClass.vinari);
-      sectors.firstWhere((s) => s.id == source.sectorId).planet!.destroy();
+      sectors.firstWhere((s) => s.id == source.sectorId).homeworld!.destroy();
 
       final after = ColonistSupply.sourceFor(sectors, FactionClass.vinari);
       expect(after.sectorId, isNot(source.sectorId),
@@ -172,13 +176,16 @@ void main() {
     test('a faction with no capital falls back to Terra at a penalty', () {
       final sectors = _universe(seed: 11, sectors: 100);
       // Strip every capital for one faction.
+      // Every world in every sector. Stripping only slot 0 would leave a Duran
+      // capital alive in slot 2 of some sector, the faction would keep its
+      // supply, and the "no capital" premise of the test would be a fiction.
       for (final s in sectors) {
-        final p = s.planet;
-        if (p == null) continue;
-        if (p.homeworldOf == FactionClass.duran) {
-          p.isHomeworld = false;
-          p.isBackupHomeworld = false;
-          p.homeworldOf = null;
+        for (final p in s.planets) {
+          if (p.homeworldOf == FactionClass.duran) {
+            p.isHomeworld = false;
+            p.isBackupHomeworld = false;
+            p.homeworldOf = null;
+          }
         }
       }
 

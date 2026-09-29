@@ -11,7 +11,6 @@ class Sector {
 
   // Content fields are mutable so the generator can populate them
   bool hasPort;
-  bool hasPlanet;
   String? anomaly;
   int traderCount;
   int duranCount;
@@ -25,7 +24,46 @@ class Sector {
 
   // --- New structured content ---
   Port? port;
-  Planet? planet;
+
+  /// Every world in this sector, up to the universe's `planetsPerSector`.
+  ///
+  /// Was a single `Planet?`. Three worlds per sector is the point: the
+  /// complementarity loop (an Ocean feeding a Lava, an Earth feeding both) only
+  /// feels good when the worlds are adjacent, and hauling organics to the next
+  /// world in your own sector is trivial where hauling across the galaxy is a
+  /// chore you route around.
+  ///
+  /// A world is never removed from this list, only marked `isDestroyed` — see
+  /// [destroy] in `Planet` and the collision roll in the design doc. Removal from
+  /// a list mid-iteration is a bug factory, and a destroyed world still has to be
+  /// drawn, scanned and argued about.
+  List<Planet> planets;
+
+  /// Worlds still fit to colonise — everything in [planets] that is intact.
+  List<Planet> get livingPlanets =>
+      planets.where((p) => !p.isDestroyed).toList(growable: false);
+
+  bool get hasPlanet => planets.isNotEmpty;
+
+  /// The first world in the sector, for UI summaries that do not care which.
+  ///
+  /// **Never use this to find a homeworld or a capital.** A sector can hold a
+  /// faction's capital *and* a frontier world, and `repopulation` and
+  /// `colonist_supply` both need the capital specifically — reading slot 0 would
+  /// silently pick a neighbour. Those go through `RepopulationService
+  /// .homeworldSectors`, which searches every world in every sector.
+  Planet? get primaryPlanet => planets.isEmpty ? null : planets.first;
+
+  /// The world's homeworld if this sector holds one, else null.
+  ///
+  /// A convenience over `planets.firstWhereOrNull((p) => p.isHomeworld)`, which
+  /// is the only correct way to ask the question now.
+  Planet? get homeworld {
+    for (final p in planets) {
+      if (p.isHomeworld) return p;
+    }
+    return null;
+  }
 
   Sector({
     required this.id,
@@ -34,7 +72,6 @@ class Sector {
     required this.y,
     required this.warpRoutes,
     this.hasPort = false,
-    this.hasPlanet = false,
     this.anomaly,
     this.traderCount = 0,
     this.duranCount = 0,
@@ -45,8 +82,11 @@ class Sector {
     this.beaconOwner,
     this.beaconText,
     this.port,
-    this.planet,
-  });
+    List<Planet>? planets,
+    // Legacy single-world constructor argument. Still accepted so the generator
+    // and every test fixture read naturally; folded into [planets] below.
+    Planet? planet,
+  }) : planets = planets ?? (planet == null ? <Planet>[] : <Planet>[planet]);
 
   Map<String, dynamic> toJson() {
     return {
@@ -56,7 +96,6 @@ class Sector {
       'y': y,
       'warpRoutes': warpRoutes,
       'hasPort': hasPort,
-      'hasPlanet': hasPlanet,
       'anomaly': anomaly,
       'traderCount': traderCount,
       'duranCount': duranCount,
@@ -67,7 +106,8 @@ class Sector {
       'beaconOwner': beaconOwner,
       'beaconText': beaconText,
       if (port != null) 'port': port!.toJson(),
-      if (planet != null) 'planet': planet!.toJson(),
+      if (planets.isNotEmpty)
+        'planets': planets.map((p) => p.toJson()).toList(),
     };
   }
 
@@ -80,7 +120,6 @@ class Sector {
       warpRoutes:
           (json['warpRoutes'] as List<dynamic>).map((e) => e as int).toList(),
       hasPort: json['hasPort'] as bool? ?? false,
-      hasPlanet: json['hasPlanet'] as bool? ?? false,
       anomaly: json['anomaly'] as String?,
       traderCount: json['traderCount'] as int? ?? 0,
       duranCount: json['duranCount'] as int? ?? 0,
@@ -93,10 +132,35 @@ class Sector {
       port: json['port'] != null
           ? Port.fromJson(json['port'] as Map<String, dynamic>)
           : null,
-      planet: json['planet'] != null
-          ? Planet.fromJson(json['planet'] as Map<String, dynamic>)
-          : null,
+      planets: _planetsFromJson(json),
     );
+  }
+
+  /// Reads the world list, migrating a pre-multi-planet save.
+  ///
+  /// A legacy sector has a single `planet` object and no `planets` array. It
+  /// loads into a one-element list, which is exactly right: that save *did* have
+  /// one world, and pretending otherwise would lose it.
+  ///
+  /// `hasPlanet` is deliberately ignored rather than trusted. It is a second
+  /// source of truth for something [planets] already answers, and in a legacy
+  /// save it can disagree with `planet` — a sector flagged `hasPlanet: true`
+  /// with a missing `planet` object would otherwise lose its world silently.
+  /// Deriving it from the list is the same lesson as `hasPlanet` becoming a
+  /// getter: one source of truth for a fact that is stored twice.
+  static List<Planet> _planetsFromJson(Map<String, dynamic> json) {
+    final raw = json['planets'];
+    if (raw is List) {
+      return raw
+          .whereType<Map<String, dynamic>>()
+          .map(Planet.fromJson)
+          .toList(growable: true);
+    }
+    final legacy = json['planet'];
+    if (legacy is Map<String, dynamic>) {
+      return <Planet>[Planet.fromJson(legacy)];
+    }
+    return <Planet>[];
   }
 
   static const int _gridSize = 5;

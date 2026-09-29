@@ -78,9 +78,14 @@ class RepopulationService {
     for (final backup in [false, true]) {
       for (final s in sectors) {
         if (homeworlds.length >= FactionClass.values.length) break;
-        final planet = s.planet;
-        if (usable(planet, backup: backup)) {
-          homeworlds.putIfAbsent(planet!.homeworldOf!, () => s.id);
+        // Every world, not slot 0. A capital sitting in slot 2 of a three-world
+        // sector is still the capital, and reading slot 0 would let a random
+        // frontier world stand in for it.
+        for (final planet in s.planets) {
+          if (usable(planet, backup: backup)) {
+            homeworlds.putIfAbsent(planet.homeworldOf!, () => s.id);
+            break;
+          }
         }
       }
     }
@@ -129,7 +134,8 @@ class RepopulationService {
       // Backup-yard tag (soak instrumentation): which capital launched.
       var backupTag = '';
       for (final s in sectors) {
-        if (s.id == sectorId && (s.planet?.isBackupHomeworld ?? false)) {
+        if (s.id == sectorId &&
+            s.planets.any((p) => p.isBackupHomeworld && !p.isDestroyed)) {
           backupTag = ' (backup yards)';
           break;
         }
@@ -167,49 +173,48 @@ class RepopulationService {
     // Live primaries idle their backups (C4b): capitals move back, they
     // don't duplicate. A backup produces only while no controlled,
     // intact primary of the same faction exists.
-    bool livePrimary(FactionClass f) => sectors.any((s) {
-          final p = s.planet;
-          return p != null &&
-              p.isHomeworld &&
-              !p.isBackupHomeworld &&
-              !p.isDestroyed &&
-              p.homeworldOf == f &&
-              (p.owner == null || p.owner == f);
-        });
+    bool livePrimary(FactionClass f) => sectors.any((s) => s.planets.any((p) =>
+        p.isHomeworld &&
+        !p.isBackupHomeworld &&
+        !p.isDestroyed &&
+        p.homeworldOf == f &&
+        (p.owner == null || p.owner == f)));
 
+    // Iterate worlds, not sectors. A sector can hold two capitals for two
+    // factions, or a capital and a frontier world, and both need to be visited.
     for (final s in sectors) {
-      final planet = s.planet;
-      if (planet == null ||
-          !planet.isHomeworld ||
-          planet.isDestroyed ||
-          planet.homeworldOf == null) {
-        continue;
+      for (final planet in s.planets) {
+        if (!planet.isHomeworld ||
+            planet.isDestroyed ||
+            planet.homeworldOf == null) {
+          continue;
+        }
+        final faction = planet.homeworldOf!;
+        final cap = productionCaps[faction];
+        if (cap == null) continue;
+        // Captured yards run cold.
+        if (planet.owner != null && planet.owner != faction) continue;
+        if (planet.isBackupHomeworld && livePrimary(faction)) continue;
+        planet.productionTimer--;
+        if (planet.productionTimer > 0) continue;
+        planet.productionTimer = planet.spawnInterval;
+        if (living(faction) >= cap) continue;
+        var ship = NpcShip.create(
+          faction: faction,
+          shipDef: ShipDefinition
+              .allShips[random.nextInt(ShipDefinition.allShips.length)],
+          currentSectorId: s.id,
+          startingCredits: startingCredits,
+          seed: random.nextInt(1 << 30),
+        );
+        ship = _maybeHero(ship, npcs, spawned, random);
+        spawned.add(ship);
+        GameEventLog.global.system(
+          '[Production] ${planet.name} rolled out ${ship.pilotName} '
+          '(${faction.name}) in sector #${s.id}'
+          '${planet.isBackupHomeworld ? ' (backup yards)' : ''}',
+        );
       }
-      final faction = planet.homeworldOf!;
-      final cap = productionCaps[faction];
-      if (cap == null) continue;
-      // Captured yards run cold.
-      if (planet.owner != null && planet.owner != faction) continue;
-      if (planet.isBackupHomeworld && livePrimary(faction)) continue;
-      planet.productionTimer--;
-      if (planet.productionTimer > 0) continue;
-      planet.productionTimer = planet.spawnInterval;
-      if (living(faction) >= cap) continue;
-      var ship = NpcShip.create(
-        faction: faction,
-        shipDef: ShipDefinition
-            .allShips[random.nextInt(ShipDefinition.allShips.length)],
-        currentSectorId: s.id,
-        startingCredits: startingCredits,
-        seed: random.nextInt(1 << 30),
-      );
-      ship = _maybeHero(ship, npcs, spawned, random);
-      spawned.add(ship);
-      GameEventLog.global.system(
-        '[Production] ${planet.name} rolled out ${ship.pilotName} '
-        '(${faction.name}) in sector #${s.id}'
-        '${planet.isBackupHomeworld ? ' (backup yards)' : ''}',
-      );
     }
     return spawned;
   }

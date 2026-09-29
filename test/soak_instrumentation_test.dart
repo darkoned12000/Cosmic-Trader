@@ -57,7 +57,6 @@ Sector _yard({
       x: 0,
       y: 0,
       warpRoutes: const [],
-      hasPlanet: true,
       planet: Planet(
         name: backup ? 'HW$id (Reserve)' : 'HW$id',
         planetType: 'Terran',
@@ -228,7 +227,7 @@ void main() {
   group('backup-yard launch tags', () {
     test('backup launches are tagged, primaries are not', () {
       final primary = _yard(id: 11, faction: FactionClass.trader);
-      primary.planet!.owner = FactionClass.duran;
+      primary.primaryPlanet!.owner = FactionClass.duran;
       final sectors = [
         primary,
         _yard(id: 12, faction: FactionClass.trader, backup: true),
@@ -245,8 +244,8 @@ void main() {
 
       // Primary live again: untagged launch from 11.
       GameEventLog.global.clear();
-      primary.planet!.owner = FactionClass.trader;
-      primary.planet!.productionTimer = 1;
+      primary.primaryPlanet!.owner = FactionClass.trader;
+      primary.primaryPlanet!.productionTimer = 1;
       final rebuilt = RepopulationService.produce(sectors, built);
       expect(rebuilt.map((n) => n.currentSectorId), [11]);
       expect(

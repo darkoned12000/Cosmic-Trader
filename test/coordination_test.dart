@@ -34,7 +34,6 @@ Sector _outpost({
     x: 0,
     y: 0,
     warpRoutes: const [],
-    hasPlanet: true,
     planet: Planet(
       name: 'Outpost$id',
       planetType: 'Barren',
@@ -655,7 +654,7 @@ void main() {
       final crew = [
         for (var i = 0; i < 4; i++) _npc(FactionClass.pirate, 12, 200 + i),
       ];
-      sectors[1].planet!.productionTimer = 1;
+      sectors[1].primaryPlanet!.productionTimer = 1;
       built = RepopulationService.produce(
         sectors,
         crew,

@@ -144,15 +144,21 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             theme,
             cs,
             Icons.restaurant_rounded,
-            'Upkeep and Starvation',
+            'Colony Supply',
             [
-              'Every colonist eats. A colony of P colonists spends ceil(P ÷ ${Planet.organicsUpkeepDivisor}) organics per tick.',
+              'Every ${Planet.supplyInterval} ticks a colony is billed for the goods its people need: ${(Planet.supplyShareOfOutput * 100).round()}% of one tick\'s own output, drawn at random from minerals, organics or industrial.',
               '',
-              'Upkeep is charged after production lands, so a colony that farms enough organics holds steady rather than spiralling. At 1.0× multipliers a colony breaks even with one tenth of its population on the Organics track. A barren world — a Lava world, for instance — needs far more, or it has to import food.',
+              'It is a share of what the colony makes rather than a fixed amount per colonist, so the bill is the same relative size whether you are running a world of a hundred or a world of two million.',
               '',
-              'A colony that cannot cover its upkeep starts starving. It loses colonists every tick and the planet screen says so in plain terms, along with how many. The loss is limited to ${(Planet.maxStarvationRatePerTick * 100).round()}% of the population per tick, so a large colony bleeds over many minutes rather than vanishing at once — which leaves you room to deliver organics and save it.',
+              'The commodity is drawn at random, and a colony that has none of it falls back to whatever it does have — so a world that cannot make organics is not punished for the draw landing on organics.',
               '',
-              'Reserve colonists eat too. A workforce you never assign is pure cost.',
+              'Goods already produced and waiting in the shipment pool count as goods, so a busy colony is never told it cannot feed itself while its own output sits uncollected.',
+              '',
+              'There is no starvation and no population loss. A colony whose stores are empty simply goes unpaid, and the planet screen says so with the fix: haul goods in, or plant a world beside it that grows what it cannot.',
+              '',
+              'A harsh world **cannot make organics at all** — Lava, Barren, Toxic, Ice and Moon have no organics output whatsoever, matching the classic Volcanic world. Their workforce stepper is locked on that track and says so, because a stepper that accepts colonists onto a dead track looks like a bug.',
+              '',
+              'That is a gap rather than a penalty: a harsh world is not taxed for being harsh, it is structurally unable to feed itself. The two answers are to unload organics you have hauled in, or to plant a world beside it that grows them — and a sector holds up to three.',
             ],
           ),
           const SizedBox(height: 12),
@@ -305,8 +311,8 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
   }
 
   /// Per-type reference row, derived entirely from the model: multipliers, the
-  /// colonist cap, the food bill at that cap, and how many colonists it takes
-  /// to cover that bill. `strongest at` is read off the winning multiplier, so
+  /// colonist cap, and the organics a world must import over its whole 1->6 if
+  /// it cannot grow any. `strongest at` is read off the winning multiplier, so
   /// it cannot claim a world is good at something its numbers do not support.
   List<String> _referenceRows() {
     final rows = <String>[];
@@ -314,8 +320,12 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
       final m = Planet.typeMultipliers[type];
       if (m == null) continue;
       final max = Planet.colonistMaxByType[type] ?? 0;
-      final upkeep = (max / Planet.organicsUpkeepDivisor).ceil();
-      final toFeed = m.organics <= 0 ? upkeep : (upkeep / m.organics).ceil();
+      // A world that cannot make organics at all needs them imported for its
+      // level-up costs. Stated as a figure rather than a multiplier, because
+      // "x0.00" does not tell a player they have a problem to solve.
+      final toFeed = m.organics <= 0
+          ? (Planet.levelUpCosts.fold<int>(0, (a, c) => a + c.requiredOrganics))
+          : 0;
       final best = <String, double>{
         'Minerals': m.minerals,
         'Organics': m.organics,
@@ -333,8 +343,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
         '${m.industrial.toStringAsFixed(1).padLeft(6)}'
         '${m.drones.toStringAsFixed(1).padLeft(6)} |'
         '${_compact(max).padLeft(9)} |'
-        '${_compact(upkeep).padLeft(11)} |'
-        '${_compact(toFeed).padLeft(20)} | '
+        '${toFeed > 0 ? _compact(toFeed) : '-'} | '
         '${tied > 1 ? 'all-round' : winner.key.toLowerCase()}',
       );
     }

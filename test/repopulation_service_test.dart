@@ -29,13 +29,14 @@ Sector _sector(int id) => Sector(
 void main() {
   test('extinct factions respawn at their homeworld', () {
     final homeworld = _sector(7)
-      ..hasPlanet = true
-      ..planet = Planet(
-        name: 'Duran Prime',
-        planetType: 'Terran',
-        isHomeworld: true,
-        homeworldOf: FactionClass.duran,
-      );
+      ..planets = [
+        Planet(
+          name: 'Duran Prime',
+          planetType: 'Terran',
+          isHomeworld: true,
+          homeworldOf: FactionClass.duran,
+        )
+      ];
     final sectors = [homeworld, _sector(8)];
     // Duran wiped out, everyone else healthy.
     final npcs = [
@@ -97,14 +98,15 @@ void main() {
 
   test('captured homeworld blocks regeneration (recapture restores)', () {
     final homeworld = _sector(7)
-      ..hasPlanet = true
-      ..planet = Planet(
-        name: 'Duran Prime',
-        planetType: 'Lava',
-        isHomeworld: true,
-        homeworldOf: FactionClass.duran,
-        owner: FactionClass.vinari, // captured
-      );
+      ..planets = [
+        Planet(
+          name: 'Duran Prime',
+          planetType: 'Lava',
+          isHomeworld: true,
+          homeworldOf: FactionClass.duran,
+          owner: FactionClass.vinari, // captured
+        )
+      ];
     final sectors = [homeworld, _sector(8)];
     final npcs = [
       _ship(FactionClass.duran, destroyed: true),
@@ -125,7 +127,7 @@ void main() {
     );
 
     // Recaptured: spawning resumes at the homeworld.
-    homeworld.planet!.owner = FactionClass.duran;
+    homeworld.primaryPlanet!.owner = FactionClass.duran;
     final spawned = RepopulationService.repopulate(
       sectors,
       npcs,

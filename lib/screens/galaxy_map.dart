@@ -886,7 +886,20 @@ class _GalaxyMapState extends State<GalaxyMap> with TickerProviderStateMixin {
                   _detailRow(cs, 'Port', sector.hasPort ? 'Yes' : 'No'),
                   if (sector.hasPlanet)
                     _detailRow(
-                        cs, 'Planet', sector.planet?.planetType ?? 'Unknown'),
+                      cs,
+                      sector.planets.length == 1
+                          ? 'Planet'
+                          : 'Planets (${sector.livingPlanets.length})',
+                      sector.planets.length == 1
+                          ? sector.planets.first.planetType
+                          // More than one world: the types are the interesting
+                          // fact, and a joined list of three is exactly what
+                          // tells a player this sector is worth a stop.
+                          : sector.livingPlanets
+                              .map((p) => p.planetType)
+                              .toSet()
+                              .join(', '),
+                    ),
                   if (sector.anomaly != null)
                     _detailRow(cs, 'Anomaly', sector.anomaly!),
                 ],

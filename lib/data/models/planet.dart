@@ -1,4 +1,5 @@
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:uuid/uuid.dart';
 
 /// Decodes a persisted faction name, tolerating one that no longer exists.
 ///
@@ -21,6 +22,20 @@ FactionClass? _parseFactionClass(String? name) {
 }
 
 class Planet {
+  /// Stable identity for this world, independent of its sector and its name.
+  ///
+  /// **Required since sectors hold more than one planet.** `(sectorId)` used to
+  /// be the identity, because a sector had exactly one world and nothing keyed a
+  /// planet by name. Both of those are now false: three worlds can share a
+  /// sector, and a world can be renamed, so neither its sector nor its name can
+  /// identify it. This is the one piece of save data that did not exist when the
+  /// design document argued about it and correctly predicted it would be needed.
+  ///
+  /// A legacy save has no id, so `fromJson` **mints one** rather than defaulting
+  /// to a constant: a shared placeholder id would make every old world in the
+  /// galaxy look like the same world to anything that compares ids.
+  String id;
+
   final String name;
   final String planetType;
   final String atmosphere;
@@ -96,6 +111,10 @@ class Planet {
   /// [productionTimer] countdown.
   int constructionTicksRemaining;
 
+  /// Ticks since the last colony supply draw. Reset by [produce] every
+  /// [supplyInterval] ticks.
+  int supplyTimer;
+
   /// The level this build will produce when it finishes. 0 when idle.
   int constructionTarget;
   int requiredMinerals;
@@ -123,6 +142,7 @@ class Planet {
   Planet({
     required this.name,
     required this.planetType,
+    String? id,
     this.atmosphere = 'Unknown',
     this.owner,
     this.isHomeworld = false,
@@ -143,6 +163,7 @@ class Planet {
     this.pendingDrones = 0,
     this.level = 1,
     this.constructionTicksRemaining = 0,
+    this.supplyTimer = 0,
     this.constructionTarget = 0,
     this.requiredMinerals = 500,
     this.requiredOrganics = 300,
@@ -159,7 +180,7 @@ class Planet {
     this.isDestroyed = false,
     this.imagePath,
     this.scanned = false,
-  });
+  }) : id = id ?? const Uuid().v4();
 
   /// Renders the world permanently uninhabitable (C4b planet-killer
   /// path): colony zeroed, homeworld status and ownership cleared,
@@ -211,6 +232,7 @@ class Planet {
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'name': name,
       'planetType': planetType,
       'atmosphere': atmosphere,
@@ -233,6 +255,7 @@ class Planet {
       'pendingDrones': pendingDrones,
       'level': level,
       'constructionTicksRemaining': constructionTicksRemaining,
+      'supplyTimer': supplyTimer,
       'constructionTarget': constructionTarget,
       'requiredMinerals': requiredMinerals,
       'requiredOrganics': requiredOrganics,
@@ -255,6 +278,10 @@ class Planet {
   factory Planet.fromJson(Map<String, dynamic> json) {
     return Planet(
       name: json['name'] as String? ?? 'Unknown Planet',
+      // A pre-id save gets a fresh identity. Defaulting to a shared placeholder
+      // would make every legacy world in the galaxy compare equal, which is
+      // exactly the bug the id exists to prevent.
+      id: json['id'] as String? ?? const Uuid().v4(),
       planetType: json['planetType'] as String? ?? 'Terran',
       atmosphere: json['atmosphere'] as String? ?? 'Unknown',
       owner: _parseFactionClass(json['owner'] as String?),
@@ -282,6 +309,7 @@ class Planet {
       level: json['level'] as int? ?? 1,
       constructionTicksRemaining:
           json['constructionTicksRemaining'] as int? ?? 0,
+      supplyTimer: json['supplyTimer'] as int? ?? 0,
       constructionTarget: json['constructionTarget'] as int? ?? 0,
       requiredMinerals: json['requiredMinerals'] as int? ?? 500,
       requiredOrganics: json['requiredOrganics'] as int? ?? 300,
@@ -448,14 +476,27 @@ class Planet {
   // [produce]; the screen calls the [mineralOutput]-style getters. Same code.
   // ---------------------------------------------------------------------------
 
-  /// Colonists consumed per unit of organics per tick.
+  /// Ticks between colony-supply draws.
   ///
-  /// The design doc originally said 1 per 100. Measured against real production
-  /// that is roughly 1% of output even on the worst organics planet, so upkeep
-  /// could never bite and the "bigger isn't automatically better" tension the
-  /// upkeep exists to create simply could not happen. 1 per 10 makes a colony
-  /// need a real share of its workforce on organics to stand still.
-  static const int organicsUpkeepDivisor = 10;
+  /// Supply is an occasional bill, not a per-tick tax. Every 10 ticks so a
+  /// colony breathes between draws rather than having a slice shaved off its
+  /// output thirty times a minute — a percentage the player watches, rather than
+  /// an event they can see coming.
+  static const int supplyInterval = 10;
+
+  /// Share of one tick's own output that a supply draw consumes.
+  ///
+  /// Expressed against the colony's **own production**, never as a per-capita
+  /// figure, and that is the whole point. A fixed per-colonist rate is either
+  /// trivial for a world of a hundred or ruinous for a world of two million —
+  /// the same trap as the storage floor and the level-scaled colonist cap, met
+  /// for the third time in this model. Deriving it from output holds the burden
+  /// at the same *relative* size at every scale.
+  static const double supplyShareOfOutput = 0.08;
+
+  /// Fallback divisor when a colony's own output is zero, so a world with every
+  /// track empty has a finite, tiny bill rather than dividing by zero.
+  static const int supplyFallbackPerPop = 10;
 
   /// Units of a commodity one colonist produces per tick, before type, world
   /// efficiency and level bonuses.
@@ -476,22 +517,10 @@ class Planet {
   /// daily output and you collected it in batches, and where ignoring a planet
   /// too long genuinely cost you the goods.
   ///
-  /// Upkeep is divided by the same constant, so every ratio in the design (what
-  /// fraction of a workforce must farm to feed the colony, which worlds are
-  /// expensive to run) is unchanged. Only the absolute size of a tick's output
-  /// moves.
+  /// The colony supply draw is scaled by this constant too, so supply and output
+  /// move together and the burden stays a fixed share of what the colony makes
+  /// at every scale.
   static const double baseOutputPerColonist = 0.01;
-
-  /// Ceiling on the share of population that can starve in a single tick.
-  ///
-  /// Without it, a colony with no organics at all would lose everyone at once
-  /// and the death would be unrecoverable. The bleed is deliberately slow
-  /// enough to notice and answer: measured from 10,000 colonists, a colony
-  /// starved and never fed loses 10% in 3 minutes, half in 17, nine tenths in
-  /// an hour, and does not actually reach zero for about 170 minutes. The first
-  /// few minutes are the ones that matter — that is the window in which
-  /// delivering organics saves the colony.
-  static const double maxStarvationRatePerTick = 0.02;
 
   /// Development multiplier by level — how much a colony's *workforce* is worth
   /// per colonist.
@@ -761,6 +790,9 @@ class Planet {
       };
 
   void _setStored(String commodity, int value) {
+    // Clamped at zero: supply can ask for more than a store holds, and a
+    // negative store would read as a nonsense figure on the colony card.
+    value = value < 0 ? 0 : value;
     switch (commodity) {
       case 'minerals':
         storedMinerals = value;
@@ -774,6 +806,7 @@ class Planet {
   }
 
   void _setPending(String commodity, int value) {
+    value = value < 0 ? 0 : value;
     switch (commodity) {
       case 'minerals':
         pendingMinerals = value;
@@ -819,21 +852,71 @@ class Planet {
   int get reserveColonists =>
       (population - assignedColonists).clamp(0, population);
 
-  /// Organics this colony consumes per tick.
-  int get organicsUpkeep => isDestroyed ? 0 : _upkeepUnits(population);
+  /// Commodities a colony can be supplied from, in the order supply falls back
+  /// through them.
+  ///
+  /// Drones are deliberately excluded: they are combat units, not a consumable,
+  /// and a colony that "eats" its drone force is nonsense. The order is fixed
+  /// rather than random so a shortfall drains predictably — the *choice* of
+  /// commodity is the random part, and where the money comes from is not.
+  static const List<String> supplyCommodities = [
+    'minerals',
+    'organics',
+    'industrial',
+  ];
 
-  /// Organics a colony of [population] eats per tick.
+  /// Whether this world can produce [commodity] at all.
   ///
-  /// Multiplied by [baseOutputPerColonist] as well as divided by the divisor,
-  /// so output and upkeep shrink together and a colony that farms its own food
-  /// is still exactly break-even. Scaling both by the same constant leaves every
-  /// ratio in the design untouched; only the absolute size of a tick's output
-  /// moves.
+  /// False for a harsh world's missing track, and the workforce UI locks its
+  /// steppers on it. Assigning colonists to a track whose type multiplier is
+  /// zero produces nothing forever, and a stepper that quietly accepts it looks
+  /// like a bug rather than a dead end.
+  bool canProduce(String commodity) {
+    final m = typeMultipliers[planetType];
+    if (m == null) return true;
+    return switch (commodity) {
+      'minerals' => m.minerals > 0,
+      'organics' => m.organics > 0,
+      'industrial' => m.industrial > 0,
+      'drones' => m.drones > 0,
+      _ => true,
+    };
+  }
+
+  /// Units a supply draw takes right now.
   ///
-  /// (It was originally *divided* by the scale, which inflated upkeep a thousand
-  /// fold and made food cost a million times what a colony could grow.)
-  static int _upkeepUnits(int population) =>
-      ((population / organicsUpkeepDivisor) * baseOutputPerColonist).ceil();
+  /// [supplyShareOfOutput] of one tick's total production, so the bill is the
+  /// same relative size for a colony of a hundred and a colony of two million.
+  /// Falls back to a per-capita figure when every track is empty, so a world
+  /// with nobody working still has a finite bill instead of dividing by zero.
+  int get supplyDraw {
+    if (isDestroyed || population <= 0) return 0;
+    final perTick =
+        mineralOutput + organicOutput + industrialOutput + droneOutput;
+    if (perTick > 0) {
+      return (perTick * supplyShareOfOutput).round().clamp(1, perTick);
+    }
+    return ((population / supplyFallbackPerPop) * baseOutputPerColonist)
+        .ceil()
+        .clamp(1, population);
+  }
+
+  /// True when every consumable store is empty, so a supply draw cannot be paid.
+  ///
+  /// Worth exposing rather than recomputing: the screen needs it to decide
+  /// whether to warn, and the warning is only meaningful when the colony is
+  /// actually drawing on nothing.
+  bool get storesEmpty =>
+      storedMinerals <= 0 &&
+      storedOrganics <= 0 &&
+      storedIndustrial <= 0 &&
+      pendingMinerals <= 0 &&
+      pendingOrganics <= 0 &&
+      pendingIndustrial <= 0;
+
+  /// Ticks until the next supply draw.
+  int get ticksToSupply =>
+      supplyInterval - supplyTimer.toInt().clamp(0, supplyInterval);
 
   /// Advances the colony by one tick: produces into storage, pays upkeep, and
   /// starves the population if it cannot feed itself.
@@ -852,30 +935,27 @@ class Planet {
     final gainedIndustrial = deposit('industrial', industrialOutput);
     final gainedDrones = deposit('drones', droneOutput);
 
-    // Upkeep, then starvation for whatever could not be fed.
+    // Colony supply: an occasional bill, drawn every [supplyInterval] ticks.
     //
-    // Drawn from the working store first and the **shipment pool second**. Food
-    // already produced and waiting to be collected is still food. Charging only
-    // the working store meant a colony could starve on a working store of zero
-    // while tens of thousands of organics sat in the shipment pool — which is
-    // not a rare state, it is exactly what a busy poor-organics world looks
-    // like. Barren worlds are expensive to feed by design; starving them while
-    // their own harvest waited to be collected was not.
-    final upkeep = organicsUpkeep;
-    final fromStore = upkeep <= storedOrganics ? upkeep : storedOrganics;
-    storedOrganics -= fromStore;
-    final stillOwed = upkeep - fromStore;
-    final fromPending =
-        stillOwed <= pendingOrganics ? stillOwed : pendingOrganics;
-    pendingOrganics -= fromPending;
-    final shortfall = upkeep - fromStore - fromPending;
-    final lost = _starvationLoss(shortfall, population);
-
-    if (lost > 0) {
-      population -= lost;
-      // Shrink the workforce with the colony, proportionally, so the tracks
-      // can never sum to more than the population that is left to fill them.
-      _rebalanceWorkforce();
+    // This replaced a per-capita organics upkeep with a starvation bleed, and
+    // both halves of that were wrong for a world that cannot make organics at
+    // all. A harsh type would have bled to death on a mechanic it was designed
+    // to be unable to pay, and the only two answers were "haul organics forever"
+    // and "watch your colonists die", neither of which is a decision.
+    //
+    // The bill is a share of the colony's **own output**, so it is the same
+    // relative size at every scale, and the commodity is drawn at random from
+    // the three consumables. A world short of the drawn one falls back through
+    // [supplyCommodities], so it is paid in whatever it actually has.
+    var supplyPaid = 0;
+    var supplyShortfall = 0;
+    String? supplyFrom;
+    supplyTimer++;
+    if (supplyTimer >= supplyInterval) {
+      supplyTimer = 0;
+      supplyFrom = _drawSupplyCommodity();
+      supplyPaid = _paySupply();
+      supplyShortfall = supplyDraw - supplyPaid;
     }
 
     return PlanetTickReport(
@@ -887,9 +967,9 @@ class Planet {
           gainedOrganics.spilled +
           gainedIndustrial.spilled +
           gainedDrones.spilled,
-      organicsConsumed: fromStore + fromPending,
-      organicsShortfall: shortfall,
-      colonistsLost: lost,
+      supplyPaid: supplyPaid,
+      supplyShortfall: supplyShortfall,
+      supplyFrom: supplyFrom,
       // Only a full *shipment pool* is real loss now. Overflowing the working
       // store is normal, expected operation and is not worth a warning.
       storageOverflowed: gainedMinerals.lost +
@@ -901,62 +981,52 @@ class Planet {
     );
   }
 
-  /// Colonists lost to a tick's unmet upkeep.
+  /// Picks the commodity a supply draw will be charged in.
   ///
-  /// Sized by how much food was missing — a shortfall of one organics feeds
-  /// [organicsUpkeepDivisor] colonists — then capped at
-  /// [maxStarvationRatePerTick] of the population. Note the cap is applied to a
-  /// *remaining* population each tick, so the bleed compounds downward and is
-  /// asymptotic; it never quite reaches zero on its own, which is what the floor
-  /// below is for.
-  ///
-  /// The floor of **one** matters and was a real bug: `floor(population * 0.02)`
-  /// is 0 for any population below 50, so a starving colony shrank to 49 and
-  /// then stopped losing anyone — a permanent zombie world, starving forever,
-  /// that no amount of emergency organics could revive because the tick had
-  /// nothing left to take. Guaranteeing at least one loss per starving tick
-  /// means an un-fed colony always finishes dying, while a large one still only
-  /// bleeds at 2%.
-  int _starvationLoss(int shortfall, int population) {
-    if (shortfall <= 0 || population <= 0) return 0;
-    final cap = (population * maxStarvationRatePerTick).floor();
-    return (shortfall / organicsUpkeepDivisor / baseOutputPerColonist)
-        .floor()
-        .clamp(1, cap < 1 ? 1 : cap);
+  /// Random among the three consumables, salted by the world's name so two
+  /// colonies of identical size do not draw in lockstep. A world that cannot
+  /// make the drawn commodity is not punished for it — the payment falls through
+  /// to what it does have, which is the whole reason this is random rather than
+  /// fixed on organics.
+  String _drawSupplyCommodity() {
+    final options = supplyCommodities;
+    if (options.isEmpty) return 'minerals';
+    final n = (population * 31 + supplyTimer * 17 + name.hashCode) & 0x7fffffff;
+    return options[n % options.length];
   }
 
-  /// Scales the four track counts down so they sum to at most [population].
-  /// Largest-remainder, so the biggest track absorbs the rounding and the four
-  /// tracks never drift to a sum that is off by one from the population.
-  void _rebalanceWorkforce() {
-    if (population <= 0) {
-      colonistsMinerals = 0;
-      colonistsOrganics = 0;
-      colonistsIndustrial = 0;
-      colonistsDrones = 0;
-      return;
+  /// Takes up to [supplyDraw], falling back through [supplyCommodities].
+  ///
+  /// Draws from the working store first and the **shipment pool second**: goods
+  /// already produced and waiting to be collected are still goods, and a world
+  /// whose output is merely queued should not be told it cannot feed itself.
+  /// Returns what was actually taken.
+  int _paySupply() {
+    var owed = supplyDraw;
+    if (owed <= 0) return 0;
+    var paid = 0;
+    for (final c in supplyCommodities) {
+      if (owed <= 0) break;
+      final take = _takeFrom(c, owed);
+      paid += take;
+      owed -= take;
     }
-    final assigned = assignedColonists;
-    if (assigned <= population) return;
+    return paid;
+  }
 
-    final exact = <double>[
-      colonistsMinerals / assigned * population,
-      colonistsOrganics / assigned * population,
-      colonistsIndustrial / assigned * population,
-      colonistsDrones / assigned * population,
-    ];
-    final floors = exact.map((v) => v.floor()).toList();
-    var remainder = population - floors.fold<int>(0, (a, b) => a + b);
-    // Hand the leftover units to the tracks with the biggest fractional part.
-    final order = [0, 1, 2, 3]
-      ..sort((a, b) => (exact[b] - floors[b]).compareTo(exact[a] - floors[a]));
-    for (var i = 0; remainder > 0 && i < order.length; i++, remainder--) {
-      floors[order[i]]++;
-    }
-    colonistsMinerals = floors[0];
-    colonistsOrganics = floors[1];
-    colonistsIndustrial = floors[2];
-    colonistsDrones = floors[3];
+  /// Removes up to [want] of [commodity] from the store, then the pool.
+  int _takeFrom(String commodity, int want) {
+    var owed = want;
+    final store = storedFor(commodity);
+    final fromStore = owed <= store ? owed : store;
+    _setStored(commodity, store - fromStore);
+    owed -= fromStore;
+    if (owed <= 0) return fromStore;
+
+    final pending = pendingFor(commodity);
+    final fromPending = owed <= pending ? owed : pending;
+    _setPending(commodity, pending - fromPending);
+    return fromStore + fromPending;
   }
 
   /// Whether a build can be started: not already building, and able to pay.
@@ -1108,12 +1178,18 @@ class Planet {
     'Jungle': TypeMultipliers(0.6, 1.8, 0.6, 0.8),
     'Desert': TypeMultipliers(1.4, 0.4, 0.8, 1.2),
     'Ocean': TypeMultipliers(0.4, 2.0, 0.6, 0.6),
-    'Ice': TypeMultipliers(0.8, 0.4, 0.6, 0.8),
-    'Lava': TypeMultipliers(2.0, 0.2, 1.4, 1.4),
+    // A harsh world cannot make organics **at all**, matching the classic
+    // Volcanic world which produced none. The previous values were 0.2-0.4 —
+    // small but non-zero — and they only existed to feed a per-capita upkeep
+    // tax this design has dropped. A gap, not a penalty: a harsh type is not
+    // punished for existing, it is structurally incapable of feeding itself, so
+    // the answer is to haul organics in or plant an Ocean beside it.
+    'Ice': TypeMultipliers(0.8, 0.0, 0.6, 0.8),
+    'Lava': TypeMultipliers(2.0, 0.0, 1.4, 1.4),
     'Gas Giant': TypeMultipliers(0.6, 0.6, 0.4, 1.0),
-    'Moon': TypeMultipliers(1.0, 0.4, 0.6, 0.8),
-    'Barren': TypeMultipliers(1.2, 0.2, 0.8, 1.0),
-    'Toxic': TypeMultipliers(1.6, 0.3, 1.0, 1.2),
+    'Moon': TypeMultipliers(1.0, 0.0, 0.6, 0.8),
+    'Barren': TypeMultipliers(1.2, 0.0, 0.8, 1.0),
+    'Toxic': TypeMultipliers(1.6, 0.0, 1.0, 1.2),
   };
 
   static const List<String> allTypes = [
@@ -1322,14 +1398,16 @@ class PlanetTickReport {
   /// shipment pool. Not a loss — it is still owed to the player.
   final int shipmentQueued;
 
-  /// Organics actually charged against upkeep. Less than the upkeep figure when
-  /// the colony could not feed itself.
-  final int organicsConsumed;
+  /// Units actually taken for this tick's colony supply draw. Zero on the nine
+  /// ticks in ten where no draw is due.
+  final int supplyPaid;
 
-  /// Upkeep that went unmet. Non-zero means colonists are dying.
-  final int organicsShortfall;
+  /// Supply the colony could not pay. Non-zero means it is running on nothing
+  /// and needs goods hauled in, or a complement planted beside it.
+  final int supplyShortfall;
 
-  final int colonistsLost;
+  /// The commodity the draw was charged in, or null when no draw was due.
+  final String? supplyFrom;
 
   /// Some output did not fit in storage and was discarded.
   final bool storageOverflowed;
@@ -1344,9 +1422,9 @@ class PlanetTickReport {
     this.industrialGained = 0,
     this.dronesGained = 0,
     this.shipmentQueued = 0,
-    this.organicsConsumed = 0,
-    this.organicsShortfall = 0,
-    this.colonistsLost = 0,
+    this.supplyPaid = 0,
+    this.supplyShortfall = 0,
+    this.supplyFrom,
     this.storageOverflowed = false,
     this.population = 0,
   });
@@ -1357,12 +1435,15 @@ class PlanetTickReport {
       organicsGained > 0 ||
       industrialGained > 0 ||
       dronesGained > 0 ||
-      colonistsLost > 0 ||
+      supplyShortfall > 0 ||
       storageOverflowed;
 
-  /// True when the colony is starving. Worth its own log line: it is the one
-  /// outcome a player must act on rather than merely enjoy.
-  bool get isStarving => organicsShortfall > 0;
+  /// True when a supply draw happened and the colony could not cover it.
+  ///
+  /// Worth its own log line, because it is the one outcome a player must act on
+  /// rather than merely enjoy. It no longer means anyone is dying — starvation is
+  /// gone — it means the colony is drawing on nothing and its stores are empty.
+  bool get isUnsupplied => supplyShortfall > 0;
 }
 
 class LevelUpCost {

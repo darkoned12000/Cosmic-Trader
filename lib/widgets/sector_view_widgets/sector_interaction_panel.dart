@@ -6,6 +6,7 @@ import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
@@ -109,12 +110,15 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       ));
     }
 
-    // Planet in this sector
-    if (s.hasPlanet && s.planet != null) {
-      final p = s.planet!;
+    // Every world in this sector, one entry each. A three-world sector is three
+    // distinct things you can scan and land on, and the entry id carries the
+    // planet's own stable id rather than the sector's — the sector no longer
+    // identifies which world is meant.
+    for (final p in s.planets) {
       entries.add(_SectorEntry(
-        id: 'planet_${s.id}',
+        id: 'planet_${p.id}',
         type: _EntryType.planet,
+        planet: p,
         label: p.name.toUpperCase(),
         detail: p.isHomeworld && p.homeworldOf != null
             ? '${p.planetType}  •  ${p.homeworldOf!.name.toUpperCase()} HOMEWORLD'
@@ -197,7 +201,10 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     }
 
     if (entry.type == _EntryType.planet) {
-      final planet = widget.currentSector.planet;
+      // Resolve by the entry's id, not by position. A tap on the third world in
+      // the list has to open the third world, and "first match" would open the
+      // first one every time.
+      final planet = entry.planet;
       if (planet == null) return;
 
       if (!planet.scanned) {
@@ -854,6 +861,15 @@ class _SectorEntry {
   final IconData icon;
   final NpcShip? npcShip;
 
+  /// The world this entry refers to, for planet entries.
+  ///
+  /// Carried on the entry rather than re-derived from the entry id at the point
+  /// of use. Re-parsing an id string to find an object is the kind of coupling
+  /// that breaks silently the moment the id format changes — and a planet entry's
+  /// id and its world are created together, so there is no reason to separate
+  /// them.
+  final Planet? planet;
+
   const _SectorEntry({
     required this.id,
     required this.type,
@@ -862,5 +878,6 @@ class _SectorEntry {
     required this.color,
     required this.icon,
     this.npcShip,
+    this.planet,
   });
 }

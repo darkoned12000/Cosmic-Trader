@@ -47,17 +47,27 @@ void main() {
     // Fully connected warp graph.
     expect(_reachable(sectors, 1), hasLength(sectors.length));
 
-    // One homeworld per major faction, no collisions.
-    final homeworlds = <int, FactionClass>{};
+    // Exactly one PRIMARY capital per major faction.
+    //
+    // This used to be asserted as "one homeworld per sector", which was only
+    // equivalent while a sector held a single world. Now that a sector can hold
+    // three, two factions' capitals can legitimately share one — so the sector is
+    // the wrong key, and the invariant that actually matters is per *faction*.
+    // Asserting the old shape would have failed on correct generation.
+    final primaries = <FactionClass, int>{};
     for (final s in sectors) {
-      final p = s.planet;
-      if (p != null && p.isHomeworld && p.homeworldOf != null) {
-        expect(homeworlds, isNot(contains(s.id)));
-        homeworlds[s.id] = p.homeworldOf!;
+      for (final p in s.planets) {
+        if (!p.isHomeworld || p.homeworldOf == null) continue;
+        if (p.homeworldOf == FactionClass.pirate) continue;
+        if (p.isBackupHomeworld) continue;
+        expect(primaries, isNot(contains(p.homeworldOf)),
+            reason: '${p.homeworldOf!.name} has two primaries: '
+                '${primaries[p.homeworldOf]} and ${s.id}');
+        primaries[p.homeworldOf!] = s.id;
       }
     }
     expect(
-      homeworlds.values.toSet(),
+      primaries.keys.toSet(),
       containsAll(
           [FactionClass.duran, FactionClass.vinari, FactionClass.trader]),
     );
@@ -121,17 +131,22 @@ void main() {
     final names = <String>[];
     var backups = 0;
     var outposts = 0;
+    // Every world, not slot 0. Reading one world per sector would miss any
+    // homeworld parked in slot 1 or 2, and the backup/outpost counts below
+    // would then be measuring the generator's sector layout instead of its
+    // homeworld logic.
     for (final s in sectors) {
-      final p = s.planet;
-      if (p == null || !p.isHomeworld || p.homeworldOf == null) continue;
-      // No two Kravoses: every homeworld name is distinct.
-      expect(names, isNot(contains(p.name)), reason: p.name);
-      names.add(p.name);
-      if (p.homeworldOf == FactionClass.pirate) {
-        outposts++;
-      } else if (p.isBackupHomeworld) {
-        backups++;
-        expect(p.name, contains('(Reserve)'));
+      for (final p in s.planets) {
+        if (!p.isHomeworld || p.homeworldOf == null) continue;
+        // No two Kravoses: every homeworld name is distinct.
+        expect(names, isNot(contains(p.name)), reason: p.name);
+        names.add(p.name);
+        if (p.homeworldOf == FactionClass.pirate) {
+          outposts++;
+        } else if (p.isBackupHomeworld) {
+          backups++;
+          expect(p.name, contains('(Reserve)'));
+        }
       }
     }
     // One backup per major faction, two pirate outposts.

@@ -25,7 +25,6 @@ Sector _sectorWith(Planet planet) => Sector(
       y: 0,
       warpRoutes: const <int>[],
       planet: planet,
-      hasPlanet: true,
     );
 
 void main() {
@@ -80,24 +79,6 @@ void main() {
       expect(summary.constructionsCompleted, 1);
       expect(summary.isQuiet, isFalse,
           reason: 'a finished citadel is worth a log line even with no output');
-    });
-
-    test('a build still progresses when the colony is starving', () {
-      // The population check that gates production runs after construction on
-      // purpose. A starving colony has already paid for its upgrade; stalling
-      // the build would make a bad run destroy work that was paid for, and the
-      // resources would be gone either way.
-      // Start first, then collapse the population: the gate is only checked when
-      // work begins, which is the whole point of paying up front.
-      final planet = _ready()..startConstruction();
-      expect(planet.isUnderConstruction, isTrue);
-      planet.population = 0;
-      final total = planet.constructionTicksRemaining;
-
-      for (var i = 0; i < total; i++) {
-        PlanetProductionService.process([_sectorWith(planet)]);
-      }
-
       expect(planet.level, 2);
     });
 

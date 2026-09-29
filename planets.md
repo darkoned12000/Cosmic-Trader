@@ -158,10 +158,40 @@ live demand-driven price. The first two are both invented. The `port_trade_view`
 already moves units into `player.cargo` and respects `maxCargo` correctly, so the
 infrastructure existed and the planet screen simply was not using it.
 
-**Resolved:** `Dep` = cargo -> store, `Wdr` = store -> cargo, both free and both
-cargo-bounded, and `_transferPrices` is deleted rather than retuned. A resource
-market is a **third, separate verb** — buy at a port into cargo, fly, `Dep` into
-the store. Drones have no market row and no cash value (below).
+**DONE.** `Dep`/`Wdr` are now `Unload`/`Load` and genuinely move units: unload
+takes goods out of `player.cargo` into the store, load takes them out of the store
+into the hold, both free, both hard-bounded. `maxCargo` is now a constraint
+rather than a stat line — before, a million minerals went into a hold that fits
+fifty. `_transferPrices` is **deleted, not retuned**: it priced goods that no
+longer change hands, and it gave the same minerals three values in one screen
+(5 cr on that row, 42.5 cr on Collect, a live price at a port).
+
+A resource market is a **third, separate verb** — buy at a port into cargo, fly,
+unload. Drones have no market row and no cash value, but they *can* be loaded so
+they can be fielded (below).
+
+Two details worth recording:
+
+- The buttons are gated on "is this possible **at all**", not on the current
+  stepper amount. Gating on the amount made them lie: with 5 free hold slots and
+  a stepper reading 10, a player with 1,000 minerals on a nearby world and a
+  nearly-empty hold saw a dead button and no way to make the one load that would
+  have fitted. The handlers clamp to `min(stored, space)`.
+- The trailing cell that used to read a price now reads `hold N`. A per-unit
+  credit rate on a haul that costs nothing is an invented number, and the hold
+  count is what actually bounds a deposit.
+
+**Why step 3 shipped before step 2, reversing the documented order.** The original
+argument was that hauling is "pointless before step 2 — with no gap to fill there
+is nothing to haul". That was reasoning about *necessity* and it ignored
+*blocking*. Step 2 gives the harsh types zero organics, and a harsh world cannot
+level without organics in its store — so doing step 2 first would make 5 of the 10
+world types **permanently unable to reach level 2** until step 3 landed, and the
+player is actively playing. Hauling first means step 2 is safe to land.
+
+`test/planet_cargo_transfer_test.dart` (8 tests) guards it, including the two
+assertions that could not have existed before: the hold is a hard bound, and a
+deposit needs room on the world.
 
 ### DECISION — harsh types cannot produce a commodity at all
 
@@ -196,14 +226,56 @@ Verified safe: every output is `colonists x mult x scale` and **nothing in the
 model divides by a type multiplier**, so a 0 multiplier yields 0 output rather than
 exploding.
 
-**All upkeep and starvation is removed.** The classic game had no per-colonist
-upkeep mechanic, and with a gap-based design it is both redundant and the specific
-thing that made harsh worlds tedious rather than distinct. `organicsUpkeep`,
-`organicsShortfall`, `colonistsLost` and `isStarving` go from `planet.dart`,
-`planet_production_service.dart`, `planet_screen.dart`, the Planet Guide, and three
-test files. The starvation tests are **deleted rather than inverted** — a guard that
-forbids fixing a defect outlives its reason, and a colony that cannot starve
-cannot regress.
+**Upkeep and starvation are both removed**, and **colony supply** replaces them.
+`organicsUpkeep`, `organicsShortfall`, `colonistsLost` and `isStarving` are gone
+from `planet.dart`, `planet_production_service.dart`, `planet_screen.dart`, the
+Planet Guide, and three test files.
+
+#### Colony supply — DONE
+
+Every `Planet.supplyInterval` (10) ticks a colony is billed for the goods its
+people need: `supplyShareOfOutput` (8%) of **one tick's own output**, drawn at
+random from minerals, organics or industrial.
+
+Three deliberate properties:
+
+- **A share of its own output, not a per-capita rate.** A fixed per-colonist
+  figure is trivial for a world of a hundred and ruinous for a world of two
+  million. This is the third time this model has met that trap (storage floor,
+  level-scaled colonist cap) and the third time the answer was to derive it.
+  Measured across 100 / 10,000 / 1,000,000 populations, the share holds at 8%.
+- **The commodity is drawn at random and paid from whatever the colony has.** A
+  world short of the drawn one falls back through `supplyCommodities`, so the
+  bill can never be made unsatisfiable by a type's multiplier alone. This is what
+  lets a harsh world exist at all: it is not punished when the draw lands on
+  organics, it just pays in minerals.
+- **Goods already produced and waiting in the shipment pool count.** A busy
+  colony is never told it cannot feed itself while its own output sits
+  uncollected.
+
+Drones are excluded — combat units, not a consumable, and a colony that ate its
+own drone force would be nonsense.
+
+**There is no starvation and no population loss.** An unpaid bill is *reported*
+and nothing else happens: the colony card reads "Stores empty — supply unpaid",
+and on a world that cannot make organics it names the actual fix (unload organics,
+or plant a world beside it that grows them). The starvation tests are **deleted
+rather than inverted** — a colony that cannot starve cannot regress, so a test
+forbidding the mechanic's return would outlive its reason. What is asserted
+instead is that an empty colony loses nobody over 500 ticks.
+`test/planet_supply_test.dart` (16 tests) covers the rest.
+
+**The workforce locks itself on a dead track.** A harsh world's organics stepper
+is disabled and the rate column reads "cannot produce". A stepper that accepts
+colonists onto a track yielding nothing looks like a bug, and a player who cannot
+see why their organics stay at zero will assume the mechanic is broken. Remove
+stays enabled even there, so a colony generated before its world became incapable
+is not stuck holding colonists who will never work again.
+
+**Test trap worth recording.** The first supply guards used a *staffed* colony with
+an empty store. It refills itself long before the bill comes due, so the "unpaid
+bill" tests passed while proving nothing. They now use `idleColony()` — no
+workforce at all — which is the only way to actually observe an unpaid bill.
 
 **Honest limit of this decision.** The import demand it creates is *trivial in
 volume*. A full 1 -> 6 needs **65,250 organics, total, ever**, against roughly
@@ -221,6 +293,34 @@ pleasant when the worlds are adjacent: hauling 5,000 organics from sector 12 to
 sector 40 is a chore you route around, and hauling them to the next world **in your
 own sector** is trivial. Multi-planet sectors are not nostalgia for the classic
 game; they are the difference between hauling being a core verb and a nuisance.
+
+**STATUS: DONE** (2026-09-29). `Sector.planets` is a `List<Planet>`, `Planet` has
+a stable `id`, `hasPlanet` is a derived getter, and a legacy single-`planet` save
+migrates into a one-element list. `GameSettings.planetsPerSector` defaults to 3.
+Guarded by `test/multi_planet_sector_test.dart` (17 tests).
+
+Three things the refactor turned up that the design above did not anticipate:
+
+- **`planetDensity` was raised 0.25 -> 0.5.** Measured over 50 sectors, the old
+  density gave 41 empty / 5 single / 1 double / 3 triple — only **8%** of the
+  galaxy held more than one world, so the complementarity loop, the hauler and
+  the torpedo all had almost nowhere to exist. At 0.5 it measures 22/12/9/7: a
+  third of sectors hold multiple worlds, 44% are still empty.
+- **A capital is not always slot 0.** Every service that looked for a homeworld
+  was reading `sector.planet`, which would have silently picked a random
+  frontier world while the real capital sat in slot 2. `Sector.homeworld` and
+  `RepopulationService.homeworldSectors` now search every world. The
+  colonist-supply and yard tests were rewritten to place a capital in slot 2
+  **on purpose**, because "one homeworld per sector" is no longer an invariant
+  and neither is "the first world is the interesting one".
+- **Filling a sector draws more from the shared `Random`,** which shifts every
+  downstream roll. That exposed a latent bug: NPC placement is a per-sector coin
+  flip, and an 8-sector universe could generate **zero ships for all four
+  factions**. A galaxy with no ships in it is broken regardless of size, so
+  generation now guarantees one ship per faction with a nonzero density —
+  the same minimum guarantee already made for ports and port trade characters.
+  Densities still decide how *numerous* a faction is; they no longer get to
+  decide whether one exists.
 
 This also **vindicates a declined review item**. The Third-Party Review section
 declined a stable `planetId` on the grounds that a planet's identity is
@@ -385,9 +485,9 @@ sequence.
 
 | # | Change | Size | Why here |
 |---|---|---|---|
-| 1 | **`Sector.planets` list + per-planet id + save migration** | **Large** | Eight files read `sector.planet`. Every other step touches the same files — doing them on the 1:1 model means doing them twice. |
+| 1 | ~~**`Sector.planets` list + per-planet id + save migration**~~ | **DONE** | Eight files read `sector.planet`. Every other step touches the same files — doing them on the 1:1 model means doing them twice. |
 | 2 | Harsh types -> organics 0; remove upkeep/starvation | Small | Creates the gaps that make step 3 meaningful |
-| 3 | `Dep`/`Wdr` -> cargo; delete `_transferPrices` | Small | The hauler. Pointless before step 2 — with no gap to fill there is nothing to haul |
+| 3 | ~~`Dep`/`Wdr` -> cargo; delete `_transferPrices`~~ | **DONE** | The hauler. **Built before step 2, reversing the documented order** — see below. |
 | 4 | Genesis Torpedo + Atomic Detonator + collision rolls | Medium | Needs 2 and 3: planting a complement is worthless if goods cannot move |
 | 5 | Per-type production caps | Small | Stops a large colony printing without limit |
 | 6 | Per-commodity port counterparties + `(i)` bubbles | Medium | Now answerable, because there is a reason to care which port |
@@ -954,6 +1054,17 @@ the player and the NPCs on one clock.
 A full 1 -> 6 is 385 ticks, about **3.2 hours of actual play** and nothing at all
 while the game is closed.
 
+**The countdown must reach disk before the player can navigate away.** A live
+bug had `startConstruction()` mutate the planet in memory and return without
+saving, so leaving the tab threw the build away: the gate came back armed, at the
+same level, with the resources back in the store, and the timer never moved
+because the tick was advancing a *different* object — `GameTickService` re-reads
+the universe from disk every tick while the screen holds a copy loaded at mount.
+The screen now writes through on every mutating action and re-reads from disk on
+its poll rather than fingerprinting its own objects. The underlying architecture —
+one universe, two object graphs — is still open; see the guard in
+`test/planet_construction_persistence_test.dart`.
+
 `GameSettings.constructionTimeScale` scales this (Instant / Fast / Standard /
 Slow), surfaced in **Settings -> Planet Construction** with the resulting per-tier
 times displayed. The scale is applied **when a build starts**, not when it
@@ -1228,9 +1339,9 @@ already produced and awaiting collection is still food; without that, a poor-
 organics world could starve on an empty store while tens of thousands of organics
 sat unclaimed beside it.
 
-### Upkeep and starvation — IMPLEMENTED, NOW BEING REMOVED
+### Upkeep and starvation — REMOVED
 
-**This entire subsection is superseded.** It is kept only to record what the
+**This entire subsection describes a mechanic that no longer exists.** It is kept only to record what the
 mechanic was and why it is going, so the reasoning is not lost and not reinvented.
 `organicsUpkeep`, the shortfall calc, the starvation bleed, the workforce rebalance
 and their tests all come out. The "all colonies can feed themselves" property the
@@ -1734,6 +1845,15 @@ grants (F) are what make the existing screen honest, and neither is large.
   `test/colonist_supply_test.dart`, `test/port_demand_test.dart`,
   `test/planet_test.dart`, `test/planet_construction_test.dart`,
   `test/planets_knowledge_base_test.dart` — the planet guards
+- `test/planet_supply_test.dart` — colony supply: the share-of-output invariant
+  across three population scales, the cross-commodity fallback, the shipment pool
+  counting as goods, and that an empty colony loses nobody
+- `test/planet_cargo_transfer_test.dart` — the `Unload`/`Load` hauls, including
+  that `maxCargo` is a hard bound and that no credits change hands
+- `test/planet_construction_persistence_test.dart` — a build survives leaving the
+  screen, and its progress is visible without leaving
+- `test/multi_planet_sector_test.dart` — three worlds per sector, the per-planet
+  id, and that every service reads past slot 0
 - `lib/widgets/port_trade_view.dart` — the **correct** cargo pattern to copy for
   planet `Dep`/`Wdr`: it moves units into `player.cargo` and respects `maxCargo`,
   which is exactly what the planet screen does not do

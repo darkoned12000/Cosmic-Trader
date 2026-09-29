@@ -13,6 +13,19 @@ class GameSettings {
   final String rawSeed;
   final double portDensity;
   final double planetDensity;
+
+  /// Most worlds one sector may hold, 1-5.
+  ///
+  /// **A universe-generation setting, deliberately not changeable afterwards**,
+  /// so every sector in a given universe obeys the same physics. Letting a player
+  /// raise the cap mid-game would make collision odds depend on when they
+  /// started playing, which is not a difficulty setting.
+  ///
+  /// Three is the default because the complementarity loop needs it: an Ocean
+  /// feeding organics to a Lava, an Earth feeding industrial to both, all within
+  /// one warp. At 1 the harsh-type design has no answer except buying from a
+  /// port, which makes half the world types a chore.
+  final int planetsPerSector;
   final double traderDensity;
   final double duranDensity;
   final double vinariDensity;
@@ -108,6 +121,7 @@ class GameSettings {
     this.rawSeed = '',
     required this.portDensity,
     required this.planetDensity,
+    this.planetsPerSector = 3,
     required this.traderDensity,
     required this.duranDensity,
     required this.vinariDensity,
@@ -156,7 +170,15 @@ class GameSettings {
       totalSectors: 50,
       seed: 0,
       portDensity: 0.35,
-      planetDensity: 0.25,
+      // 0.5, raised from 0.25 alongside multi-planet sectors. Measured over 50
+      // sectors at the old 0.25: 41 empty / 5 single / 1 double / 3 triple —
+      // only **8%** of the galaxy held more than one world, so the
+      // complementarity loop, the hauler and the Genesis Torpedo all had almost
+      // nowhere to exist. At 0.5 it measures 22/12/9/7: a third of sectors hold
+      // multiple worlds and 44% are still empty, which is the scarcity the
+      // torpedo needs. Existing saves keep whatever they were generated with.
+      planetDensity: 0.5,
+      planetsPerSector: 3,
       traderDensity: 0.12,
       duranDensity: 0.10,
       vinariDensity: 0.08,
@@ -203,6 +225,7 @@ class GameSettings {
     String? rawSeed,
     double? portDensity,
     double? planetDensity,
+    int? planetsPerSector,
     double? traderDensity,
     double? duranDensity,
     double? vinariDensity,
@@ -250,6 +273,7 @@ class GameSettings {
       rawSeed: rawSeed ?? this.rawSeed,
       portDensity: portDensity ?? this.portDensity,
       planetDensity: planetDensity ?? this.planetDensity,
+      planetsPerSector: planetsPerSector ?? this.planetsPerSector,
       traderDensity: traderDensity ?? this.traderDensity,
       duranDensity: duranDensity ?? this.duranDensity,
       vinariDensity: vinariDensity ?? this.vinariDensity,
@@ -352,7 +376,8 @@ class GameSettings {
       seed: json['seed'] as int? ?? 0,
       rawSeed: json['rawSeed'] as String? ?? '',
       portDensity: (json['portDensity'] as num?)?.toDouble() ?? 0.35,
-      planetDensity: (json['planetDensity'] as num?)?.toDouble() ?? 0.25,
+      planetDensity: (json['planetDensity'] as num?)?.toDouble() ?? 0.5,
+      planetsPerSector: (json['planetsPerSector'] as int?) ?? 3,
       traderDensity: (json['traderDensity'] as num?)?.toDouble() ?? 0.12,
       duranDensity: (json['duranDensity'] as num?)?.toDouble() ?? 0.10,
       vinariDensity: (json['vinariDensity'] as num?)?.toDouble() ?? 0.08,
