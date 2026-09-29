@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'dart:async';
 
@@ -32,8 +34,21 @@ class PortTradeView extends StatelessWidget {
   final int? hackBannedUntilEpoch;
   final VoidCallback? onBanExpired;
 
+  /// Units moved per buy/sell tap, or [maxTradeAmount] for "as much as possible".
+  ///
+  /// Lifted to the parent because this widget is `@immutable` with a const
+  /// constructor, so it cannot own the selection itself.
+  final int tradeAmount;
+  final ValueChanged<int> onTradeAmountChanged;
+
+  /// Sentinel for the MAX step. Negative so it cannot collide with a real size.
+  static const int maxTradeAmount = -1;
+  static const List<int> tradeAmountSteps = [1, 10, 100, 1000, maxTradeAmount];
+
   const PortTradeView({
     super.key,
+    this.tradeAmount = 10,
+    required this.onTradeAmountChanged,
     required this.port,
     required this.player,
     required this.onPlayerUpdate,
@@ -93,6 +108,66 @@ class PortTradeView extends StatelessWidget {
 
   double get _ownerFeeRate => port.isOwned && !_isOwner ? port.ownerTaxRate : 0;
 
+  /// This used to be hard-coded to 1 unit per tap, which quietly disabled the
+  /// entire economy's sink. A port's buying capacity is finite and refills over
+  /// 24 hours, which is the intended brake on a colony's output — but absorbing
+  /// even a modest port's stock meant one click per unit, so the brake was
+  /// unreachable in practice and a planet's shipment pool could not be cashed in
+  /// at all. The balance was right; the control surface was not.
+
+  /// How many units a buy of [commodity] could actually move right now,
+  /// after clamping to port stock, cargo space, and the player's credits.
+  int _maxBuyable(String commodity) {
+    if (!port.sells(commodity)) return 0;
+    final price = port
+        .getEffectiveSellPriceFor(commodity, standing: _portStanding)
+        .toInt();
+    if (price <= 0) return 0;
+    final byStock = _remainingSupply(commodity);
+    final bySpace = player.maxCargo - player.cargoUsed;
+    if (bySpace <= 0) return 0;
+    final perUnit = (price * (1 + _ownerFeeRate)).ceil();
+    if (perUnit <= 0) return 0;
+    final byCredits = (player.credits / perUnit).floor();
+    return <int>[byStock, bySpace, byCredits]
+        .reduce((a, b) => a < b ? a : b)
+        .clamp(0, 1 << 30);
+  }
+
+  /// How many units a sell of [commodity] could actually move right now.
+  int _maxSellable(String commodity) {
+    if (!port.buys(commodity)) return 0;
+    if (port
+            .getEffectiveBuyPriceFor(commodity, standing: _portStanding)
+            .toInt() <=
+        0) {
+      return 0;
+    }
+    final byCargo = player.cargo[commodity] ?? 0;
+    final byDemand = _remainingDemand(commodity);
+    return <int>[byCargo, byDemand]
+        .reduce((a, b) => a < b ? a : b)
+        .clamp(0, 1 << 30);
+  }
+
+  /// The tap size for a buy: the selected amount, or the whole remaining
+  /// capacity when the selector is on MAX.
+  int _buySize(String commodity) {
+    final ceiling = _maxBuyable(commodity);
+    if (ceiling <= 0) return 0;
+    return tradeAmount == maxTradeAmount
+        ? ceiling
+        : math.min(tradeAmount, ceiling);
+  }
+
+  int _sellSize(String commodity) {
+    final ceiling = _maxSellable(commodity);
+    if (ceiling <= 0) return 0;
+    return tradeAmount == maxTradeAmount
+        ? ceiling
+        : math.min(tradeAmount, ceiling);
+  }
+
   bool _canBuy(String commodity) {
     if (!port.sells(commodity)) return false;
     if (_remainingSupply(commodity) <= 0) return false;
@@ -125,7 +200,8 @@ class PortTradeView extends StatelessWidget {
     if (_remainingSupply(commodity) <= 0) return;
     AudioService.instance.playSfx('assets/sfx/buy.ogg');
 
-    final amount = 1;
+    final amount = _buySize(commodity);
+    if (amount <= 0) return;
     final newCargo = Map<String, int>.from(player.cargo);
     newCargo[commodity] = (newCargo[commodity] ?? 0) + amount;
 
@@ -170,7 +246,8 @@ class PortTradeView extends StatelessWidget {
     if (_remainingDemand(commodity) <= 0) return;
     AudioService.instance.playSfx('assets/sfx/sell.ogg');
 
-    final amount = 1;
+    final amount = _sellSize(commodity);
+    if (amount <= 0) return;
     final newCargo = Map<String, int>.from(player.cargo);
     newCargo[commodity] = currentQty - amount;
     if (newCargo[commodity] == 0) newCargo.remove(commodity);
@@ -230,6 +307,8 @@ class PortTradeView extends StatelessWidget {
           SizedBox(height: UiScale.spacing(20)),
           _sectionLabel(cs, 'TRADE'),
           SizedBox(height: UiScale.spacing(6)),
+          _amountSelector(cs),
+          SizedBox(height: UiScale.spacing(8)),
           _tradeTable(cs, mono),
           SizedBox(height: UiScale.spacing(24)),
           _sectionLabel(cs, 'EXTRAS'),
@@ -238,6 +317,83 @@ class PortTradeView extends StatelessWidget {
           SizedBox(height: UiScale.spacing(8)),
           _extrasSection(context, cs),
         ],
+      ),
+    );
+  }
+
+  /// Units-per-tap selector.
+  ///
+  /// Without this the port's 24-hour demand cycle is not a difficulty setting,
+  /// it is a wall: a single port holding ~78,000 minerals of demand would take
+  /// 78,000 taps to cash in. The selector is what makes the existing economy
+  /// sink actually reachable.
+  Widget _amountSelector(ColorScheme cs) {
+    return Row(
+      children: [
+        Text(
+          'UNITS/TAP',
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: cs.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
+        const SizedBox(width: 8),
+        for (final step in tradeAmountSteps) ...[
+          _amountChip(
+            cs,
+            step == maxTradeAmount ? 'MAX' : '$step',
+            tradeAmount == step,
+            () => onTradeAmountChanged(step),
+          ),
+          const SizedBox(width: 4),
+        ],
+        const Spacer(),
+        Flexible(
+          child: Text(
+            tradeAmount == maxTradeAmount
+                ? 'sells/buys the full amount available'
+                : 'sells/buys $tradeAmount per tap',
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10,
+              color: cs.onSurface.withValues(alpha: 0.45),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _amountChip(
+      ColorScheme cs, String label, bool selected, VoidCallback onTap) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected
+              ? cs.primary
+              : cs.surfaceContainerHighest.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected ? cs.primary : cs.onSurface.withValues(alpha: 0.15),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color:
+                selected ? cs.onPrimary : cs.onSurface.withValues(alpha: 0.7),
+          ),
+        ),
       ),
     );
   }

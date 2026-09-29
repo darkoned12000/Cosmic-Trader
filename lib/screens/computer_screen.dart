@@ -9,6 +9,7 @@ import 'package:cosmic_trader/screens/economy_report_screen.dart';
 import 'package:cosmic_trader/screens/bounty_board_screen.dart';
 import 'package:cosmic_trader/screens/knowledge_base_screen.dart';
 import 'package:cosmic_trader/screens/ports_knowledge_base.dart';
+import 'package:cosmic_trader/screens/planets_knowledge_base.dart';
 import 'package:cosmic_trader/widgets/banking_widget.dart';
 
 class ComputerScreen extends StatefulWidget {
@@ -112,6 +113,10 @@ class _ComputerScreenState extends State<ComputerScreen> {
         );
       case 'ports_guide':
         return PortsKnowledgeBaseScreen(
+          onBack: () => setState(() => _selectedTool = null),
+        );
+      case 'planets_guide':
+        return PlanetsKnowledgeBaseScreen(
           onBack: () => setState(() => _selectedTool = null),
         );
       case 'faction_rankings':
@@ -295,6 +300,28 @@ class _ComputerScreenState extends State<ComputerScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => setState(() => _selectedTool = 'ports_guide'),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.public_rounded,
+                        color: Colors.greenAccent.shade400, size: 22),
+                  ),
+                  title: const Text('Planet Guide',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                    'Colonies, production, upkeep, and Citadel levels',
+                    style: TextStyle(
+                        color: cs.onSurface.withValues(alpha: 0.6),
+                        fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => setState(() => _selectedTool = 'planets_guide'),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 ListTile(

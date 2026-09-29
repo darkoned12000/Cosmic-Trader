@@ -78,19 +78,33 @@ class StatBar extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: cs.onSurface.withValues(alpha: 0.6),
-                    fontSize: 11,
+                // Both sides flex. They were both natural width, so any value
+                // longer than the remaining space — "9.0K / 25.0K" against a
+                // long label — overflowed the row by ~10px at 430px. Found by
+                // rendering the planet screen on a phone, not by reading this.
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurface.withValues(alpha: 0.6),
+                      fontSize: 11,
+                    ),
                   ),
                 ),
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    color: color,
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: color,
+                    ),
                   ),
                 ),
               ],

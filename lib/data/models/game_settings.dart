@@ -64,6 +64,16 @@ class GameSettings {
   /// Animation speed multiplier for tactical display effects (ping ripple, data scroll).
   final double tacticalDisplaySpeed;
 
+  /// Multiplier on planet construction times. 1.0 is the designed pace, 0.5
+  /// halves every build, and 0 makes levelling instant for players who would
+  /// rather not wait at all.
+  ///
+  /// Applied when a build **starts**, not when it finishes, so changing the
+  /// setting mid-build does not retroactively shorten work already paid for.
+  /// This is a gameplay preference rather than a universe parameter, but it
+  /// lives here because [GameSettings] is the one persisted settings object.
+  final double constructionTimeScale;
+
   // --- Video ---
   final bool fullscreen;
   final double windowScale;
@@ -125,6 +135,7 @@ class GameSettings {
     this.pirateDensity = 0.05,
     this.npcStartingCredits = 10000,
     this.tacticalDisplaySpeed = 0.5,
+    this.constructionTimeScale = 1.0,
     this.fullscreen = false,
     this.windowScale = 0.75,
     this.resolutionWidth = 1280,
@@ -165,6 +176,7 @@ class GameSettings {
       pirateDensity: 0.05,
       npcStartingCredits: 10000,
       tacticalDisplaySpeed: 0.5,
+      constructionTimeScale: 1.0,
       fullscreen: false,
       windowScale: 0.75,
       resolutionWidth: 1280,
@@ -218,6 +230,7 @@ class GameSettings {
     double? pirateDensity,
     int? npcStartingCredits,
     double? tacticalDisplaySpeed,
+    double? constructionTimeScale,
     bool? fullscreen,
     double? windowScale,
     int? resolutionWidth,
@@ -266,6 +279,8 @@ class GameSettings {
           deleteAllPlayersOnRegen ?? this.deleteAllPlayersOnRegen,
       unlockAllShips: unlockAllShips ?? this.unlockAllShips,
       tacticalDisplaySpeed: tacticalDisplaySpeed ?? this.tacticalDisplaySpeed,
+      constructionTimeScale:
+          constructionTimeScale ?? this.constructionTimeScale,
       fullscreen: fullscreen ?? this.fullscreen,
       windowScale: windowScale ?? this.windowScale,
       resolutionWidth: resolutionWidth ?? this.resolutionWidth,

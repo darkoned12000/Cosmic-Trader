@@ -55,6 +55,22 @@ class PortsKnowledgeBaseScreen extends StatelessWidget {
           _sectionCard(
             theme,
             cs,
+            Icons.storefront_rounded,
+            'How Much a Port Will Buy',
+            [
+              'A port will not buy an unlimited amount of anything. Each port has a fixed demand for each commodity it trades, and that demand refills over a 24-hour cycle — so the amount you can sell to any one port per day is capped.',
+              '',
+              'A planet can produce far more than the galaxy can absorb. That is deliberate: production is rarely the limit, the market is. Converting a large shipment into credits means finding ports that still have demand and that you can reach.',
+              '',
+              'Upgrading a port\'s storage raises what it is willing to buy — 1.5x per level, up to level 10. That is the main way to grow into a larger colony: you get richer by making somewhere willing to buy more, not by producing more. Storage upgrades start at 100,000 credits and double with each level.',
+              '',
+              'The UNITS/TAP control above the trade table sets how much each buy or sell moves. MAX sells everything the port will still take, which is usually what you want after a big delivery.',
+            ],
+          ),
+          const SizedBox(height: 12),
+          _sectionCard(
+            theme,
+            cs,
             Icons.science_rounded,
             'Hacking Mini-Game',
             [

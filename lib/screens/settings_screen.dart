@@ -6,6 +6,7 @@ import 'package:cosmic_trader/core/theme_service.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
+import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/widgets/audio_settings_widget.dart';
 import 'package:cosmic_trader/widgets/automation_console_widget.dart';
@@ -115,6 +116,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _resolutionWidth = 1280;
   int _resolutionHeight = 720;
   double _animationSpeed = 0.5;
+  double _constructionTimeScale = 1.0;
   String _fontFamily = '';
   double _fontSize = 14;
   double _uiScale = 1.0;
@@ -186,6 +188,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _resolutionWidth = s.resolutionWidth;
     _resolutionHeight = s.resolutionHeight;
     _animationSpeed = s.tacticalDisplaySpeed;
+    _constructionTimeScale = s.constructionTimeScale;
     _fontFamily = s.fontFamily;
     _fontSize = s.fontSize;
     _uiScale = s.uiScale;
@@ -279,6 +282,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       initHolds: int.tryParse(_initHoldsController.text) ?? 50,
       initDrones: int.tryParse(_initDronesController.text) ?? 100,
       tacticalDisplaySpeed: _animationSpeed,
+      constructionTimeScale: _constructionTimeScale,
       fullscreen: _fullscreen,
       windowScale: 0.75,
       resolutionWidth: _resolutionWidth,
@@ -593,6 +597,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
+          // ==================== PLANET CONSTRUCTION ====================
+          _buildConstructionSection(theme, cs),
+
+          const SizedBox(height: 12),
+
           // ==================== VIDEO SETTINGS ====================
           VideoSettingsWidget(
             fullscreen: _fullscreen,
@@ -797,6 +806,124 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ---------------------------------------------------------------------------
   // Theme widgets
   // ---------------------------------------------------------------------------
+
+  /// Construction-speed presets.
+  ///
+  /// Presets rather than a free slider, because the useful choices are coarse —
+  /// "I want to grind this out" and "I do not want to wait" — and because a
+  /// continuous slider would need a live readout to be meaningful at all.
+  static const List<({double value, String label})> _constructionPresets = [
+    (value: 0.0, label: 'Instant'),
+    (value: 0.5, label: 'Fast (half)'),
+    (value: 1.0, label: 'Standard'),
+    (value: 2.0, label: 'Slow (double)'),
+  ];
+
+  /// Construction-speed preference, with the resulting per-tier times shown.
+  ///
+  /// The tier times are **displayed** rather than hidden behind the chips,
+  /// because a bare "Standard" tells the player nothing about whether a Citadel
+  /// is twenty minutes or two hours. The list is generated from
+  /// [Planet.levelConstructionTicks], so it cannot drift from the model — the
+  /// same rule the Planet Guide's tables follow.
+  ///
+  /// The explanatory note is here rather than on the planet screen because this
+  /// is the one place a player goes looking for "why did my build not finish
+  /// while I was away", and the answer is a design decision rather than a bug.
+  Widget _buildConstructionSection(ThemeData theme, ColorScheme cs) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Theme(
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          leading: Icon(Icons.construction_rounded, color: cs.primary),
+          title: Text('Planet Construction',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final opt in _constructionPresets)
+                        ChoiceChip(
+                          label: Text(opt.label),
+                          selected: (_constructionTimeScale - opt.value).abs() <
+                              0.001,
+                          onSelected: (_) => setState(
+                              () => _constructionTimeScale = opt.value),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  for (final l in [1, 2, 3, 4, 5])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 132,
+                            child: Text(
+                              '${Planet.levelTitles[l - 1]} → ${Planet.levelTitles[l]}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: cs.onSurface.withValues(alpha: 0.8),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              _constructionTimeFor(l),
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Builds advance one step per game tick, so they only move '
+                    'while you are playing — the same clock the galaxy runs on. '
+                    'A build already underway keeps the length it started with.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: cs.onSurface.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Time to build the step out of [fromLevel] at the current preference.
+  String _constructionTimeFor(int fromLevel) {
+    final ticks = Planet.constructionLengthFor(fromLevel,
+        timeScale: _constructionTimeScale);
+    if (ticks <= 1) return 'instant';
+    const secondsPerTick = 30;
+    final minutes = (ticks * secondsPerTick / 60).round();
+    if (minutes < 1) return 'under a minute';
+    if (minutes < 60) return '$minutes min';
+    final hours = minutes / 60;
+    return '${hours.toStringAsFixed(hours < 2 ? 1 : 0)} hr';
+  }
 
   Widget _themePicker(ColorScheme cs, ThemeData theme) {
     final currentSeed = ThemeService.colorNotifier.value;

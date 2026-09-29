@@ -112,7 +112,7 @@ class EconomyMetrics extends ChangeNotifier {
   }
 
   /// Records combat/raid spoils (kill loot). Tracked separately from
-  /// trade volume so fighter income doesn't masquerade as market flow.
+  /// trade volume so drone income doesn't masquerade as market flow.
   void recordLoot({
     required String actorFaction,
     required int credits,

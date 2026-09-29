@@ -15,6 +15,7 @@ import 'package:cosmic_trader/services/game_event_log.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/repopulation_service.dart';
+import 'package:cosmic_trader/services/planet_production_service.dart';
 import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
@@ -306,6 +307,25 @@ class GameTickService {
           npcs.addAll(built);
           log.system('${built.length} ship(s) rolled out from homeworld yards');
         }
+      });
+
+      // Colony production: the planet screen has always displayed a per-tick
+      // rate, and until this existed nothing applied it — the only code that
+      // wrote a planet's stores was the credits-based transfer in the screen.
+      DevProfiler.instance.trace('tick_colony_production', () {
+        final colonies = PlanetProductionService.process(sectors);
+        if (!colonies.isQuiet) {
+          log.system(
+            'Colonies: +${colonies.minerals} minerals, '
+            '+${colonies.organics} organics, '
+            '+${colonies.industrial} industrial, '
+            '+${colonies.drones} drones'
+            '${colonies.starving > 0 ? ' · ${colonies.starving} starving' : ''}',
+          );
+        }
+        // No explicit save needed for a finished upgrade: this same pass ends
+        // with a whole-universe write, so a level granted here is durable on
+        // exactly the same footing as a tick of production.
       });
 
       // Combat census (C5): population-over-time for the soak review.

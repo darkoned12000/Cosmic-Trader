@@ -29,6 +29,11 @@ class PortScreen extends StatefulWidget {
 }
 
 class _PortScreenState extends State<PortScreen> {
+  /// Units moved per buy/sell tap. Owned here because [PortTradeView] is
+  /// `@immutable`; see the field's doc there for why 1-unit taps were a
+  /// balance bug rather than a UX preference.
+  int _tradeAmount = 10;
+
   List<Sector> _allSectors = [];
   bool _loading = true;
   bool _showHacking = false;
@@ -588,6 +593,8 @@ class _PortScreenState extends State<PortScreen> {
     }
 
     return PortTradeView(
+      tradeAmount: _tradeAmount,
+      onTradeAmountChanged: (v) => setState(() => _tradeAmount = v),
       port: _port!,
       player: widget.player,
       onPlayerUpdate: widget.onPlayerUpdate,

@@ -619,6 +619,7 @@ class _GameShellState extends State<GameShell> {
                       key: _planetKey,
                       player: _player,
                       onPlayerUpdate: _updatePlayer,
+                      constructionTimeScale: _settings.constructionTimeScale,
                     ),
                     SettingsScreen(
                       key: ValueKey('settings_${_settings.seed}'),
@@ -886,6 +887,8 @@ class _GameShellState extends State<GameShell> {
                             key: _planetKey,
                             player: _player,
                             onPlayerUpdate: _updatePlayer,
+                            constructionTimeScale:
+                                _settings.constructionTimeScale,
                           ),
                           SettingsScreen(
                             key: ValueKey('settings_${_settings.seed}'),
