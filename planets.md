@@ -594,6 +594,68 @@ is a perfectly good discovery-risk score. Our generator **does** produce 1-warp
 dead-ends, but only as a side effect of the orphan-repair phase. If the strategy
 depends on them, that should be intentional.
 
+### The Production Triangle
+
+Every production figure in the game comes from **one rule**, reconstructed from
+the TradeWars 2002 planet tables rather than transcribed from them.
+
+For each product a world can make:
+
+- `colonistsPerUnit` — colonists needed per unit per day
+- `maxColonists` — the most that track can ever hold
+- **`optimumColonists` = half the maximum.** Always. It is computed, never
+  typed, so it cannot drift out of step with the maximum it is half of.
+
+```
+output/day =  c <= optimum  ?  c / ratio
+                         :  (max - c) / ratio
+```
+
+Output **rises to a peak and then falls**, reaching zero at the maximum. So 50,000
+colonists on a Volcanic ore track makes 50,000/day and 55,000 makes 45,000/day —
+the published worked example, reproduced exactly. Staffing past the optimum does
+not merely stop helping, it **destroys output you already had**. The peak is a
+thing to find and then a thing to accidentally overshoot, and that is the entire
+decision surface.
+
+**Drones are derived, not staffed.** There is no drone track to assign colonists
+to:
+
+```
+fighters/day = (ore + organics + equipment output per day) / colonistsPerDrone
+```
+
+The consequence is the point: **the fighter ceiling is not a separate constant.**
+Volcanic's 1,002 fighters/day is simply (50,000 ore + 100 equipment) / 50. One
+rule produces both the production caps and the cap on fleets, so nobody can build
+an invincible planet by ignoring production — and overstaffing every track past
+its optimum drives total output, and therefore the fleet, toward zero.
+
+### Why the tables are a rule and not a set of numbers
+
+Every published figure is *derived* from two inputs, so the tables can be checked
+against each other without a single transcribed output:
+
+| class | per-product ratios | max colonists | reproduced fighter figure |
+|---|---|---|---|
+| M Earth | 3 / 7 / 13 | 30,000 | 8,295 / 10 = **829** |
+| K Desert | 2 / 100 / 500 | 40,000 | 10,240 / 15 = **682** |
+| O Ocean | 20 / 2 / 100 | 200,000 | 56,000 / 15 = **3,733** |
+| L Mountain | 2 / 5 / 20 | 40,000 | 15,000 / 12 = **1,250** |
+| C Glacial | 50 / 100 / 500 | 100,000 | 1,600 / 25 = **64** |
+| H Volcanic | 1 / N-A / 500 | 100,000 | 50,100 / 50 = **1,002** |
+| U Vaporous | N-A / N-A / N-A | 3,000 | 0 = **0** |
+
+All seven reproduce their published figure exactly, with a per-class
+`colonistsPerDrone` of 10 / 15 / 15 / 12 / 25 / 50 / n-a. That is not a
+coincidence of transcription — it is why the divisor can be a per-class constant
+rather than a hardcoded fighter cap, and it is what makes the four **derived**
+world types (Jungle, Moon, Barren, Toxic — no TW equivalent) checkable by the
+same relationships as the seven sourced ones. `test/planet_class_test.dart` holds
+it: changing one mistyped digit in the Volcanic table breaks four independent
+assertions, because a wrong input surfaces as a broken *relationship* rather than
+as a plausible number.
+
 ### Revised order of work
 
 Every step makes the next one worth building, which is the entire argument for the
@@ -605,7 +667,7 @@ sequence.
 | 2 | Harsh types -> organics 0; remove upkeep/starvation | Small | Creates the gaps that make step 3 meaningful |
 | 3 | ~~`Dep`/`Wdr` -> cargo; delete `_transferPrices`~~ | **DONE** | The hauler. **Built before step 2, reversing the documented order** — see below. |
 | 4 | ~~Genesis Torpedo + Atomic Detonator + collision rolls~~ | **DONE** | Needs 2 and 3: planting a complement is worthless if goods cannot move |
-| 5 | Per-type production caps | Small | Stops a large colony printing without limit |
+| 5 | ~~Per-type production caps~~ | **DONE (model)** | Stops a large colony printing without limit. `planet_classes.dart` — see *The Production Triangle* below |
 | 6 | Per-commodity port counterparties + `(i)` bubbles | Medium | Now answerable, because there is a reason to care which port |
 | 7 | The exchange | Medium | **Last, deliberately** — see above |
 | 8 | Port growth on unowned ports | Medium | The most likely fix for the absorption overshoot |
