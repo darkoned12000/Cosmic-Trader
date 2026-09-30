@@ -90,6 +90,11 @@ class _GameShellState extends State<GameShell> {
     // Mark the tick service with the FedSpace boundary after settings load
     _loadSettings().then((_) {
       _tickService.fedSpaceEnd = _settings.fedSpaceEnd;
+      // The gravity check needs the same cap the sector panel launches against.
+      // Set here, on every settings load, so a universe regenerated with a
+      // different `planetsPerSector` updates the tick rather than leaving it on
+      // the value the previous galaxy was built with.
+      _tickService.worldCap = _settings.planetsPerSector;
       NpcAiService.safeZoneEnd = _settings.fedSpaceEnd;
       Port.safeZoneEnd = _settings.fedSpaceEnd;
     });

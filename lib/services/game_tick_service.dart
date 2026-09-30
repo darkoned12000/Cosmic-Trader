@@ -16,6 +16,7 @@ import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/repopulation_service.dart';
 import 'package:cosmic_trader/services/planet_production_service.dart';
+import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
 
@@ -48,6 +49,15 @@ class GameTickService {
   /// Shared RNG for per-tick price drift (B2). Random walk, not seeded —
   /// live markets shouldn't replay identically.
   static final math.Random _tickRng = math.Random();
+
+  /// Worlds a sector may hold before it counts as over-stacked.
+  ///
+  /// Set once by the shell from `GameSettings.planetsPerSector` rather than read
+  /// from disk each tick: the tick runs every 30 seconds, and the cap is fixed
+  /// at universe creation, so re-reading it would be 2,880 identical disk reads
+  /// a session to learn something that cannot change. A universe regenerated
+  /// with a new cap re-sets it, because the shell reloads settings.
+  int worldCap = 3;
 
   static void lockNpc(String npcId) => _lockedNpcIds.add(npcId);
   static void unlockNpc(String npcId) => _lockedNpcIds.remove(npcId);
@@ -328,6 +338,26 @@ class GameTickService {
         // exactly the same footing as a tick of production.
       });
 
+      // Gravity checks on over-stacked systems. A sector's 24-hour clock starts
+      // the moment it goes over the cap, so this is a due check rather than a
+      // daily alarm, and calling it every pass is just arithmetic on a
+      // timestamp.
+      //
+      // This is the call that was missing. The rule existed, was unit-tested,
+      // and was never reached from anywhere in the app — so over-stacking
+      // warned about a hazard that could not happen. A rule with no clock
+      // attached to it is not a hazard, and its tests were measuring the rule
+      // rather than the game.
+      int collided = 0;
+      DevProfiler.instance.trace('tick_gravity_checks', () {
+        collided = WorldForging.runDueCollisions(
+          sectors,
+          worldCap,
+          nowMs,
+          _tickRng,
+        );
+      });
+
       // Combat census (C5): population-over-time for the soak review.
       // Capped ring — the steady state costs one count per tick.
       DevProfiler.instance.trace('tick_census', () {
@@ -455,8 +485,12 @@ class GameTickService {
       await DevProfiler.instance
           .traceAsync('tick_save_npcs', () => NpcStorage().saveAll(npcs));
 
-      // Save sectors if ports were regenerated or NPCs mutated them
-      if (portsRegened > 0 || processed > 0) {
+      // Save sectors if ports were regenerated, NPCs mutated them, or a
+      // gravity check destroyed worlds. Without the third term a collision would
+      // happen in this tick's object graph, be logged as having happened, and be
+      // silently resurrected on the next load — the player is told they lost two
+      // worlds and wakes up to find both of them.
+      if (portsRegened > 0 || processed > 0 || collided > 0) {
         await DevProfiler.instance.traceAsync('tick_save_sectors',
             () => UniverseStorage.instance.saveUniverse(sectors));
       }

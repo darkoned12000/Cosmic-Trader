@@ -52,6 +52,7 @@ void main() {
         sector: sector,
         cap: 3,
         rng: math.Random(1),
+        nowMs: 0,
       );
 
       expect(world, isNotNull);
@@ -74,6 +75,7 @@ void main() {
           sector: sector,
           cap: 3,
           rng: math.Random(seed),
+          nowMs: 0,
         );
         expect(w!.planetType, isIn(Planet.allTypes));
         types.add(w.planetType);
@@ -91,6 +93,7 @@ void main() {
         sector: sector,
         cap: 3,
         rng: math.Random(1),
+        nowMs: 0,
       );
       expect(result, LaunchResult.noTorpedoes);
       expect(world, isNull);
@@ -111,6 +114,7 @@ void main() {
         sector: sector,
         cap: 3,
         rng: math.Random(1),
+        nowMs: 0,
       );
       expect(result, LaunchResult.launched);
       expect(world, isNotNull);
@@ -128,6 +132,7 @@ void main() {
           sector: sector,
           cap: 10,
           rng: math.Random(seed),
+          nowMs: 0,
         );
         expect(taken.contains(w!.name), isFalse,
             reason: '${w.name} duplicates a world already in the sector');
@@ -146,6 +151,7 @@ void main() {
         sector: sector,
         cap: 3,
         rng: math.Random(2),
+        nowMs: 0,
       );
       expect(result, LaunchResult.wouldOverstack);
       expect(world, isNotNull);
@@ -237,6 +243,7 @@ void main() {
         sector: sector,
         cap: 3,
         rng: math.Random(7),
+        nowMs: 0,
       );
       expect(world, isNotNull);
       expect(sector.worldSlotsUsed, 3);
@@ -283,19 +290,193 @@ void main() {
     });
   });
 
-  group('the daily sweep', () {
-    test('only touches over-stacked sectors', () {
-      final safe = orbit(worlds: 2);
-      final doomed = orbit(worlds: 5, id: 8);
-      var anyDestroyed = 0;
-      for (var seed = 0; seed < 3000; seed++) {
-        anyDestroyed += WorldForging.runDailyCollisions(
-            [safe, doomed], 3, math.Random(seed));
+  group('the gravity clock', () {
+    // The clock is the whole mechanic. It starts the moment a sector goes over
+    // the cap and a check falls due 24 hours later, so these assert *when* a
+    // sector is eligible, not merely that it can lose a world.
+    const day = 24 * 60 * 60 * 1000;
+
+    test('nothing is due the moment a sector goes over', () {
+      final sector = orbit(worlds: 4);
+      final t0 = 1000000;
+      sector.reconcileStability(3, t0);
+      expect(sector.destabilisedAtMs, t0,
+          reason: 'the clock starts at the crossing, not before it');
+
+      var destroyed = 0;
+      for (var i = 0; i < 200; i++) {
+        destroyed += WorldForging.runDueCollisions(
+            [sector], 3, t0 + i * 1000, math.Random(i));
       }
-      expect(safe.livingPlanets, hasLength(2),
-          reason: 'a legal system was never touched');
-      expect(anyDestroyed, greaterThan(0),
-          reason: '3000 days of a 5-world system and nothing ever collided');
+      expect(destroyed, 0,
+          reason: '2000 seconds is not a day; the sector has barely aged');
+    });
+
+    test('a check falls due once the clock runs out', () {
+      final sector = orbit(worlds: 4);
+      final t0 = 1000000;
+      sector.reconcileStability(3, t0);
+      // One millisecond early is still early. The boundary matters: a sector
+      // that is due at `t0 + day` and not at `t0 + day - 1` is exactly a clock.
+      expect(
+        WorldForging.runDueCollisions(
+            [sector], 3, t0 + day - 1, math.Random(1)),
+        0,
+        reason: 'a millisecond early is still early',
+      );
+      // A fixed roll is unreliable on its own, so drive many sectors through
+      // their due moment rather than depending on one outcome.
+      var destroyed = 0;
+      for (var i = 0; i < 400; i++) {
+        final s = orbit(worlds: 4, id: 100 + i);
+        s.reconcileStability(3, t0);
+        destroyed +=
+            WorldForging.runDueCollisions([s], 3, t0 + day, math.Random(i));
+      }
+      expect(destroyed, greaterThan(0),
+          reason: '400 sectors all reached their due moment and nothing ever '
+              'collided');
+    });
+
+    test('the clock is per sector, not per galaxy', () {
+      // Two sectors over-stacked at different times. Checking a shared daily
+      // wall-clock hour would destroy the younger one's worlds hours early.
+      final old = orbit(worlds: 5, id: 20);
+      final young = orbit(worlds: 5, id: 21);
+      final t0 = 1000000;
+      old.reconcileStability(3, t0);
+      young.reconcileStability(3, t0 + day - 60000);
+
+      // Many *distinct* sectors, one roll each. My first version reused one
+      // sector 600 times at the same `nowMs`, and since a roll re-arms the clock
+      // to that same instant, every call after the first found itself 0 ms past
+      // its own re-arm and was never due. The test was measuring one roll, not
+      // six hundred.
+      var oldLost = 0;
+      var youngLost = 0;
+      for (var i = 0; i < 600; i++) {
+        final a = orbit(worlds: 5, id: 1000 + i);
+        final b = orbit(worlds: 5, id: 2000 + i);
+        a.reconcileStability(3, t0);
+        b.reconcileStability(3, t0 + day - 60000);
+        oldLost +=
+            WorldForging.runDueCollisions([a], 3, t0 + day, math.Random(i));
+        youngLost +=
+            WorldForging.runDueCollisions([b], 3, t0 + day, math.Random(i));
+      }
+      expect(oldLost, greaterThan(0),
+          reason: '600 sectors all reached their due moment and not one '
+              'collided');
+      expect(youngLost, 0,
+          reason: 'the younger sectors are a minute short of due and must not '
+              'be rolled - a global daily alarm would have hit all of them');
+    });
+
+    test('a surviving check re-arms, so the hazard is daily not one-shot', () {
+      // Asserted on *eligibility*, not on waiting for a dice hit, because "it
+      // rolled and nothing happened" and "it was never due" are the same
+      // observation. One-shot would be a trap door rather than a hazard: survive
+      // the first check and the system is safe forever while it stays
+      // over-stacked, and the only thing making over-stacking a decision is that
+      // it stays a decision tomorrow.
+      final sector = orbit(worlds: 5);
+      final t0 = 1000000;
+      sector.reconcileStability(3, t0);
+
+      WorldForging.runDueCollisions([sector], 3, t0 + day, math.Random(1));
+      expect(sector.destabilisedAtMs, t0 + day,
+          reason: 'a check re-arms from the moment it came due, not from the '
+              'tick interval afterwards');
+
+      // A millisecond later it is not due again, so the stamp must not move.
+      WorldForging.runDueCollisions([sector], 3, t0 + day + 1, math.Random(2));
+      expect(sector.destabilisedAtMs, t0 + day,
+          reason: 'still inside the new day');
+
+      // Exactly one day later it is due again. Proven by the stamp moving, which
+      // happens on every due check whether or not the dice land.
+      WorldForging.runDueCollisions([sector], 3, t0 + 2 * day, math.Random(3));
+      expect(sector.destabilisedAtMs, t0 + 2 * day,
+          reason: 'a surviving check must schedule the next one, or the hazard '
+              'is one-shot and an over-stacked system is eventually safe');
+    });
+
+    test('clearing the sector below the cap cancels the clock', () {
+      // The detonator is the answer to over-stacking, so a player who uses one
+      // must not still be rolling hazard an hour later.
+      final sector = orbit(worlds: 4);
+      final t0 = 1000000;
+      sector.reconcileStability(3, t0);
+      expect(sector.destabilisedAtMs, t0);
+
+      WorldForging.detonate(
+          player: pilot(detonators: 1),
+          sector: sector,
+          world: sector.planets.first);
+      WorldForging.runDueCollisions([sector], 3, t0 + day, math.Random(1));
+
+      expect(sector.destabilisedAtMs, isNull);
+      expect(sector.livingPlanets, hasLength(3),
+          reason: 'and nothing collided');
+    });
+
+    test('going over again after a fix starts a fresh day, not the old one',
+        () {
+      // The stale-clock bug this guards: a sector stabilised and then pushed over
+      // again an hour later would inherit the first crossing's remaining time and
+      // roll early.
+      //
+      // The cap itself is the lever, because a four-world sector cannot be
+      // stabilised by destroying anything here — the fixture is already over a
+      // cap of three, so "stabilise" and "still over-stacked" are the same state
+      // and my first attempt asserted the stamp cleared when nothing had
+      // changed.
+      final sector = orbit(worlds: 4);
+      final t0 = 1000000;
+      sector.reconcileStability(3, t0);
+      expect(sector.destabilisedAtMs, t0,
+          reason: 'four worlds against a cap of three');
+
+      // Stabilised: a fourth slot is authorised, so nothing is over-stacked.
+      sector.reconcileStability(4, t0 + day - 60000);
+      expect(sector.destabilisedAtMs, isNull,
+          reason: 'no longer over the cap, so the clock is cancelled');
+
+      // Over again a minute later, under the original cap.
+      final t1 = t0 + day - 60000;
+      sector.reconcileStability(3, t1);
+      expect(sector.destabilisedAtMs, t1,
+          reason: 'a fresh crossing starts a fresh clock, not the remainder of '
+              'the old one');
+
+      var destroyed = 0;
+      for (var i = 0; i < 300; i++) {
+        destroyed += WorldForging.runDueCollisions(
+            [sector], 2, t1 + day - 1000, math.Random(i));
+      }
+      expect(destroyed, 0, reason: 'a second early');
+    });
+
+    test('a stable sector is never rolled, however old it is', () {
+      final sector = orbit(worlds: 2);
+      final t0 = 1000000;
+      var destroyed = 0;
+      for (var d = 1; d <= 500; d++) {
+        destroyed += WorldForging.runDueCollisions(
+            [sector], 3, t0 + d * day, math.Random(d));
+      }
+      expect(destroyed, 0, reason: '500 days of a legal system');
+      expect(sector.livingPlanets, hasLength(2));
+      expect(sector.destabilisedAtMs, isNull,
+          reason: 'and it never armed a clock in the first place');
+    });
+
+    test('the clock survives a save and reload', () {
+      // A tick reads sectors from disk, so a stamp held only in memory is a
+      // sector that re-arms on every load and never falls due.
+      final sector = orbit(worlds: 4)..reconcileStability(3, 1000000);
+      final restored = Sector.fromJson(sector.toJson());
+      expect(restored.destabilisedAtMs, 1000000);
     });
   });
 }

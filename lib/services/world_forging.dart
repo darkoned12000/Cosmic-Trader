@@ -71,6 +71,7 @@ class WorldForging {
     required Sector sector,
     required int cap,
     required math.Random rng,
+    required int nowMs,
     String? name,
   }) {
     if (player.genesisTorpedoes <= 0) {
@@ -85,22 +86,17 @@ class WorldForging {
       planetType: type,
       imagePath: _imageFor(type, rng),
     );
-    final added = sector.launchWorld(world);
+    final added = sector.launchWorld(world, cap, nowMs);
     if (added == null) return (LaunchResult.launched, null);
 
     GameEventLog.global.system(
       '[Genesis] ${sector.name} gained a new $type world, ${world.name}',
     );
-    if (overStacking) {
-      // Unmissable on purpose. A silent destabilisation that destroys a
-      // million-colonist colony overnight reads as a bug, not as a risk the
-      // player accepted.
-      GameEventLog.global.system(
-        '[Genesis] WARNING: ${sector.name} now holds ${sector.worldSlotsUsed} '
-        'worlds against a limit of $cap. Unstable orbits collide — a check is '
-        'rolled every 24 hours and the pair can be lost.',
-      );
-    }
+    // The creation is logged; the over-stack is not. Warning on every launch
+    // past the cap would fire on the fourth world in a three-world sector and
+    // then again every day after, and a warning that repeats forever stops being
+    // read as information. The rules are the rules and the player was told once.
+    // The clock is armed either way.
     return (
       overStacking ? LaunchResult.wouldOverstack : LaunchResult.launched,
       added,
@@ -129,26 +125,63 @@ class WorldForging {
     );
   }
 
-  /// Runs one 24-hour gravity check over the galaxy.
+  /// Hours between gravity checks on an unstable system.
+  static const int collisionIntervalMs = 24 * 60 * 60 * 1000;
+
+  /// Runs every gravity check that has **fallen due**, and returns the number of
+  /// worlds destroyed.
+  ///
+  /// A sector's clock starts the moment it goes over the cap (see
+  /// [Sector.reconcileStability]), so this is a *due check*, not a daily alarm.
+  /// A sector that went over an hour ago is not touched; one that went over
+  /// yesterday is. That distinction is the entire reason the stamp exists: a
+  /// global wall-clock hour would destroy a world in a system that had been
+  /// unstable for three minutes, and a "time since the universe was made" check
+  /// would bank a week of hazard and then resolve all of it on the first tick.
   ///
   /// Wall-clock, not game ticks, and deliberately so. Construction counts ticks
   /// because a build is *the player's own progress* and must not complete while
-  /// they sleep. A collision is the opposite: it is a background hazard, it is
-  /// meant to bite an abandoned sector, and it is the only thing that makes
-  /// over-stacking a decision rather than a free bonus.
+  /// they sleep. A collision is the opposite: a background hazard, meant to bite
+  /// an abandoned sector, and the only thing that makes over-stacking a decision
+  /// rather than a free bonus.
   ///
-  /// Callers drive this from a once-a-day check; it is not on the game tick.
-  static int runDailyCollisions(
+  /// The game tick calls this on every pass. Testing whether a stamp is due is
+  /// arithmetic, and a 30-second tick resolves "due" to within 30 seconds of the
+  /// day being up — so there is no separate scheduler to start, and none to
+  /// forget. The first version of this was a rule with no clock attached: the
+  /// function existed, was tested, and was never called.
+  static int runDueCollisions(
     List<Sector> sectors,
     int cap,
+    int nowMs,
     math.Random rng,
   ) {
     var destroyed = 0;
     for (final sector in sectors) {
-      if (sector.freeSlots(cap) > 0) continue;
+      // Self-healing on the way past: clears the stamp on a sector that has been
+      // brought back under the cap, so a system stabilised by a detonator and
+      // then pushed over again starts a fresh day rather than inheriting the
+      // old one's remaining time.
+      sector.reconcileStability(cap, nowMs);
+      if (!sector.isOverStacking(cap)) continue;
+
+      final armedAt = sector.destabilisedAtMs;
+      if (armedAt == null) continue;
+      if (nowMs - armedAt < collisionIntervalMs) continue;
+
+      // Re-armed *before* the roll, not after. A roll cannot throw, and doing it
+      // first means a system that survives a check starts its next day from the
+      // moment the check came due, rather than drifting forward by a tick
+      // interval every time it is called.
+      sector.destabilisedAtMs = nowMs;
+
       final lost = sector.rollCollision(cap, rng);
       if (lost.isEmpty) continue;
       destroyed += lost.length;
+      // Loud, and the only notification there is. The player is not warned when
+      // they over-stack — the rules are the rules and they were told once — so
+      // the collision is announced when it happens rather than apologised for in
+      // advance.
       GameEventLog.global.system(
         '[Gravity] ${sector.name}: ${lost.map((p) => p.name).join(' and ')} '
         'collided and were destroyed. ${sector.worldSlotsUsed} worlds remain '

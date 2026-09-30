@@ -143,18 +143,20 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     // is just a warning (see `WorldForging`).
     if (widget.player.genesisTorpedoes > 0) {
       final used = s.worldSlotsUsed;
-      // At the cap is *full*, not unstable: the warning is for the shot that
-      // would go past it.
-      final over = used >= widget.worldCap;
+      // Factual, not alarmed. This row used to turn red and read
+      // "LAUNCH (UNSTABLE)" past the cap, and a confirmation dialog stood
+      // between the player and the shot. The rules of over-stacking are fixed
+      // and known; repeating them at every launch trains the player to dismiss
+      // the warning without reading it. The slot count is still shown, because
+      // that is information rather than a caution.
       entries.add(_SectorEntry(
         id: 'genesis_${s.id}',
         type: _EntryType.genesis,
-        label: over ? 'LAUNCH (UNSTABLE)' : 'LAUNCH TORPEDO',
-        detail: over
-            ? 'NO FREE SLOTS · $used/${widget.worldCap} worlds · collision risk'
-            : 'Creates a random world · ${widget.player.genesisTorpedoes} held '
-                '· $used/${widget.worldCap} slots used',
-        color: over ? Colors.red.shade400 : Colors.deepPurple.shade300,
+        label: 'LAUNCH TORPEDO',
+        detail:
+            'Creates a random world · ${widget.player.genesisTorpedoes} held '
+            '· $used/${widget.worldCap} slots used',
+        color: Colors.deepPurple.shade300,
         icon: Icons.blur_circular_rounded,
       ));
     }
@@ -792,46 +794,13 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   /// reads as a bug, not as a risk the player chose to take.
   Future<void> _launchTorpedo() async {
     final sector = widget.currentSector;
-    final over = sector.isFull(widget.worldCap);
-
-    if (over) {
-      final go = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          icon: Icon(Icons.warning_amber_rounded, color: Colors.red.shade400),
-          title: const Text('Unstable orbit'),
-          content: Text(
-            '${sector.name} already holds ${sector.worldSlotsUsed} worlds '
-            'against a limit of ${widget.worldCap}.\n\n'
-            'Over-stacking is legal, and it is also a weapon: a gravity check is '
-            'rolled every 24 hours and two colliding worlds are destroyed, '
-            'colony and all. The roll does not care that you are watching.\n\n'
-            'Fire anyway?',
-            style: const TextStyle(height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: Colors.red.shade700,
-                  foregroundColor: Colors.white),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Fire torpedo'),
-            ),
-          ],
-        ),
-      );
-      if (go != true) return;
-    }
 
     final (result, world) = WorldForging.launch(
       player: widget.player,
       sector: sector,
       cap: widget.worldCap,
       rng: Random(),
+      nowMs: DateTime.now().millisecondsSinceEpoch,
     );
 
     if (result == LaunchResult.noTorpedoes) {
@@ -855,9 +824,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     widget.onRefreshNpcs?.call();
     if (!mounted) return;
     setState(() {});
-    _toast(over
-        ? '${world.planetType} world created — ${sector.name} is now UNSTABLE'
-        : '${world.planetType} world created: ${world.name}');
+    _toast('${world.planetType} world created: ${world.name}');
   }
 
   void _toast(String message) {
@@ -871,10 +838,27 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   }
 
   Widget _interactionButtons(_SectorEntry entry) {
-    // A torpedo is fired at the orbit, not at a world, so it has no per-world
-    // buttons — the entry itself is the action.
     if (entry.type == _EntryType.genesis) {
-      return const SizedBox.shrink();
+      // One button, because the action applies to the **orbit** rather than to
+      // any world in it — there is nothing to attach it to and nothing to choose
+      // between.
+      //
+      // This returning an empty box was a dead control. The row still went
+      // through the same select-then-act flow as every other entry, so selecting
+      // it revealed *no* way to fire: the torpedo was bought at an emporium,
+      // carried on the ship, and then unreachable. Nothing failed and no test
+      // failed, because the model, the service and the sector row were all
+      // correct — the gap was one missing widget in the middle.
+      return FilledButton.icon(
+        onPressed: _launchTorpedo,
+        icon: const Icon(Icons.blur_circular_rounded, size: 14),
+        label: const Text('Launch', style: TextStyle(fontSize: 11)),
+        style: FilledButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          backgroundColor: Colors.deepPurple.shade600,
+          foregroundColor: Colors.white,
+        ),
+      );
     }
 
     if (entry.type == _EntryType.planet) {

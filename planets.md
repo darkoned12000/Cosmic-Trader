@@ -435,6 +435,34 @@ decision. Odds worsen with each world past the cap: at a cap of 3, one extra wor
 is a 1-in-8 daily loss and three extras is 1-in-2, a sector that eats itself
 within a week of being abandoned.
 
+**The clock starts the moment the sector goes over the cap, and the player is not
+warned.** Two decisions, both corrected after the first implementation:
+
+- *Per sector, not per galaxy.* `Sector.destabilisedAtMs` is stamped by
+  `reconcileStability(cap, nowMs)` at the moment of the crossing, and
+  `WorldForging.runDueCollisions` asks only whether that stamp is 24 hours old.
+  A global wall-clock hour would destroy worlds in a system that had been
+  unstable for three minutes. The stamp is set by **every** path that can change
+  the world count, including the sweep itself, so it is self-healing: a stamp
+  maintained by hand at each call site is a stamp that will eventually disagree
+  with the thing it describes, and a wrong stamp is either a sector that never
+  rolls or one that rolls when it should not. A surviving check **re-arms** from
+  the moment it came due, so the hazard is daily rather than one-shot — otherwise
+  a player who survives the first roll has a system that is safe forever.
+- *No warning.* The first version raised a red "Unstable orbit" dialog on every
+  launch past the cap and logged a warning, on the reasoning that a colony
+  destroyed overnight reads as a bug. It fires again on every launch after that,
+  and a warning that repeats forever stops being read as information. The rules
+  are fixed and known; the player was told once. The collision itself is announced
+  loudly in the event log, which is the only notification that matters because it
+  is the only one that is news.
+
+**The first version of this rule had no clock attached to it.** `runDailyCollisions`
+existed, was correct, was unit-tested, and was called from nowhere in `lib/` —
+so over-stacking warned about a hazard that could not happen. `test/gravity_wiring_test.dart`
+is a deliberate source scan for exactly that, because no behavioural test of the
+rule can notice: the tests call the rule directly, which is how they reach it.
+
 **A full sector is not an over-stacked one.** `isFull(cap)` (`>=`) and
 `isOverStacking(cap)` (`>`) are separate predicates doing different jobs — the
 first is the pre-launch question, the second is the state the collision roll acts

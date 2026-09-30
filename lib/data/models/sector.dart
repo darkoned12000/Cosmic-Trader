@@ -110,11 +110,15 @@ class Sector {
       if (port != null) 'port': port!.toJson(),
       if (planets.isNotEmpty)
         'planets': planets.map((p) => p.toJson()).toList(),
+      // Nullable is the *normal* state for a stable sector, so it is omitted
+      // rather than written as null. A sector only carries a stamp while it is
+      // over-stacked.
+      if (destabilisedAtMs != null) 'destabilisedAtMs': destabilisedAtMs,
     };
   }
 
   factory Sector.fromJson(Map<String, dynamic> json) {
-    return Sector(
+    final sector = Sector(
       id: json['id'] as int,
       name: json['name'] as String,
       x: (json['x'] as num).toDouble(),
@@ -136,6 +140,11 @@ class Sector {
           : null,
       planets: _planetsFromJson(json),
     );
+    // Assigned rather than passed to the constructor: the stamp is mutable (it
+    // arms and clears as the sector crosses the cap), and a mutable field cannot
+    // be a constructor parameter.
+    sector.destabilisedAtMs = (json['destabilisedAtMs'] as num?)?.toInt();
+    return sector;
   }
 
   /// Reads the world list, migrating a pre-multi-planet save.
@@ -198,6 +207,40 @@ class Sector {
   /// to decide about one.
   bool isOverStacking(int cap) => worldSlotsUsed > cap;
 
+  /// When this system became over-stacked, in epoch milliseconds, or null while
+  /// it is stable.
+  ///
+  /// The clock starts **the moment the sector goes over** — a torpedo lands, or
+  /// a world arrives some other way — and 24 hours later the first gravity check
+  /// falls due. Not a global wall-clock hour, and not "time since the universe
+  /// was made": a player who over-stacks at 3am should not find a collision
+  /// waiting on them at midnight, and a sector left over for a week should not
+  /// accumulate a week of un-rolled hazard and then resolve all of it at once.
+  ///
+  /// It is re-armed after every roll, so an unstable system stays on a daily
+  /// cycle for as long as it stays unstable. Clearing a world back under the cap
+  /// clears the stamp, and going over again starts a fresh day.
+  int? destabilisedAtMs;
+
+  /// Sets or clears [destabilisedAtMs] to match the sector's current state.
+  ///
+  /// Idempotent and **self-healing**, and that is the point: it is called from
+  /// every path that can change the world count, including the daily sweep, so
+  /// the stamp cannot drift out of agreement with the thing it describes. A
+  /// stamp that had to be maintained by hand at each call site is a stamp that
+  /// will eventually be wrong, and a wrong stamp is either a sector that never
+  /// rolls or one that rolls on a sector that never should.
+  ///
+  /// [nowMs] is injected rather than read from the clock so the whole rule is
+  /// testable without waiting a day.
+  void reconcileStability(int cap, int nowMs) {
+    if (isOverStacking(cap)) {
+      destabilisedAtMs ??= nowMs;
+    } else {
+      destabilisedAtMs = null;
+    }
+  }
+
   /// Adds a torpedoed world. Returns it, or null if there is nothing to add to.
   ///
   /// Over-stacking is **allowed on purpose**. The classic game made it a weapon:
@@ -205,9 +248,15 @@ class Sector {
   /// owner has to clear it before the dice roll comes up. Hard-blocking it would
   /// remove the only offensive use of the torpedo and make the detonator
   /// pointless — a capacity limit can be waited out, a hazard has to be answered.
-  Planet? launchWorld(Planet world) {
+  Planet? launchWorld(Planet world, int cap, int nowMs) {
     if (world.isDestroyed) return null;
     planets.add(world);
+    // Arm here rather than at the call site, so a world arriving by any future
+    // route starts the same clock and the caller never has to know the rule
+    // exists. [cap] and [nowMs] are parameters rather than reads of ambient
+    // state: the cap belongs to the universe settings and the clock belongs to
+    // the caller, and neither is this sector's business to go looking for.
+    reconcileStability(cap, nowMs);
     return world;
   }
 
