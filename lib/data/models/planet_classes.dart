@@ -144,6 +144,9 @@ class PlanetClassSpec {
   /// turns the production triangle into the fighter economy.
   final int colonistsPerDrone;
 
+  /// The six citadel tiers, index 0 being level 1.
+  final List<CitadelLevel> citadels;
+
   /// Whether these figures come from a TradeWars table rather than being chosen.
   final bool sourced;
 
@@ -156,8 +159,16 @@ class PlanetClassSpec {
     required this.organics,
     required this.equipment,
     required this.colonistsPerDrone,
+    this.citadels = const [],
     this.sourced = false,
   });
+
+  /// The tier record for [level], or null past the top.
+  CitadelLevel? citadelAt(int level) =>
+      (level >= 1 && level <= citadels.length) ? citadels[level - 1] : null;
+
+  /// What reaching [level] confers.
+  String abilityAt(int level) => citadelAbilities[level] ?? '';
 
   /// The product spec for one of this game's track names.
   ProductSpec productFor(String track) => switch (track) {
@@ -221,6 +232,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
         colonistsPerUnit: 7, maxColonists: 30000, storageCap: 100000),
     equipment: ProductSpec(
         colonistsPerUnit: 13, maxColonists: 30000, storageCap: 100000),
+    citadels: [
+      CitadelLevel(
+        hours: 4,
+        colonists: 1000,
+        ore: 300,
+        organics: 200,
+        equipment: 250,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 2000,
+        ore: 200,
+        organics: 50,
+        equipment: 250,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 4000,
+        ore: 500,
+        organics: 250,
+        equipment: 500,
+      ),
+      CitadelLevel(
+        hours: 10,
+        colonists: 6000,
+        ore: 1000,
+        organics: 1200,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 6000,
+        ore: 300,
+        organics: 400,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 15,
+        colonists: 6000,
+        ore: 1000,
+        organics: 1200,
+        equipment: 2000,
+      ),
+    ],
   ),
   'Desert': PlanetClassSpec(
     key: 'Desert',
@@ -244,6 +299,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
         colonistsPerUnit: 100, maxColonists: 40000, storageCap: 50000),
     equipment: ProductSpec(
         colonistsPerUnit: 500, maxColonists: 40000, storageCap: 10000),
+    citadels: [
+      CitadelLevel(
+        hours: 6,
+        colonists: 1000,
+        ore: 400,
+        organics: 300,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 2400,
+        ore: 300,
+        organics: 80,
+        equipment: 400,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 4400,
+        ore: 600,
+        organics: 400,
+        equipment: 650,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 7000,
+        ore: 700,
+        organics: 900,
+        equipment: 800,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 8000,
+        ore: 300,
+        organics: 400,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 7000,
+        ore: 700,
+        organics: 900,
+        equipment: 1600,
+      ),
+    ],
   ),
   'Ocean': PlanetClassSpec(
     key: 'Ocean',
@@ -267,6 +366,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
         colonistsPerUnit: 2, maxColonists: 200000, storageCap: 1000000),
     equipment: ProductSpec(
         colonistsPerUnit: 100, maxColonists: 200000, storageCap: 50000),
+    citadels: [
+      CitadelLevel(
+        hours: 6,
+        colonists: 1400,
+        ore: 500,
+        organics: 200,
+        equipment: 400,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 2400,
+        ore: 200,
+        organics: 50,
+        equipment: 300,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 4400,
+        ore: 600,
+        organics: 400,
+        equipment: 650,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 7000,
+        ore: 700,
+        organics: 900,
+        equipment: 800,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 8000,
+        ore: 300,
+        organics: 400,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 7000,
+        ore: 700,
+        organics: 900,
+        equipment: 1600,
+      ),
+    ],
   ),
   'Ice': PlanetClassSpec(
     key: 'Ice',
@@ -291,6 +434,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
         colonistsPerUnit: 100, maxColonists: 100000, storageCap: 50000),
     equipment: ProductSpec(
         colonistsPerUnit: 500, maxColonists: 100000, storageCap: 10000),
+    citadels: [
+      CitadelLevel(
+        hours: 5,
+        colonists: 1000,
+        ore: 400,
+        organics: 300,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 2400,
+        ore: 300,
+        organics: 80,
+        equipment: 400,
+      ),
+      CitadelLevel(
+        hours: 7,
+        colonists: 4400,
+        ore: 600,
+        organics: 400,
+        equipment: 650,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 6600,
+        ore: 700,
+        organics: 900,
+        equipment: 700,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 9000,
+        ore: 300,
+        organics: 400,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 6600,
+        ore: 700,
+        organics: 900,
+        equipment: 1400,
+      ),
+    ],
   ),
   'Lava': PlanetClassSpec(
     key: 'Lava',
@@ -315,6 +502,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
     organics: ProductSpec.impossible,
     equipment: ProductSpec(
         colonistsPerUnit: 500, maxColonists: 100000, storageCap: 100000),
+    citadels: [
+      CitadelLevel(
+        hours: 4,
+        colonists: 800,
+        ore: 500,
+        organics: 300,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 1600,
+        ore: 300,
+        organics: 100,
+        equipment: 400,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 4400,
+        ore: 1200,
+        organics: 400,
+        equipment: 1500,
+      ),
+      CitadelLevel(
+        hours: 12,
+        colonists: 7000,
+        ore: 2000,
+        organics: 2000,
+        equipment: 2500,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 10000,
+        ore: 3000,
+        organics: 1200,
+        equipment: 2000,
+      ),
+      CitadelLevel(
+        hours: 18,
+        colonists: 7000,
+        ore: 2000,
+        organics: 2000,
+        equipment: 5000,
+      ),
+    ],
   ),
   'Gas Giant': PlanetClassSpec(
     key: 'Gas Giant',
@@ -340,6 +571,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
         ProductSpec(colonistsPerUnit: 0, maxColonists: 3000, storageCap: 10000),
     equipment:
         ProductSpec(colonistsPerUnit: 0, maxColonists: 3000, storageCap: 10000),
+    citadels: [
+      CitadelLevel(
+        hours: 8,
+        colonists: 3000,
+        ore: 1200,
+        organics: 400,
+        equipment: 2500,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 3000,
+        ore: 300,
+        organics: 100,
+        equipment: 400,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 8000,
+        ore: 500,
+        organics: 500,
+        equipment: 2000,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 6000,
+        ore: 500,
+        organics: 200,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 8000,
+        ore: 200,
+        organics: 200,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 6000,
+        ore: 500,
+        organics: 200,
+        equipment: 1200,
+      ),
+    ],
   ),
 
   // ── Derived: no TradeWars equivalent ──────────────────────────────────────
@@ -363,6 +638,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
         colonistsPerUnit: 4, maxColonists: 60000, storageCap: 400000),
     equipment: ProductSpec(
         colonistsPerUnit: 30, maxColonists: 60000, storageCap: 60000),
+    citadels: [
+      CitadelLevel(
+        hours: 3,
+        colonists: 1000,
+        ore: 300,
+        organics: 300,
+        equipment: 250,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 1600,
+        ore: 250,
+        organics: 120,
+        equipment: 250,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 3200,
+        ore: 600,
+        organics: 400,
+        equipment: 500,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 5000,
+        ore: 900,
+        organics: 1400,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 6000,
+        ore: 350,
+        organics: 500,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 12,
+        colonists: 5000,
+        ore: 900,
+        organics: 1200,
+        equipment: 1800,
+      ),
+    ],
   ),
   'Moon': PlanetClassSpec(
     key: 'Moon',
@@ -379,6 +698,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
     organics: ProductSpec.impossible,
     equipment: ProductSpec(
         colonistsPerUnit: 60, maxColonists: 40000, storageCap: 40000),
+    citadels: [
+      CitadelLevel(
+        hours: 4,
+        colonists: 600,
+        ore: 400,
+        organics: 250,
+        equipment: 500,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 1600,
+        ore: 250,
+        organics: 60,
+        equipment: 350,
+      ),
+      CitadelLevel(
+        hours: 6,
+        colonists: 3200,
+        ore: 550,
+        organics: 300,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 5200,
+        ore: 650,
+        organics: 700,
+        equipment: 750,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 6400,
+        ore: 300,
+        organics: 300,
+        equipment: 900,
+      ),
+      CitadelLevel(
+        hours: 8,
+        colonists: 5200,
+        ore: 650,
+        organics: 700,
+        equipment: 1200,
+      ),
+    ],
   ),
   'Barren': PlanetClassSpec(
     key: 'Barren',
@@ -395,6 +758,50 @@ const Map<String, PlanetClassSpec> planetClasses = {
     organics: ProductSpec.impossible,
     equipment: ProductSpec(
         colonistsPerUnit: 100, maxColonists: 40000, storageCap: 30000),
+    citadels: [
+      CitadelLevel(
+        hours: 5,
+        colonists: 800,
+        ore: 500,
+        organics: 250,
+        equipment: 500,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 1800,
+        ore: 300,
+        organics: 50,
+        equipment: 350,
+      ),
+      CitadelLevel(
+        hours: 7,
+        colonists: 3600,
+        ore: 650,
+        organics: 350,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 6,
+        colonists: 5600,
+        ore: 800,
+        organics: 700,
+        equipment: 800,
+      ),
+      CitadelLevel(
+        hours: 4,
+        colonists: 7000,
+        ore: 300,
+        organics: 300,
+        equipment: 900,
+      ),
+      CitadelLevel(
+        hours: 9,
+        colonists: 5600,
+        ore: 800,
+        organics: 700,
+        equipment: 1300,
+      ),
+    ],
   ),
   'Toxic': PlanetClassSpec(
     key: 'Toxic',
@@ -410,5 +817,233 @@ const Map<String, PlanetClassSpec> planetClasses = {
     organics: ProductSpec.impossible,
     equipment: ProductSpec(
         colonistsPerUnit: 30, maxColonists: 50000, storageCap: 80000),
+    citadels: [
+      CitadelLevel(
+        hours: 6,
+        colonists: 1000,
+        ore: 450,
+        organics: 250,
+        equipment: 500,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 2200,
+        ore: 280,
+        organics: 60,
+        equipment: 400,
+      ),
+      CitadelLevel(
+        hours: 7,
+        colonists: 4200,
+        ore: 700,
+        organics: 400,
+        equipment: 700,
+      ),
+      CitadelLevel(
+        hours: 6,
+        colonists: 6400,
+        ore: 900,
+        organics: 800,
+        equipment: 900,
+      ),
+      CitadelLevel(
+        hours: 5,
+        colonists: 7600,
+        ore: 350,
+        organics: 400,
+        equipment: 1000,
+      ),
+      CitadelLevel(
+        hours: 10,
+        colonists: 6400,
+        ore: 900,
+        organics: 800,
+        equipment: 1500,
+      ),
+    ],
   ),
 };
+
+/// The game clock.
+///
+/// One unit of game time is one **tick**, and a tick is the 30-second game loop.
+/// So a game day is 2,880 ticks and a game hour is 120. Nothing in the economy
+/// invents its own notion of a day: a per-day figure from the source tables is
+/// divided by [ticksPerDay] to get a per-tick figure, and that is the whole
+/// conversion.
+///
+/// This is deliberately *not* a compressed clock. An earlier draft proposed
+/// shortening the day so that build times felt brisk; it was wrong, and the
+/// error was instructive — a compressed day would have desynchronised the planet
+/// economy from the port market, which already refills on a real 24 hours. With
+/// a game day being a real day, the two agree by construction and there is
+/// nothing to keep in step.
+///
+/// The switch to real time for a persistent multiplayer game is a change to this
+/// class alone, because everything that needs to know how long a day is reads it
+/// from here.
+class PlanetClock {
+  PlanetClock._();
+
+  /// Ticks in one game hour.
+  static const int ticksPerHour = 120;
+
+  /// Ticks in one game day.
+  static const int ticksPerDay = ticksPerHour * 24;
+
+  /// Converts a per-day figure into a per-tick one.
+  ///
+  /// Doubles, deliberately. A Volcanic ore track peaks at 50,000/day, which is
+  /// 17.361 per tick — and the colony's stores accumulate in whole units, so
+  /// truncating each tick would lose a fraction of everything produced. The
+  /// remainder is carried rather than dropped.
+  static double perDayToPerTick(double perDay) => perDay / ticksPerDay;
+}
+
+/// One citadel tier: what it costs, how long it takes, and what it grants.
+///
+/// **[hours] is the source table's "Days" column read as hours.** The TradeWars
+/// tables express build time in days, and 4 to 18 real days of play is not a
+/// build — it is a season, and construction only advances while the game is
+/// running, so level 2 would be a week of evenings. Reading the same numbers as
+/// hours preserves the shape of the authored table exactly (a Mountain level 2 is
+/// still four times faster than a Vaporous one) while making the thing
+/// reachable. See *Revised order of work* in `planets.md`.
+///
+/// The colonist figure is a **gate, not a cost**. It is a minimum population the
+/// world must hold to begin, not a quantity spent — the same distinction the
+/// rest of the model draws between a gate and a price.
+class CitadelLevel {
+  /// Build time in game hours.
+  final int hours;
+
+  /// Cumulative colonist gate for reaching this tier.
+  final int colonists;
+
+  /// Fuel ore consumed when the build starts.
+  final int ore;
+
+  /// Organics consumed when the build starts.
+  final int organics;
+
+  /// Equipment consumed when the build starts.
+  final int equipment;
+
+  const CitadelLevel({
+    required this.hours,
+    required this.colonists,
+    required this.ore,
+    required this.organics,
+    required this.equipment,
+  });
+
+  /// Build time in ticks, at a construction time scale of 1.
+  ///
+  /// Kept next to [hours] so the two cannot drift: every consumer that wants a
+  /// duration rather than a figure wants this one, and a build stored in hours
+  /// with a countdown in ticks is a conversion somebody has to remember.
+  int get ticks => hours * PlanetClock.ticksPerHour;
+}
+
+/// What each citadel tier confers.
+///
+/// Index is the level number, and the wording follows the source tables. Level 1
+/// is in the list deliberately: a world with a citadel and no defences is a real
+/// state that a player can walk into, and the rule it breaks is that a planet
+/// with no citadel has no defensive capability at all.
+const Map<int, String> citadelAbilities = {
+  1: 'Citadel — defenseless. You can use the treasury, remain overnight, the '
+      'planet transporter and other citadel commands, but fighters left on '
+      'the planet will not defend and can be taken by anyone who lands.',
+  2: 'Combat computer — fighters on the planet now defend. Usually you want '
+      'your military reaction at 0%, since the fighters get 3:1; this can be '
+      'set to send fighters from the planet at 2:1 against anything entering '
+      'the sector.',
+  3: 'Quasar cannon — can be set to fire at anything entering the sector, '
+      'anything trying to land, or both. Firing burns fuel ore; atmospheric '
+      'shots are 1 ore to 1 damage, sector shots 3 ore to 1. A quasar can be '
+      'bypassed by a photon missile unless a planetary shielding system '
+      'covers it.',
+  4: 'Planetary transwarp drive — move this world to any sector where you '
+      'have dropped a fighter, for 400 units of ore per sector jumped.',
+  5: 'Planetary shielding system — planetary shields must be destroyed before '
+      'anyone can invade, each taking 20 damage. Shields the world and anyone '
+      'on it from a photon blast. Ten ship shields make one planetary shield.',
+  6: 'Planetary interdictor generator — when on, makes it difficult for an '
+      'enemy to retreat from the sector. Similar to a tractor beam.',
+};
+
+/// Where the class numbers actually come from.
+///
+/// `planetClasses` above is the shipped **default** table, and it is `const` so it
+/// cannot be edited by accident. This is the mutable layer on top: the planet
+/// screen and the Settings editor resolve through [specFor], which merges any
+/// saved override over the default.
+///
+/// The split is the whole point. A player editing a ratio, a cap or a build time
+/// changes **values**, and the rules that use them — the triangle, the optimum
+/// being half the maximum, fighters derived from output — cannot be edited at
+/// all, so a customised world cannot end up violating the relationship the Planet
+/// Guide documents. `optimumColonists` is derived, never a field, precisely so
+/// that it stays half the maximum whatever a player does to the number beside it.
+///
+/// Currently empty; `GameSettings` populates it. Kept as a separate class rather
+/// than folded into the defaults map so that the const table stays const.
+class PlanetClassTuning {
+  PlanetClassTuning._();
+
+  /// Overrides, keyed by world type. A null entry means "use the default".
+  static final Map<String, PlanetClassSpec> _overrides = {};
+
+  /// Replaces every override, keeping only those naming a world type the game
+  /// actually has.
+  ///
+  /// Filtered on the way in rather than the way out, so a save from an older or
+  /// hand-edited settings file cannot inject a spec for a world type that does
+  /// not exist and quietly shadow the default table.
+  static void loadAll(
+    Map<String, PlanetClassSpec> overrides,
+    List<String> validTypes,
+  ) {
+    _overrides
+      ..clear()
+      ..addAll({
+        for (final e in overrides.entries)
+          if (validTypes.contains(e.key)) e.key: e.value,
+      });
+  }
+
+  /// Drops every override, restoring the shipped table.
+  static void reset() => _overrides.clear();
+
+  /// Whether any override is in force. The settings screen shows a "modified"
+  /// marker from this.
+  static bool get isCustomised => _overrides.isNotEmpty;
+
+  /// The effective class for [type]: the override if there is one, else the
+  /// shipped default.
+  ///
+  /// Falls back to a neutral spec rather than throwing for an unknown type, so a
+  /// world generated from a stale universe produces nothing rather than crashing
+  /// the tick. `test/planet_class_test.dart` asserts every real type resolves.
+  static PlanetClassSpec specFor(String type) =>
+      _overrides[type] ?? planetClasses[type] ?? _unknownSpec;
+
+  /// Stand-in for a world type with no entry. Produces nothing at all, which is
+  /// the honest answer for "we have no rules for this" and matches the Class U
+  /// case: a world nobody can plan for should not silently produce at the
+  /// default.
+  static final PlanetClassSpec _unknownSpec = PlanetClassSpec(
+    key: 'Unknown',
+    designation: '?',
+    className: 'Unclassified',
+    lore: 'No production data is available for this world.',
+    ore: ProductSpec.impossible,
+    organics: ProductSpec.impossible,
+    equipment: ProductSpec.impossible,
+    colonistsPerDrone: 1,
+  );
+
+  /// The shipped defaults, for the settings screen to show as a starting point.
+  static Map<String, PlanetClassSpec> defaults() => Map.of(planetClasses);
+}

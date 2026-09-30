@@ -247,8 +247,15 @@ void main() {
   group('assignment', () {
     testWidgets('the reserve is what is not on a track', (tester) async {
       await pump(tester);
-      expect(planet.assignedColonists, 6000);
-      expect(planet.reserveColonists, 4000);
+      // 6,000 assigned across the three production tracks. The fixture still
+      // sets `colonistsDrones`, and it is deliberately *ignored*: drones stopped
+      // being a workforce track and are derived from output, so colonists on
+      // that track are in the reserve and available for real work.
+      expect(planet.assignedColonists, 5000);
+      expect(planet.reserveColonists, 5000);
+      expect(
+          planet.assignedColonists + planet.reserveColonists, planet.population,
+          reason: 'the two must always account for every colonist');
     });
 
     testWidgets('a non-owner cannot reassign the workforce', (tester) async {
@@ -260,17 +267,32 @@ void main() {
     });
 
     testWidgets('a full reserve disables the add stepper', (tester) async {
+      // 5,000 colonists, all 5,000 committed across the three production tracks.
+      // The population drops from 6,000 because drones are no longer a track, so
+      // the fixture's old 1,000 drone colonists are in the reserve and would
+      // leave room to assign. The point of the test is a *full* reserve, so the
+      // population has to actually be fully committed.
       planet
-        ..population = 6000
+        ..population = 5000
         ..colonistsMinerals = 2000
         ..colonistsOrganics = 2000
-        ..colonistsIndustrial = 1000
-        ..colonistsDrones = 1000;
+        ..colonistsIndustrial = 1000;
       expect(planet.reserveColonists, 0);
       await pump(tester);
-      // Every track is fully committed, so no add button can be pressed.
-      final addButtons = tester.widgetList<Icon>(find.byIcon(Icons.add));
-      expect(addButtons, isNotEmpty, reason: 'steppers should still render');
+
+      // Every add stepper must be rendered but disabled.
+      final adds = find.byIcon(Icons.add);
+      expect(adds, findsNWidgets(3),
+          reason:
+              'one add stepper per production track — three, because drones '
+              'are derived rather than staffed');
+      final inks =
+          find.ancestor(of: adds.first, matching: find.byType(InkWell));
+      expect(inks.first, findsOneWidget, reason: 'the stepper is a button');
+      final ink = tester.widget<InkWell>(inks.first);
+      expect(ink.onTap, isNull,
+          reason: 'a full reserve means no colonists left to assign, so the '
+              'add stepper must be dead rather than accepting a no-op tap');
     });
 
     testWidgets('tapping add moves colonists out of the reserve',

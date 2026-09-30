@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/universe_generator.dart';
 import 'package:cosmic_trader/services/colonist_supply.dart';
@@ -237,11 +238,22 @@ void main() {
       }
       final before = multi.planets.map((p) => p.storedMinerals).toList();
 
-      PlanetProductionService.process([multi]);
+      // A full day of ticks, not one. Production is now bounded by the class
+      // caps and paid out per tick, so a world yielding a fraction of a unit per
+      // tick banks nothing in a single pass — an Ocean ore track at 10,000
+      // colonists makes 500/day, which is 0.17 per tick. One pass therefore
+      // produced *zero* and the original single-tick assertion could not
+      // distinguish "skipped by the service" from "too slow to see", which is
+      // precisely the distinction the test exists for.
+      for (var day = 0; day < PlanetClock.ticksPerDay; day++) {
+        PlanetProductionService.process([multi]);
+      }
 
       for (var i = 0; i < multi.planets.length; i++) {
         expect(multi.planets[i].storedMinerals, greaterThan(before[i]),
-            reason: '${multi.planets[i].name} was skipped by the tick');
+            reason:
+                '${multi.planets[i].name} was skipped by the service: after '
+                'a whole game day of ticks it has produced nothing at all');
       }
     });
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
@@ -1391,7 +1392,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
     Widget trackRow(
       String label,
       int count,
-      int perTick,
+      int perDay,
+      int optimum,
+      int trackCeiling,
       Color colour,
       String track,
     ) {
@@ -1417,15 +1420,34 @@ class _PlanetScreenState extends State<PlanetScreen> {
             ),
             SizedBox(
               width: 58,
-              child: Text(
-                _formatNumber(count),
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                  fontWeight: FontWeight.w600,
-                  color: colour,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _formatNumber(count),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w600,
+                      color: colour,
+                    ),
+                  ),
+                  // Where the peak is, under the count. Without this the whole
+                  // mechanic is invisible: a player sees a number fall when they
+                  // add colonists and has no way to learn that a specific number
+                  // would have been the best one.
+                  if (producible && optimum > 0)
+                    Text(
+                      'of ${_formatNumber(optimum)}',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontFamily: 'monospace',
+                        color: cs.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(width: 8),
@@ -1433,14 +1455,27 @@ class _PlanetScreenState extends State<PlanetScreen> {
               child: Text(
                 !producible
                     ? 'cannot produce'
-                    : perTick > 0
-                        ? '+${_formatNumber(perTick)}/tick'
-                        : '—',
+                    // **Per day, not per tick.** A day is 2,880 ticks, so a
+                    // track at its peak yields a fraction of a unit per tick and
+                    // the per-tick figure is either zero or a rounding artefact.
+                    // It was also read from a getter that *consumes* the
+                    // production remainder, so simply looking at the screen was
+                    // taking production away from the colony.
+                    : perDay <= 0
+                        ? '—'
+                        // Overshooting the peak is the mechanic, so when it
+                        // happens the row says so rather than showing a smaller
+                        // number with no explanation.
+                        : count > optimum && optimum > 0
+                            ? '${_formatNumber(perDay)}/day '
+                                '(max ${_formatNumber(trackCeiling)})'
+                            : '${_formatNumber(perDay)}/day'
+                                '${optimum > 0 ? ' / max ${_formatNumber(trackCeiling)}' : ''}',
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 10,
                   fontFamily: 'monospace',
-                  color: perTick > 0
+                  color: perDay > 0
                       ? cs.onSurface.withValues(alpha: 0.6)
                       : cs.onSurface.withValues(alpha: 0.3),
                 ),
@@ -1514,15 +1549,22 @@ class _PlanetScreenState extends State<PlanetScreen> {
               _buildSupplyWarning(planet, cs),
             ],
             const SizedBox(height: 12),
-            trackRow('Minerals', planet.colonistsMinerals, planet.mineralOutput,
-                Colors.orange, 'minerals'),
-            trackRow('Organics', planet.colonistsOrganics, planet.organicOutput,
-                Colors.green, 'organics'),
-            trackRow('Industrial', planet.colonistsIndustrial,
-                planet.industrialOutput, Colors.blue, 'industrial'),
-            trackRow('Drones', planet.colonistsDrones, planet.droneOutput,
-                Colors.red, 'drones'),
+            for (final t in PlanetClassSpec.tracks)
+              trackRow(
+                _trackLabel(t),
+                _staffedOn(planet, t),
+                planet.outputPerDayFor(t),
+                _optimumFor(planet, t),
+                _ceilingFor(planet, t),
+                _trackColour(t),
+                t,
+              ),
             const SizedBox(height: 8),
+            // Drones are **derived**, not staffed: they come from what the three
+            // tracks above actually produce. A fourth workforce row would have
+            // to lie about where they come from, and a stepper on it would let a
+            // player "staff" drones and watch the figure refuse to move.
+            _droneReadout(planet, cs),
             Divider(color: cs.onSurface.withValues(alpha: 0.1), height: 1),
             const SizedBox(height: 8),
             Text(
@@ -1594,6 +1636,112 @@ class _PlanetScreenState extends State<PlanetScreen> {
         ],
       ),
     );
+  }
+
+  /// The derived drone output, and the ceiling it is measured against.
+  ///
+  /// Shown as a **ceiling with a progress figure** rather than a plain number,
+  /// because the number on its own cannot be acted on: drones fall when any
+  /// track is mis-staffed, so the useful information is how close this world is
+  /// to what it could produce at all. That is the whole reason the cap is
+  /// derived — a player can see the gap their own decisions opened.
+  Widget _droneReadout(Planet planet, ColorScheme cs) {
+    final perDay = planet.classSpec.droneOutputPerDay(
+      orePerDay: planet.outputPerDayFor('minerals'),
+      organicsPerDay: planet.outputPerDayFor('organics'),
+      equipmentPerDay: planet.outputPerDayFor('industrial'),
+    );
+    final ceiling = planet.maxDroneOutputPerDay;
+    final onPeak = _tracksOnOptimum(planet);
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.error.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.error.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Drones (derived)',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface.withValues(alpha: 0.75))),
+              Text('${_formatNumber(perDay)}/day',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w700,
+                      color: Colors.redAccent)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Made from what the three tracks produce. Ceiling '
+            '${_formatNumber(ceiling)}/day at $onPeak of 3 tracks on optimum.',
+            style: TextStyle(
+                fontSize: 10, color: cs.onSurface.withValues(alpha: 0.5)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Colonists on a track, by track name.
+  int _staffedOn(Planet planet, String track) => switch (track) {
+        'minerals' => planet.colonistsMinerals,
+        'organics' => planet.colonistsOrganics,
+        'industrial' => planet.colonistsIndustrial,
+        _ => 0,
+      };
+
+  String _trackLabel(String track) => switch (track) {
+        'minerals' => 'Minerals',
+        'organics' => 'Organics',
+        'industrial' => 'Industrial',
+        _ => track,
+      };
+
+  Color _trackColour(String track) => switch (track) {
+        'minerals' => Colors.orange,
+        'organics' => Colors.green,
+        'industrial' => Colors.blue,
+        _ => Colors.grey,
+      };
+
+  /// The staffing at which this track produces the most it can.
+  int _optimumFor(Planet planet, String track) =>
+      planet.classSpec.productFor(track).optimumColonists;
+
+  /// The most this track can produce in a day, whatever the colony does.
+  int _ceilingFor(Planet planet, String track) =>
+      planet.classSpec.productFor(track).maxOutputPerDay;
+
+  /// How many of a world's three production tracks sit exactly at their optimum.
+  ///
+  /// Counts tracks that are *at* the optimum rather than tracks that produce,
+  /// because a track past its optimum still produces and still counts as badly
+  /// staffed. Reported rather than derived into a judgement, so the colony card
+  /// states the situation instead of grading the player.
+  int _tracksOnOptimum(Planet planet) {
+    var n = 0;
+    for (final track in PlanetClassSpec.tracks) {
+      final spec = planet.classSpec.productFor(track);
+      if (!spec.isPossible) continue;
+      final staffed = switch (track) {
+        'minerals' => planet.colonistsMinerals,
+        'organics' => planet.colonistsOrganics,
+        'industrial' => planet.colonistsIndustrial,
+        _ => 0,
+      };
+      if (staffed == spec.optimumColonists) n++;
+    }
+    return n;
   }
 
   Widget _stepButton({

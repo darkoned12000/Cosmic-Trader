@@ -1,4 +1,5 @@
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:uuid/uuid.dart';
 
 /// Decodes a persisted faction name, tolerating one that no longer exists.
@@ -504,15 +505,20 @@ class Planet {
   // [produce]; the screen calls the [mineralOutput]-style getters. Same code.
   // ---------------------------------------------------------------------------
 
-  /// Ticks between colony-supply draws.
+  /// Ticks between colony-supply draws: **one game day**.
   ///
-  /// Supply is an occasional bill, not a per-tick tax. Every 10 ticks so a
-  /// colony breathes between draws rather than having a slice shaved off its
-  /// output thirty times a minute — a percentage the player watches, rather than
-  /// an event they can see coming.
-  static const int supplyInterval = 10;
+  /// Was 10 ticks, chosen when the bill was a share of a single tick's output.
+  /// That only ever worked because the per-tick figures were ~29x the class
+  /// caps; once production came down to the caps, 288 draws a day of an eighth of
+  /// each tick's output demanded 23x what a colony earned in a day. The cadence
+  /// and the share have to be quoted in the same unit, and a game day is the
+  /// unit the share is now expressed in.
+  ///
+  /// A bill rather than a per-tick tax either way: the colony breathes between
+  /// draws instead of having a slice shaved off its output thirty times a minute.
+  static const int supplyInterval = PlanetClock.ticksPerDay;
 
-  /// Share of one tick's own output that a supply draw consumes.
+  /// Share of one **day's** own output that a supply draw consumes.
   ///
   /// Expressed against the colony's **own production**, never as a per-capita
   /// figure, and that is the whole point. A fixed per-colonist rate is either
@@ -574,42 +580,123 @@ class Planet {
   double get developmentMultiplier =>
       levelDevelopment[level.clamp(1, levelDevelopment.length)] ?? 1.0;
 
-  /// Combined per-colonist yield: type advantage x the planet's own efficiency
-  /// x colony development.
-  double get _yieldScale => productionEfficiency * developmentMultiplier;
+  /// How well this colony exploits its world, applied on top of the class caps.
+  ///
+  /// A multiplier on a **capped** figure, not a multiplier on the colonists. The
+  /// old formula scaled the workforce directly, so `productionEfficiency` could
+  /// lift a colony past the peak that the cap exists to enforce — the two rules
+  /// contradicted each other. Applied to the output instead, efficiency can make
+  /// a colony approach its cap faster but never exceed it.
+  double get yieldScale => productionEfficiency * developmentMultiplier;
 
-  double _mult(String key) {
-    final m = typeMultipliers[planetType];
-    if (m == null) return 1.0;
-    return switch (key) {
-      'minerals' => m.minerals,
-      'organics' => m.organics,
-      'industrial' => m.industrial,
-      'drones' => m.drones,
-      _ => 1.0,
-    };
+  /// Per-day output for one track, with the colony's own yield applied.
+  ///
+  /// This is the figure to display, to log and to compare against a cap: it is
+  /// what the colony actually yields, bounded by what the world can possibly do.
+  int outputPerDayFor(String track) {
+    final base = baseOutputPerDayFor(track);
+    if (base <= 0) return 0;
+    // Clamped to the class ceiling. The comment above promises this and the
+    // first implementation did not do it: efficiency scaled a figure that was
+    // already the peak, so a colony with 2.0 efficiency produced twice the
+    // maximum the cap exists to enforce. Two rules that contradict is exactly
+    // what the cap was introduced to stop.
+    final scaled = (base * yieldScale).round();
+    final ceiling = maxDailyOutputFor(track);
+    return scaled > ceiling ? ceiling : scaled;
   }
 
-  int get mineralOutput => (colonistsMinerals *
-          _mult('minerals') *
-          _yieldScale *
-          baseOutputPerColonist)
-      .round();
-  int get organicOutput => (colonistsOrganics *
-          _mult('organics') *
-          _yieldScale *
-          baseOutputPerColonist)
-      .round();
-  int get industrialOutput => (colonistsIndustrial *
-          _mult('industrial') *
-          _yieldScale *
-          baseOutputPerColonist)
-      .round();
-  int get droneOutput =>
-      (colonistsDrones * _mult('drones') * _yieldScale * baseOutputPerColonist)
-          .round();
+  /// Per-tick output for one track. A double, because the triangle's figures are
+  /// small once divided by the 2,880 ticks in a day, and truncating each tick
+  /// would throw most of it away.
+  double perTickFor(String track) =>
+      PlanetClock.perDayToPerTick(outputPerDayFor(track).toDouble());
+
+  /// This world's production and lore class.
+  ///
+  /// Resolved through [PlanetClassTuning], so a value edited in Settings wins
+  /// over the shipped default. The *rule* never comes from there — only the
+  /// numbers do — which is why editing a ratio cannot produce a world whose
+  /// behaviour no longer matches the guide.
+  PlanetClassSpec get classSpec => PlanetClassTuning.specFor(planetType);
+
+  /// The **raw triangle** for one track: peak at half the maximum, falling to
+  /// zero at the maximum, before this colony's own yield is applied.
+  ///
+  /// Named `base...` on purpose. It was called `outputPerDayFor`, which reads as
+  /// "what this planet produces" and is not — it ignores efficiency and
+  /// development, and it ignores the clamp. Callers almost always want the
+  /// scaled figure, so the unscaled one is the one that should be harder to
+  /// reach for. See [ProductSpec.outputPerDay].
+  int baseOutputPerDayFor(String track) => switch (track) {
+        'minerals' => classSpec.ore.outputPerDay(colonistsMinerals),
+        'organics' => classSpec.organics.outputPerDay(colonistsOrganics),
+        'industrial' => classSpec.equipment.outputPerDay(colonistsIndustrial),
+        _ => 0,
+      };
+
+  /// Per-**tick** production for one track, from the scaled per-day figure.
+  ///
+  /// A double, and deliberately not an int: the triangle's per-day figures are
+  /// small once divided by the 2,880 ticks in a day — a Volcanic ore track peaks
+  /// at 17.36 per tick. Rounding each tick would throw away most of what the
+  /// colony makes, so the remainder is carried in [productionRemainder] and
+  /// released whenever it completes a whole unit.
+  /// Fractional units produced so far and not yet delivered into storage.
+  ///
+  /// One slot per track, because each track's remainder is its own. Without it
+  /// a colony producing 0.03/tick of a Glacial organics track would bank
+  /// nothing, ever, and the world would look broken rather than slow.
+  final Map<String, double> productionRemainder = {};
+
+  /// Units of one track produced this tick, carrying the remainder forward.
+  ///
+  /// The single place production is turned into whole units, so the tick and the
+  /// screen cannot disagree about it.
+  int _drawProduction(String track) {
+    final exact = perTickFor(track);
+    if (exact <= 0) {
+      productionRemainder[track] = 0;
+      return 0;
+    }
+    final carried = (productionRemainder[track] ?? 0) + exact;
+    final whole = carried.floor();
+    productionRemainder[track] = carried - whole;
+    return whole;
+  }
+
+  int get mineralOutput => _drawProduction('minerals');
+  int get organicOutput => _drawProduction('organics');
+  int get industrialOutput => _drawProduction('industrial');
+
+  /// Drones per tick.
+  ///
+  /// **Derived, not staffed.** There is no drone track and no drone stepper:
+  /// drones come from what the other three tracks actually produce, which is why
+  /// the fighter ceiling falls out of the production caps instead of being a
+  /// separate number someone has to keep in balance with them. See
+  /// [PlanetClassSpec.droneOutputPerDay].
+  int get droneOutput {
+    final perDay = classSpec.droneOutputPerDay(
+      orePerDay: outputPerDayFor('minerals'),
+      organicsPerDay: outputPerDayFor('organics'),
+      equipmentPerDay: outputPerDayFor('industrial'),
+    );
+    if (perDay <= 0) return 0;
+    final carried = (productionRemainder['drones'] ?? 0) +
+        PlanetClock.perDayToPerTick(perDay.toDouble());
+    final whole = carried.floor();
+    productionRemainder['drones'] = carried - whole;
+    return whole;
+  }
 
   /// Output for a named track, before any storage limit is applied.
+  ///
+  /// **These getters advance the production remainder.** That is not a side
+  /// effect to be tidied away: it is what makes them a faithful preview of what
+  /// the next tick will bank. Reading one is therefore not free, and a caller
+  /// that only wants a *display* figure should use [outputPerDayFor], which does
+  /// not consume anything.
   int outputFor(String commodity) => switch (commodity) {
         'minerals' => mineralOutput,
         'organics' => organicOutput,
@@ -617,6 +704,20 @@ class Planet {
         'drones' => droneOutput,
         _ => 0,
       };
+
+  /// What a track would produce in a whole day at its current staffing.
+  ///
+  /// The honest figure to show a player, and the one the "per tick" column
+  /// divides: it is what a well-run world actually yields, and it does not
+  /// change between ticks just because a fractional remainder completed.
+  int dailyOutputFor(String track) => outputPerDayFor(track);
+
+  /// The most of a track this world can produce in a day, at its optimum.
+  int maxDailyOutputFor(String track) =>
+      classSpec.productFor(track).maxOutputPerDay;
+
+  /// The most drones per day this world can produce.
+  int get maxDroneOutputPerDay => classSpec.maxDroneOutputPerDay;
 
   /// Mid-range unit value per commodity, used to pay out a collected shipment.
   ///
@@ -865,10 +966,7 @@ class Planet {
 
   /// Colonists currently on a production track. Never exceeds [population].
   int get assignedColonists =>
-      colonistsMinerals +
-      colonistsOrganics +
-      colonistsIndustrial +
-      colonistsDrones;
+      colonistsMinerals + colonistsOrganics + colonistsIndustrial;
 
   /// Colonists in the colony but not on a track. They still eat, and they are
   /// the pool a player draws from when re-assigning the workforce.
@@ -919,10 +1017,17 @@ class Planet {
   /// with nobody working still has a finite bill instead of dividing by zero.
   int get supplyDraw {
     if (isDestroyed || population <= 0) return 0;
-    final perTick =
-        mineralOutput + organicOutput + industrialOutput + droneOutput;
-    if (perTick > 0) {
-      return (perTick * supplyShareOfOutput).round().clamp(1, perTick);
+    // Of a **day's** output, not a tick's. The bill used to be a share of one
+    // tick's production charged every 10 ticks, which under the old inflated
+    // per-tick figures was merely generous; once production came down to the
+    // class caps, 288 bills a day of an eighth of each tick's output came to
+    // 23x the daily yield — a colony could never break even, let alone feed
+    // itself. The share is of what a day actually produces.
+    final perDay = outputPerDayFor('minerals') +
+        outputPerDayFor('organics') +
+        outputPerDayFor('industrial');
+    if (perDay > 0) {
+      return (perDay * supplyShareOfOutput).round().clamp(1, perDay);
     }
     return ((population / supplyFallbackPerPop) * baseOutputPerColonist)
         .ceil()

@@ -116,10 +116,21 @@ void main() {
       // A fixed rate per colonist is trivial at 100 and ruinous at two million.
       for (final pop in [100, 10000, 1000000]) {
         final p = colony(population: pop, minerals: pop ~/ 2);
-        final output = p.mineralOutput +
-            p.organicOutput +
-            p.industrialOutput +
-            p.droneOutput;
+        // **Per day, because the bill is per day.** The first version summed the
+        // per-tick getters, which is a different unit: the bill charges a share
+        // of a day's output once a day, so dividing it by a tick's output gave a
+        // share 2,880x too large - and for a small colony, whose per-tick output
+        // rounds to zero, the division returned Infinity and the assertion was
+        // measuring nothing.
+        //
+        // The per-tick getters also *consume* the production remainder, so
+        // summing them here would have advanced the colony's production as a
+        // side effect of measuring it.
+        final output = p.outputPerDayFor('minerals') +
+            p.outputPerDayFor('organics') +
+            p.outputPerDayFor('industrial');
+        expect(output, greaterThan(0),
+            reason: 'sanity: population $pop must make something');
         final share = p.supplyDraw / output;
         expect(share, closeTo(Planet.supplyShareOfOutput, 0.01),
             reason:

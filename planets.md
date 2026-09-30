@@ -594,6 +594,51 @@ is a perfectly good discovery-risk score. Our generator **does** produce 1-warp
 dead-ends, but only as a side effect of the orphan-repair phase. If the strategy
 depends on them, that should be intentional.
 
+### The game clock
+
+One unit of game time is one **tick**, and a tick is the 30-second loop. So:
+
+| unit | ticks | real time |
+|---|---|---|
+| game hour | 120 | 30 min |
+| game day | **2,880** | 24 h |
+
+Nothing invents its own day. A per-day figure from the source tables is divided
+by 2,880 to get a per-tick figure, and that is the whole conversion.
+
+**A game day is a real day, deliberately.** An earlier draft proposed shortening
+it so build times felt brisk; that was wrong, and instructively so — a compressed
+day would have desynchronised the planet economy from the port market, which
+already refills on a real 24 hours. With a game day being a real day the two agree
+by construction. Switching to real time for persistent multiplayer is a change to
+`PlanetClock` alone.
+
+Two consequences that were *not* obvious:
+
+- **The old economy was ~29x the new one.** A Volcanic colony at optimum made
+  1,440,000 ore/day under the linear formula and 50,000 under the class caps. The
+  "72 days to buy the game" figure in this document was measured against the old
+  one and no longer holds.
+- **The colony supply bill had to move to the same unit.** It was 8% of one
+  tick's output charged every 10 ticks. Generous while per-tick figures were
+  inflated, but at the class caps 288 bills a day came to 23× what a colony
+  earned. It is now 8% of a **day's** output, charged once a day.
+
+### Citadel tiers
+
+All ten classes have six tiers, transcribed from the source tables. Two
+translation decisions:
+
+- **Build time is in hours, not days.** The tables say 4–18 days; at 2,880 ticks
+  a day that is 4–18 *real* days of play, and construction only advances while the
+  game runs, so level 2 would be a week of evenings. Reading the same numbers as
+  hours preserves the shape of the authored table exactly — a Mountain level 2 is
+  still four times faster than a Vaporous one — while making it reachable.
+- **Colonists are a gate, not a cost**, as everywhere else in this model.
+
+Level abilities follow the source: treasury at 1, fighter defence at 2, quasar
+cannon at 3, transwarp at 4, planetary shields at 5, interdictor at 6.
+
 ### The Production Triangle
 
 Every production figure in the game comes from **one rule**, reconstructed from
@@ -667,7 +712,7 @@ sequence.
 | 2 | Harsh types -> organics 0; remove upkeep/starvation | Small | Creates the gaps that make step 3 meaningful |
 | 3 | ~~`Dep`/`Wdr` -> cargo; delete `_transferPrices`~~ | **DONE** | The hauler. **Built before step 2, reversing the documented order** — see below. |
 | 4 | ~~Genesis Torpedo + Atomic Detonator + collision rolls~~ | **DONE** | Needs 2 and 3: planting a complement is worthless if goods cannot move |
-| 5 | ~~Per-type production caps~~ | **DONE (model)** | Stops a large colony printing without limit. `planet_classes.dart` — see *The Production Triangle* below |
+| 5 | ~~Per-type production caps~~ | **DONE** | Stops a large colony printing without limit. `planet_classes.dart` — see *The Production Triangle* below |
 | 6 | Per-commodity port counterparties + `(i)` bubbles | Medium | Now answerable, because there is a reason to care which port |
 | 7 | The exchange | Medium | **Last, deliberately** — see above |
 | 8 | Port growth on unowned ports | Medium | The most likely fix for the absorption overshoot |

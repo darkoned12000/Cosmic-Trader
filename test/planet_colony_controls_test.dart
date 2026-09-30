@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
@@ -283,6 +284,107 @@ void main() {
     });
   });
 
+  group('reading the colony card does not produce anything', () {
+    // Found by fault injection, and worth stating plainly: pointing the track
+    // rows back at the per-tick getters made **every test in the suite pass**
+    // while the screen silently stole production. Those getters consume the
+    // fractional remainder on the way out, so merely *looking* at a colony banked
+    // its units early and left the remainder wrong for the real tick.
+    //
+    // No assertion on a displayed number can catch it, because the displayed
+    // number looked correct. What was broken is a **side effect on state**.
+    testWidgets('the per-day figures the card shows consume nothing',
+        (tester) async {
+      // Staffed at **this** world's optimum, read from its own class rather than
+      // assumed. The fixture is a Jungle, and its numbers are not Terran's; a
+      // hardcoded 15,000 produced 2,500/day there, which is under one unit per
+      // tick and made the consuming-getter half of this test fail for a reason
+      // that had nothing to do with consumption.
+      final ore = planet.classSpec.ore;
+      planet
+        ..population = ore.optimumColonists
+        ..colonistsMinerals = ore.optimumColonists;
+
+      // Read everything the card reads, repeatedly, as a rebuild would.
+      for (var i = 0; i < 5; i++) {
+        expect(planet.productionRemainder, isEmpty,
+            reason: 'displaying a colony must not advance its production');
+        for (final track in PlanetClassSpec.tracks) {
+          expect(planet.outputPerDayFor(track), greaterThanOrEqualTo(0));
+          expect(planet.perTickFor(track), greaterThanOrEqualTo(0));
+        }
+        expect(planet.maxDroneOutputPerDay, greaterThanOrEqualTo(0));
+      }
+      await pump(tester, playerWith());
+      expect(planet.productionRemainder, isEmpty,
+          reason: 'and the card itself must not advance it either');
+    });
+
+    testWidgets(
+        'the per-tick getters do consume, which is why the card avoids '
+        'them', (tester) async {
+      // The other half of the property. Without this, "the card consumes
+      // nothing" could pass because nothing consumes anything, and the rename
+      // would have removed a mechanism rather than a bug.
+      final ore = planet.classSpec.ore;
+      planet
+        ..population = ore.optimumColonists
+        ..colonistsMinerals = ore.optimumColonists;
+
+      expect(planet.productionRemainder, isEmpty);
+      // At the optimum this world makes its peak per day, which is a fraction of
+      // a unit per tick, so the remainder is where the units live.
+      final expectedPerTick = ore.maxOutputPerDay / PlanetClock.ticksPerDay;
+      expect(expectedPerTick, greaterThan(1),
+          reason: 'sanity: the peak must exceed one unit per tick, or there is '
+              'no remainder to observe');
+      expect(expectedPerTick, lessThan(2),
+          reason: 'sanity: and must be under two, so the first tick banks '
+              'exactly one whole unit');
+
+      final first = planet.mineralOutput;
+      expect(first, 1, reason: 'one whole unit banked, the rest carried');
+      expect(planet.productionRemainder.containsKey('minerals'), isTrue,
+          reason: 'the per-tick getter must carry its fraction forward');
+      expect(planet.productionRemainder['minerals'],
+          closeTo(expectedPerTick - 1, 0.0001));
+    });
+
+    testWidgets('a tick is what moves production', (tester) async {
+      final ore = planet.classSpec.ore;
+      planet
+        ..population = ore.optimumColonists
+        ..colonistsMinerals = ore.optimumColonists;
+      final before = planet.productionRemainder['minerals'] ?? 0.0;
+      planet.produce();
+      expect(planet.productionRemainder['minerals'], isNot(before),
+          reason: 'the tick is the only thing that should advance production');
+    });
+
+    test('the colony card reads the non-consuming getter', () {
+      // A source scan, and deliberately so. This is a **structural** fact —
+      // which identifier the track rows call — and not a behavioural one, so
+      // scanning is the right tool. (The lesson about scans being answered by
+      // prose was about asserting *behaviour* through source; here a comment
+      // mentioning `mineralOutput` would fail this scan, which is a false
+      // positive someone can see and fix, rather than a guard that silently
+      // vouches for the wrong behaviour.)
+      final screen = File('lib/screens/planet_screen.dart').readAsStringSync();
+      // The row builder's call site, not the whole file: the drone readout and
+      // the tick-reporting paths legitimately use the per-day form too.
+      final rows = screen.substring(
+        screen.indexOf('for (final t in PlanetClassSpec.tracks)'),
+        screen.indexOf('_droneReadout(planet, cs)'),
+      );
+      expect(rows, contains('planet.outputPerDayFor(t)'));
+      expect(rows, isNot(contains('mineralOutput')),
+          reason: 'the per-tick getters consume the production remainder, so '
+              'reading the card would take production away from the colony');
+      expect(rows, isNot(contains('organicOutput')));
+      expect(rows, isNot(contains('industrialOutput')));
+    });
+  });
+
   group('each track row has exactly one of each button', () {
     testWidgets('one add and one remove per track, not two of either',
         (tester) async {
@@ -300,9 +402,11 @@ void main() {
       // glyph is what selects these and nothing else.
       await pump(tester, playerWith());
 
-      expect(find.byIcon(Icons.add), findsNWidgets(4),
+      // Three, not four: drones used to be a fourth workforce track and are now
+      // derived from the output of the other three, so there is nothing to staff.
+      expect(find.byIcon(Icons.add), findsNWidgets(3),
           reason: 'one assign button per production track');
-      expect(find.byIcon(Icons.remove), findsNWidgets(4),
+      expect(find.byIcon(Icons.remove), findsNWidgets(3),
           reason: 'a second remove per row would be a duplicate control');
     });
 
@@ -318,16 +422,21 @@ void main() {
           .toList();
 
       expect(tooltips.where((m) => m.startsWith('Assign from reserve')),
-          hasLength(4),
+          hasLength(3),
           reason: 'each add button names its source');
-      expect(tooltips.where((m) => m == 'Return to reserve'), hasLength(4),
+      expect(tooltips.where((m) => m == 'Return to reserve'), hasLength(3),
           reason: 'each remove button names its destination');
     });
   });
 
   group('workforce steppers move less than a full step', () {
     testWidgets('a small reserve can still be assigned', (tester) async {
-      expect(planet.reserveColonists, 200);
+      // 300, not the 200 this used to assert. The fixture still staffs 100
+      // colonists on the drone track, and drones are no longer a workforce track,
+      // so those 100 are in the reserve and available to assign. The test is
+      // about a *small* reserve still being movable, and 300 is still small
+      // against a 100-colonist step.
+      expect(planet.reserveColonists, 300);
       expect(planet.population, 900);
       await pump(tester, playerWith());
 
