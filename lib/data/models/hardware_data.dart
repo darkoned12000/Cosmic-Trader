@@ -463,7 +463,7 @@ List<HardwareItem> _generateConsumables() => [
             'is best cleared with a detonator and re-rolled.',
         category: HardwareCategory.consumable,
         level: 1,
-        priceCredits: 250000,
+        priceCredits: 50000,
         statLine: 'Creates 1 world - 1 cargo slot',
       ),
       HardwareItem(
@@ -475,7 +475,7 @@ List<HardwareItem> _generateConsumables() => [
             'tool and not a reset button.',
         category: HardwareCategory.consumable,
         level: 1,
-        priceCredits: 120000,
+        priceCredits: 5000,
         statLine: 'Destroys 1 world - 1 cargo slot',
       ),
     ];

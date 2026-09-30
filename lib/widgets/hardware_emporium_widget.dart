@@ -137,7 +137,8 @@ class _HardwareEmporiumWidgetState extends State<HardwareEmporiumWidget>
                           onPlayerUpdate: _updatePlayer,
                           category: HardwareCategory.engine),
                       _ModulesTab(player: p, onPlayerUpdate: _updatePlayer),
-                      _ConsumablesTab(player: p, onPlayerUpdate: _updatePlayer),
+                      EmporiumConsumablesTab(
+                          player: p, onPlayerUpdate: _updatePlayer),
                       _ScrapTab(player: p, onPlayerUpdate: _updatePlayer),
                     ],
                   ),
@@ -1737,11 +1738,31 @@ class _ItemCard extends StatelessWidget {
 /// limit. Both can be **returned for half price**, which matters: without it a
 /// player who fills the hold with ordnance has no way to get the space back, and
 /// a dead end that locks up cargo is worse than a bad purchase.
-class _ConsumablesTab extends StatelessWidget {
+/// Hardware emporium: the Genesis Torpedo and the Atomic Detonator.
+///
+/// Public rather than private, and specifically so that a test can drive the
+/// **real** buy path. The first version of `test/emporium_ordnance_test.dart`
+/// reimplemented the purchase logic in a harness of its own — and a copy of the
+/// code under test proves nothing about it. It would have kept passing if the
+/// emporium went back to the clamp that shipped.
+///
+/// **The only place either item can be bought**, and that holds by construction
+/// rather than by a check: this widget is only reachable from a port with
+/// `isHardwareEmporium`, so there is no gate here to forget.
+///
+/// Both are **equipment, not cargo** — carried on the ship, taking no hold space,
+/// so a hold full of ore is never a reason to be short of them. Both can be
+/// returned for half price, because money spent on a roll that went badly is
+/// money the player can never otherwise get back.
+class EmporiumConsumablesTab extends StatelessWidget {
   final Player player;
   final Function(Player) onPlayerUpdate;
 
-  const _ConsumablesTab({required this.player, required this.onPlayerUpdate});
+  const EmporiumConsumablesTab({
+    super.key,
+    required this.player,
+    required this.onPlayerUpdate,
+  });
 
   /// Fraction of the purchase price returned when selling an item back.
   static const double _returnRate = 0.5;
@@ -1771,15 +1792,19 @@ class _ConsumablesTab extends StatelessWidget {
     final credits = sign > 0
         ? player.credits - _priceOf(id)
         : player.credits + (_priceOf(id) * _returnRate).round();
+    // Floor at zero and **nothing else**. The upper bound used to be `held`,
+    // which was meant to stop a *return* taking more than was carried — and it
+    // silently destroyed every purchase, because `(held + 1).clamp(0, held)`
+    // clamps `held + 1` down to `held`. Buying from empty therefore cost credits
+    // and changed nothing: the button worked, the money left, and the count never
+    // moved. The upper bound is unnecessary in any case; a decrement of `held`
+    // lands on zero on its own.
+    final next = held + sign < 0 ? 0 : held + sign;
     return switch (id) {
-      'genesisTorpedo' => player.copyWith(
-          credits: credits,
-          genesisTorpedoes: (held + sign).clamp(0, held),
-        ),
-      'atomicDetonator' => player.copyWith(
-          credits: credits,
-          atomicDetonators: (held + sign).clamp(0, held),
-        ),
+      'genesisTorpedo' =>
+        player.copyWith(credits: credits, genesisTorpedoes: next),
+      'atomicDetonator' =>
+        player.copyWith(credits: credits, atomicDetonators: next),
       _ => player,
     };
   }
