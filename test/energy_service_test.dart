@@ -125,8 +125,8 @@ void main() {
     final rich = _player(energy: 100);
     final poor = _player(energy: 0);
 
-    expect(EnergyService.canScanPlanet(rich), isTrue);
-    expect(EnergyService.canScanPlanet(poor), isFalse);
+    expect(EnergyService.canScan(rich), isTrue);
+    expect(EnergyService.canScan(poor), isFalse);
     expect(EnergyService.canWarp(rich), isTrue);
     expect(EnergyService.canWarp(poor), isFalse);
   });

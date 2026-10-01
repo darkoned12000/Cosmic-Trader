@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:cosmic_trader/data/models/faction.dart';
@@ -10,36 +9,12 @@ import 'package:cosmic_trader/screens/planet_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/storage_fakes.dart';
 
 /// Faithful storage: re-parses on every load and really writes, so a mutation
 /// that is not saved cannot be observed by accident. The old fake returned one
 /// shared list with a no-op `saveSectors`, which is why a printer masquerading
 /// as a transfer went unnoticed.
-class _FaithfulUniverse extends UniverseStorage {
-  _FaithfulUniverse(List<Sector> initial) : _blob = _encode(initial);
-
-  String _blob;
-  static String _encode(List<Sector> s) =>
-      jsonEncode(s.map((e) => e.toJson()).toList(growable: false));
-
-  @override
-  Future<List<Sector>> loadUniverse() async =>
-      (jsonDecode(_blob) as List<dynamic>)
-          .cast<Map<String, dynamic>>()
-          .map(Sector.fromJson)
-          .toList();
-
-  @override
-  Future<void> saveSectors(List<Sector> updated) async {
-    final existing = await loadUniverse();
-    if (existing.isEmpty) return;
-    for (final u in updated) {
-      final i = existing.indexWhere((s) => s.id == u.id);
-      if (i >= 0) existing[i] = u;
-    }
-    _blob = _encode(existing);
-  }
-}
 
 void main() {
   setUpAll(() async {
@@ -49,7 +24,7 @@ void main() {
     await loader.load();
   });
 
-  late _FaithfulUniverse store;
+  late FaithfulUniverse store;
   late Planet planet;
   late Sector sector;
   late List<Player> seen;
@@ -78,7 +53,7 @@ void main() {
       warpRoutes: const [],
       planets: [planet],
     );
-    store = _FaithfulUniverse([sector]);
+    store = FaithfulUniverse([sector]);
     UniverseStorage.instanceForTest = store;
     seen = [];
   });

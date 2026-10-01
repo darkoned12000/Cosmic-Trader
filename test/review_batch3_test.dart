@@ -380,6 +380,91 @@ void main() {
       expect(npc.credits, 5000);
       expect(npc.currentGoal?.type, isNot(NpcGoalType.tradeRoute));
     });
+
+    // Both tests above drive the SELL leg only — a goal in travel_to_sell
+    // arriving at the offending port. The buy leg was unguarded, and
+    // deleting `deniesServiceTo(buyStanding)` from the buy phase passed
+    // this whole file. A port that refuses service has to refuse *both*
+    // sides: an NPC that cannot sell to pirates must equally not buy from
+    // them, and the standing rule is the only thing enforcing that.
+    Sector seller(int id, {bool destroyed = false, bool pirate = true}) {
+      return Sector(
+        id: id,
+        name: 'S$id',
+        x: 0,
+        y: 0,
+        warpRoutes: const [12],
+        hasPort: true,
+        port: Port(
+          name: 'Shop',
+          portClass: PortClass.free,
+          buyPrices: const {},
+          sellPrices: const {'minerals': 10.0},
+          supply: const {'minerals': 500},
+          demand: const {},
+          maxSupply: const {'minerals': 500},
+          maxDemand: const {},
+          portCredits: 1000000,
+          desiredCredits: 1000000,
+          ownerFaction: pirate ? FactionClass.pirate : null,
+          isDestroyed: destroyed,
+        ),
+      );
+    }
+
+    NpcShip buyer() =>
+        _npc(FactionClass.trader, 11, 953, credits: 5000).copyWith(
+          memory: const NpcMemory().copyWith(
+            factionStandings: {'pirate': -100},
+            visitedSectors: {11, 12},
+          ),
+          currentGoal: _travelTrade(
+            buy: 11,
+            sell: 12,
+            phase: 'travel_to_buy',
+          ),
+        );
+
+    test('a refusing port does not sell to the NPC either', () {
+      // One sector instance, used by the turn. An earlier version built the
+      // sector twice — passing `destroyed: true` to a throwaway copy while
+      // `processTurn` was handed a fresh, live one — so the test asserted
+      // nothing about destruction and deleting the guard changed nothing.
+      final shop = seller(11);
+      final npc = buyer();
+      final after = NpcAiService.processTurn(npc, [
+        shop,
+        _plain(12, [11])
+      ], [], [
+        npc
+      ]);
+
+      // The transaction is the evidence, not the goal. A refused leg fails
+      // and clears, and step 5 then legitimately picks a fresh goal, so
+      // asserting on `currentGoal` measures selection rather than the guard.
+      expect(after.credits, 5000, reason: 'no credits left the wallet');
+      expect(after.cargo['minerals'] ?? 0, 0, reason: 'nothing was loaded');
+      expect(after.memory.failedRoutes.keys, isNotEmpty,
+          reason: 'the refusal is recorded so the route cools instead of '
+              'being re-picked every tick');
+    });
+
+    test('a wrecked port does not sell to the NPC either', () {
+      final shop = seller(11, pirate: false, destroyed: true);
+      expect(shop.port!.isDestroyed, isTrue,
+          reason: 'the fixture must actually be the thing under test');
+      final npc = buyer();
+      final after = NpcAiService.processTurn(npc, [
+        shop,
+        _plain(12, [11])
+      ], [], [
+        npc
+      ]);
+
+      expect(after.credits, 5000);
+      expect(after.cargo['minerals'] ?? 0, 0);
+      expect(after.memory.failedRoutes.keys, isNotEmpty);
+    });
   });
 
   group('P1 scan no-ops and threat prune', () {
@@ -549,6 +634,65 @@ void main() {
       // 'no longer buys' fail under the sell> namespace (never N>N).
       expect(npc.memory.failedRoutes.keys, ['sell>11:minerals']);
       expect(npc.memory.profitableRoutes, isEmpty);
+    });
+
+    // The test above is a FAILURE path, so on its own it cannot see the
+    // learning half: the run dies at "no longer buys" and the learning
+    // code is never reached, leaving `profitableRoutes` empty whether or
+    // not sell-only runs are excluded from it — deleting the
+    // `buyPortId != sellPortId` guard passed the whole file. This port
+    // actually BUYS, so the leg completes with profit > 0 and the only
+    // thing between it and a recorded "11>11:minerals" win is the guard.
+    test('a completing sell-only run still teaches nothing', () {
+      final sectors = [
+        Sector(
+          id: 11,
+          name: 'Buyer',
+          x: 0,
+          y: 0,
+          warpRoutes: const [12],
+          hasPort: true,
+          port: const Port(
+            name: 'Buyer',
+            portClass: PortClass.free,
+            buyPrices: {'minerals': 100.0},
+            sellPrices: {},
+            supply: {},
+            demand: {'minerals': 50},
+            maxSupply: {},
+            maxDemand: {'minerals': 50},
+            portCredits: 1000000,
+            desiredCredits: 1000000,
+          ),
+        ),
+        _plain(12, [11]),
+      ];
+      var npc = _npc(FactionClass.trader, 11, 982, credits: 0).copyWith(
+        cargo: const {'minerals': 10},
+        cargoUsed: 10,
+        currentGoal: _travelTrade(
+          buy: 11,
+          sell: 11,
+          phase: 'travel_to_sell',
+        ),
+      );
+      npc = NpcAiService.processTurn(npc, sectors, [], [npc]);
+
+      // The leg really did complete, and really was profitable —
+      // otherwise the assertions below are asserting nothing. The goal
+      // itself is NOT evidence: step 5 legitimately replaces a completed
+      // goal with a freshly selected one, so the durable proof is the
+      // transaction — credits paid out, holds emptied, demand consumed.
+      expect(npc.credits, greaterThan(0), reason: 'port paid the seller');
+      expect(npc.cargo['minerals'], isNull, reason: 'holds emptied');
+      expect(sectors.first.port!.demand['minerals'], 40,
+          reason: 'port demand decremented by the 10 units sold');
+
+      // A sell-only self-loop is a key shape TradeEvaluator can never
+      // produce, so remembering it is pure noise in the route book.
+      expect(npc.memory.profitableRoutes, isEmpty);
+      expect(
+          npc.memory.profitableRoutes.containsKey('11>11:minerals'), isFalse);
     });
   });
 

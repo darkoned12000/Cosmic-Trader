@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -31,7 +32,7 @@ class PortTradeView extends StatelessWidget {
   final VoidCallback onOpenHackCodex;
   final int hackFailCount;
   final int maxHackAttempts;
-  final int? hackBannedUntilEpoch;
+  final int? hackBannedUntilTick;
   final VoidCallback? onBanExpired;
 
   /// Units moved per buy/sell tap, or [maxTradeAmount] for "as much as possible".
@@ -60,7 +61,7 @@ class PortTradeView extends StatelessWidget {
     required this.onOpenHackCodex,
     required this.hackFailCount,
     required this.maxHackAttempts,
-    this.hackBannedUntilEpoch,
+    this.hackBannedUntilTick,
     this.onBanExpired,
   });
 
@@ -210,7 +211,6 @@ class PortTradeView extends StatelessWidget {
         ? (transactionValue * port.ownerTaxRate).round()
         : 0;
 
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
     onPortUpdated(port.copyWith(
       supply: <String, int>{
         ...port.supply,
@@ -218,7 +218,6 @@ class PortTradeView extends StatelessWidget {
       },
       portCredits: port.portCredits + transactionValue,
       accumulatedRevenue: port.accumulatedRevenue + ownerFee,
-      lastRegenTime: nowMs,
     ));
 
     onPlayerUpdate(_withTradeReputation(player.copyWith(
@@ -257,7 +256,6 @@ class PortTradeView extends StatelessWidget {
         ? (transactionValue * port.ownerTaxRate).round()
         : 0;
 
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
     onPortUpdated(port.copyWith(
       demand: <String, int>{
         ...port.demand,
@@ -266,7 +264,6 @@ class PortTradeView extends StatelessWidget {
       portCredits:
           (port.portCredits - transactionValue).clamp(0, double.infinity),
       accumulatedRevenue: port.accumulatedRevenue + ownerFee,
-      lastRegenTime: nowMs,
     ));
 
     onPlayerUpdate(_withTradeReputation(player.copyWith(
@@ -857,8 +854,8 @@ class PortTradeView extends StatelessWidget {
             title: isBanned ? 'Port banned' : 'Hack port',
             trailing: isBanned
                 ? _LiveBanCountdown(
-                    banUntilEpoch: hackBannedUntilEpoch ??
-                        player.portHackBannedUntil[port.name],
+                    banUntilTick: hackBannedUntilTick ??
+                        player.portHackBannedUntilTick[port.name],
                     onExpired: onBanExpired,
                     color: cs.error.withValues(alpha: 0.6),
                   )
@@ -968,12 +965,13 @@ class PortTradeView extends StatelessWidget {
 
 class _LiveBanCountdown extends StatefulWidget {
   const _LiveBanCountdown({
-    required this.banUntilEpoch,
+    required this.banUntilTick,
     required this.color,
     this.onExpired,
   });
 
-  final int? banUntilEpoch;
+  /// Game tick at which the ban lifts. Null = no ban. See `GameClock`.
+  final int? banUntilTick;
   final Color color;
   final VoidCallback? onExpired;
 
@@ -985,27 +983,32 @@ class _LiveBanCountdownState extends State<_LiveBanCountdown> {
   Timer? _timer;
   bool _didNotify = false;
 
-  Duration get _remaining {
-    final until = widget.banUntilEpoch;
-    if (until == null) return Duration.zero;
-    final value = until - DateTime.now().millisecondsSinceEpoch;
-    return value > 0 ? Duration(milliseconds: value) : Duration.zero;
-  }
+  /// Ticks until the ban lifts. Zero means expired **or** no ban, which is the
+  /// same thing to every caller.
+  int get _remainingTicks => GameClock.remaining(widget.banUntilTick ?? -1);
 
+  /// `23h 58m`, tick-granular.
+  ///
+  /// Deliberately not `23:58:31`. A tick is 30 seconds, so a seconds-resolution
+  /// display would be inventing precision the deadline does not have — the value
+  /// could only ever change once every 30 frames, and the last two digits would be
+  /// a lie for 29 of them.
   String get _formatted {
-    final remaining = _remaining;
-    final hours = remaining.inHours.toString().padLeft(2, '0');
-    final minutes = (remaining.inMinutes % 60).toString().padLeft(2, '0');
-    final seconds = (remaining.inSeconds % 60).toString().padLeft(2, '0');
-    return '$hours:$minutes:$seconds';
+    final ticks = _remainingTicks;
+    if (ticks <= 0) return 'expired';
+    return GameClock.format(ticks);
   }
 
   @override
   void initState() {
     super.initState();
+    // Re-renders once a second so the ban clears promptly on a tick boundary
+    // rather than only when something else forces a rebuild. The *string* it
+    // renders only changes every 30 seconds, which is the deadline's real
+    // resolution — see [_formatted].
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      if (_remaining == Duration.zero) {
+      if (_remainingTicks == 0) {
         _timer?.cancel();
         _timer = null;
         if (!_didNotify) {

@@ -18,7 +18,7 @@ class _FakeUniverse extends UniverseStorage {
   @override
   Future<List<Sector>> loadUniverse() async => sectors;
   @override
-  Future<void> saveSectors(List<Sector> updated) async {}
+  Future<bool> saveSectors(List<Sector> updated) async => true;
 }
 
 /// Mirrors `PlanetScreen._formatNumber`, so an expectation is written the way a
@@ -164,8 +164,15 @@ void main() {
     testWidgets('an info bubble sits beside the colonists label',
         (tester) async {
       await pump(tester);
-      expect(find.byIcon(Icons.info_outline_rounded), findsOneWidget,
-          reason: 'only the colonists row has a non-flat price to explain');
+      // Was `findsOneWidget`, reasoned as "only the colonists row has a
+      // non-flat price to explain". The Supply draw row now has one too, so the
+      // count is no longer the property — and it never was the right property:
+      // a count cannot tell *which* row grew a bubble. The colonists bubble is
+      // identified by its content instead, which is what the sibling tests below
+      // already do.
+      expect(find.byIcon(Icons.info_outline_rounded), findsWidgets);
+      expect(_colonistTooltip(tester).message, isNotNull,
+          reason: 'the colonists row must still carry its own explanation');
     });
 
     testWidgets(
@@ -213,10 +220,15 @@ void main() {
           .widgetList<Text>(find.byType(Text))
           .map((t) => t.data ?? '')
           .join('|');
-      expect(text, contains('0/${compact(planet.maxMinerals)}'));
-      expect(text, contains('0/${compact(planet.maxOrganics)}'));
-      expect(text, contains('0/${compact(planet.maxIndustrial)}'));
-      expect(text, contains('0/${compact(planet.maxDrones)}'));
+      // The three production rows carry two decimals now, so an empty store
+      // reads `0.00` rather than `0`. Asserted as exact row strings rather than
+      // substrings: `0.00/80.0K` *contains* `0/80.0K`, so a substring check
+      // cannot tell the minerals row from a row that borrowed the wrong cap.
+      final rows = text.split('|').toSet();
+      expect(rows, contains('0.00/${compact(planet.maxMinerals)}'));
+      expect(rows, contains('0.00/${compact(planet.maxOrganics)}'));
+      expect(rows, contains('0.00/${compact(planet.maxIndustrial)}'));
+      expect(rows, contains('0/${compact(planet.maxDrones)}'));
     });
 
     testWidgets('drones are shown against the drone cap, not the mineral one',
@@ -228,9 +240,15 @@ void main() {
           .widgetList<Text>(find.byType(Text))
           .map((t) => t.data ?? '')
           .join('|');
-      expect(text, contains('0/${compact(planet.maxDrones)}'));
-      expect(text, isNot(contains('0/${compact(planet.maxMinerals)}')),
+      final rows = text.split('|').toSet();
+      expect(rows, contains('0/${compact(planet.maxDrones)}'));
+      // Exact row, not a substring: the minerals row reads `0.00/80.0K`, which
+      // *contains* `0/80.0K`, so a substring form of this assertion failed for a
+      // reason that had nothing to do with the drone row.
+      expect(rows, isNot(contains('0/${compact(planet.maxMinerals)}')),
           reason: 'the drone row must not borrow the mineral cap');
+      expect(rows, isNot(contains('0.00/${compact(planet.maxDrones)}')),
+          reason: 'nor may a production row borrow the drone cap');
     });
 
     testWidgets('a partially filled store shows both numbers', (tester) async {
@@ -240,7 +258,9 @@ void main() {
           .widgetList<Text>(find.byType(Text))
           .map((t) => t.data ?? '')
           .join('|');
-      expect(text, contains('12.3K/${compact(planet.maxMinerals)}'));
+      // Two decimals and grouping, which is the point of the change: a slow
+      // track must be visibly moving, and `12.3K` hid every change at this size.
+      expect(text, contains('12,345.00/${compact(planet.maxMinerals)}'));
     });
   });
 

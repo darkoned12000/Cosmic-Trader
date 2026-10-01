@@ -806,7 +806,6 @@ class UniverseGenerator {
     final owner = _pickPortOwner(sector, rng);
     final ownerFaction = _pickOwnerFaction(owner, portClass, rng);
 
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
     return Port(
       name: name ?? _portName(sector.id, rng),
       portClass: portClass,
@@ -822,7 +821,6 @@ class UniverseGenerator {
       desiredCredits: portCredits,
       owner: owner,
       ownerFaction: ownerFaction,
-      lastRegenTime: nowMs,
     );
   }
 
@@ -1158,7 +1156,7 @@ class UniverseGenerator {
       p.homeworldOf = FactionClass.pirate;
       p.owner = null;
       p.productionTimer = 5;
-      p.spawnInterval = 12;
+      p.spawnInterval = Planet.pirateOutpostSpawnInterval;
       placed++;
     }
     if (placed == 0) {
@@ -1287,7 +1285,10 @@ class UniverseGenerator {
       colonistsMinerals: 3000,
       colonistsOrganics: 3000,
       colonistsIndustrial: 2000,
-      colonistsDrones: 2000,
+      // No `colonistsDrones`: drones are derived, not staffed, so seeding
+      // the corpse of the old track bought nothing. The colonists it used to
+      // hold simply sit in the reserve, which is where they have always
+      // actually been — `assignedColonists` never counted them.
       productionEfficiency: 1.0,
       storedMinerals: 5000,
       storedOrganics: 3000,
@@ -1306,7 +1307,7 @@ class UniverseGenerator {
       hull: 20000,
       maxHull: 20000,
       productionTimer: 8,
-      spawnInterval: 10,
+      spawnInterval: Planet.defaultSpawnInterval,
       imagePath: _randomPlanetImage(type, rng),
       scanned: true,
     );
@@ -1327,7 +1328,12 @@ class UniverseGenerator {
 
   Planet _createPlanet(Sector sector, math.Random rng) {
     final type = _pickPlanetType(sector, rng);
-    final efficiency = 0.5 + rng.nextDouble() * 1.0;
+    // Named bounds from the model, so the Planet Guide can quote the range
+    // without transcribing it. The arithmetic is identical to the `0.5 + x * 1.0`
+    // it replaced, and `nextDouble()` is still drawn exactly once, so no
+    // universe changes and no seed shifts.
+    final efficiency = Planet.minEfficiency +
+        rng.nextDouble() * (Planet.maxEfficiency - Planet.minEfficiency);
     final startingResources = 50 + rng.nextInt(200);
     final baseName = Planet.planetNames[sector.id % Planet.planetNames.length];
     final defenseLevel = rng.nextInt(3); // 0-2
@@ -1357,11 +1363,12 @@ class UniverseGenerator {
     );
   }
 
-  String _randomPlanetImage(String type, math.Random rng) {
-    final pool = Planet.imagePool[type];
-    if (pool == null || pool.isEmpty) return 'Unknown_World_1.gif';
-    return 'assets/images/planets/${pool[rng.nextInt(pool.length)]}';
-  }
+  /// Delegates to [Planet.randomImageFor] so the asset prefix is applied in
+  /// exactly one place. It used to build `assets/images/planets/...` here while
+  /// `WorldForging` did not, so generated worlds had pictures and torpedoed ones
+  /// did not — the same rule, two hand-written copies, one of them wrong.
+  String? _randomPlanetImage(String type, math.Random rng) =>
+      Planet.randomImageFor(type, rng);
 
   String _pickPlanetType(Sector sector, math.Random rng) {
     if (sector.id <= settings.fedSpaceEnd && rng.nextDouble() < 0.6) {
@@ -1380,7 +1387,14 @@ class UniverseGenerator {
       'Ice',
       'Lava',
       'Lava',
-      'Gas Giant',
+      // Class L. Weighted like Desert and Ocean rather than given a rare slot:
+      // it is a highland world productive in all three commodities, so it is
+      // the complement the harsh types are designed to want beside them, and a
+      // world that exists mostly in torpedo rolls is not a complement. Adding
+      // an entry shifts every later draw, so this changes generated universes
+      // for a given seed — the same caveat that applies to `planetDensity`.
+      'Mountain',
+      'Mountain',
       'Moon',
       'Moon',
       'Barren',

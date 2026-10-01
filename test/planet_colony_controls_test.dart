@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:cosmic_trader/data/models/faction.dart';
@@ -12,33 +11,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/storage_fakes.dart';
 
 /// Faithful storage: re-parses on every load and really writes, so a mutation
 /// that is not saved cannot be observed by accident.
-class _FaithfulUniverse extends UniverseStorage {
-  _FaithfulUniverse(List<Sector> initial) : _blob = _encode(initial);
-  String _blob;
-  static String _encode(List<Sector> s) =>
-      jsonEncode(s.map((e) => e.toJson()).toList(growable: false));
-
-  @override
-  Future<List<Sector>> loadUniverse() async =>
-      (jsonDecode(_blob) as List<dynamic>)
-          .cast<Map<String, dynamic>>()
-          .map(Sector.fromJson)
-          .toList();
-
-  @override
-  Future<void> saveSectors(List<Sector> updated) async {
-    final existing = await loadUniverse();
-    if (existing.isEmpty) return;
-    for (final u in updated) {
-      final i = existing.indexWhere((s) => s.id == u.id);
-      if (i >= 0) existing[i] = u;
-    }
-    _blob = _encode(existing);
-  }
-}
 
 /// Every non-empty label in the built semantics tree, in document order.
 ///
@@ -82,7 +58,7 @@ void main() {
     await loader.load();
   });
 
-  late _FaithfulUniverse store;
+  late FaithfulUniverse store;
   late Planet planet;
   late Sector sector;
   late List<Player> seen;
@@ -111,7 +87,7 @@ void main() {
       warpRoutes: const [],
       planets: [planet],
     );
-    store = _FaithfulUniverse([sector]);
+    store = FaithfulUniverse([sector]);
     UniverseStorage.instanceForTest = store;
     seen = [];
   });
@@ -306,15 +282,43 @@ void main() {
         ..colonistsMinerals = ore.optimumColonists;
 
       // Read everything the card reads, repeatedly, as a rebuild would.
+      //
+      // The first version of this loop asserted only `>= 0` on each figure,
+      // which is near-vacuous — a production rate cannot be negative unless a
+      // multiplier is, and that would fail a dozen other tests first. The
+      // property actually worth asserting is that **reading is idempotent**:
+      // the figures are identical on every pass, which is what non-consumption
+      // means for a getter. A consuming getter would drift, and `>= 0` would not
+      // notice.
+      final perDay = <String, int>{};
+      final perTick = <String, double>{};
       for (var i = 0; i < 5; i++) {
         expect(planet.productionRemainder, isEmpty,
             reason: 'displaying a colony must not advance its production');
         for (final track in PlanetClassSpec.tracks) {
-          expect(planet.outputPerDayFor(track), greaterThanOrEqualTo(0));
-          expect(planet.perTickFor(track), greaterThanOrEqualTo(0));
+          final day = planet.outputPerDayFor(track);
+          final tick = planet.perTickFor(track);
+          if (i == 0) {
+            perDay[track] = day;
+            perTick[track] = tick;
+          } else {
+            expect(day, perDay[track],
+                reason:
+                    '$track/day changed on read $i — the card is consuming');
+            expect(tick, perTick[track],
+                reason: '$track/tick changed on read $i');
+          }
         }
-        expect(planet.maxDroneOutputPerDay, greaterThanOrEqualTo(0));
+        if (i > 0) {
+          expect(planet.maxDroneOutputPerDay, isNotNull,
+              reason: 'and the drone ceiling is still readable');
+        }
       }
+      // At least one track must be producing, or the stability assertion above
+      // is vacuous — every figure would be a constant zero.
+      expect(perDay.values.any((v) => v > 0), isTrue,
+          reason: 'the fixture must actually produce, or "unchanged" proves '
+              'nothing');
       await pump(tester, playerWith());
       expect(planet.productionRemainder, isEmpty,
           reason: 'and the card itself must not advance it either');
@@ -369,12 +373,18 @@ void main() {
       // mentioning `mineralOutput` would fail this scan, which is a false
       // positive someone can see and fix, rather than a guard that silently
       // vouches for the wrong behaviour.)
-      final screen = File('lib/screens/planet_screen.dart').readAsStringSync();
+      // **The colony card, not the screen.** The row builder moved to
+      // `widgets/planet/planet_colony_card.dart` when the screen was split, and a
+      // scan pinned to a file path does not follow a move — it just starts
+      // failing on `indexOf` returning -1. That is the cost of a structural scan
+      // and it is worth paying, but the path has to be part of the change.
+      final card =
+          File('lib/widgets/planet/planet_colony_card.dart').readAsStringSync();
       // The row builder's call site, not the whole file: the drone readout and
       // the tick-reporting paths legitimately use the per-day form too.
-      final rows = screen.substring(
-        screen.indexOf('for (final t in PlanetClassSpec.tracks)'),
-        screen.indexOf('_droneReadout(planet, cs)'),
+      final rows = card.substring(
+        card.indexOf('for (final t in PlanetClassSpec.tracks)'),
+        card.indexOf('_DroneReadout(planet'),
       );
       expect(rows, contains('planet.outputPerDayFor(t)'));
       expect(rows, isNot(contains('mineralOutput')),

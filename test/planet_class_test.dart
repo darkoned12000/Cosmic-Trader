@@ -14,7 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// hand-typed output figure. If any of it is wrong, one of these assertions
 /// fails — which is the point of reconstructing the rule instead of the numbers.
 /// It also keeps the four **derived** classes honest: they are checked against
-/// the same relationships as the seven sourced ones, so "we chose these" cannot
+/// the same relationships as the six sourced ones, so "we chose these" cannot
 /// quietly become "these were never checked".
 void main() {
   /// The published figures, keyed by class designation.
@@ -28,7 +28,6 @@ void main() {
     'L': 1250, // Mountain  15000 / 12
     'C': 64, // Glacial     1600 / 25
     'H': 1002, // Volcanic  50100 / 50
-    'U': 0, // Vaporous        0 /  0
   };
 
   group('every sourced class reproduces its published figures', () {
@@ -129,17 +128,63 @@ void main() {
       expect(organics.maxOutputPerDay, 0);
     });
 
-    test('a Vaporous world produces nothing at all', () {
-      final spec = planetClasses['Gas Giant']!;
-      for (final track in PlanetClassSpec.tracks) {
-        expect(spec.productFor(track).isPossible, isFalse, reason: track);
+    // The zero-output world these guards exist for is gone, and it is worth
+    // recording what it was, because the two tables used to disagree about it and
+    // **both tests were green**: `TypeMultipliers` gave it 0.6 organics, so one
+    // file asserted it grew food, while the class spec gave it N-A on every
+    // product, so this file asserted it produced nothing at all. One type, two
+    // answers, from two tables — and the class spec is the live rule, so that is
+    // the answer that shipped.
+    //
+    // A dead world is a worse outcome than a bad one, which is why it was removed
+    // rather than rescued: a player can see a bad world and detonate it.
+    test('no class is a zero-output dead end', () {
+      // The guard that outlives the type. A class with every ratio at zero is
+      // inert at all staffing and all Citadel levels while still charging real
+      // resources per build and occupying one of three slots in a sector, so a
+      // new type cannot quietly reintroduce the shape.
+      for (final spec in planetClasses.values) {
+        final dead = PlanetClassSpec.tracks
+            .where((t) => !spec.productFor(t).isPossible)
+            .length;
+        expect(dead, lessThan(PlanetClassSpec.tracks.length),
+            reason: '${spec.key} cannot produce any of its '
+                '${PlanetClassSpec.tracks.length} commodities — it is inert');
       }
-      expect(spec.maxDroneOutputPerDay, 0);
-      expect(
-        spec.droneOutputPerDay(
-            orePerDay: 0, organicsPerDay: 0, equipmentPerDay: 0),
-        0,
-      );
+    });
+
+    test('every sourced class has a published figure to be checked against',
+        () {
+      // Without this, a class whose designation is absent from `published` looks
+      // up `null` and fails the fighter test with a message about the divisor
+      // rather than about the missing oracle row. It failed; it just did not say
+      // why, and the why is a different kind of mistake.
+      for (final spec in planetClasses.values.where((s) => s.sourced)) {
+        expect(published, contains(spec.designation),
+            reason: 'Class ${spec.designation} (${spec.key}) is marked sourced '
+                'but has no published figure in the oracle, so nothing is '
+                'actually being checked for it');
+      }
+    });
+
+    test('every class is in every table the screens read', () {
+      // The other half of the two-tables trap. A type present in the class spec
+      // and missing from one of these renders as a blank row, or a world with no
+      // picture, and the only symptom is a player looking at an empty card.
+      for (final key in planetClasses.keys) {
+        expect(Planet.allTypes, contains(key),
+            reason: '$key is not in allTypes');
+        expect(Planet.typeMultipliers, contains(key),
+            reason: '$key has no TypeMultipliers row');
+        expect(Planet.baseStorageByType, contains(key),
+            reason: '$key has no storage row');
+        expect(Planet.colonistMaxByType, contains(key),
+            reason: '$key has no colonist cap');
+        expect(Planet.planetAtmospheres, contains(key),
+            reason: '$key has no atmosphere');
+        expect(Planet.imagePool, contains(key),
+            reason: '$key has no image pool, so it renders no picture');
+      }
     });
   });
 

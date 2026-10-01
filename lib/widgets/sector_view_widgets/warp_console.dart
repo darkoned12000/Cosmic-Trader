@@ -548,6 +548,16 @@ class _WarpConsoleState extends State<WarpConsole> {
                   runSpacing: 6,
                   children: _adjacentSectors.map((s) {
                     final isHighlighted = s.id == widget.highlightedSectorId;
+                    // What is actually there, without putting anything in the
+                    // box. The chips used to be bare sector ids, so the only
+                    // way to learn a neighbouring system stocked hardware was
+                    // to find a purple dot on the radial tactical map and work
+                    // out which node it was. An icon in the chip was the wrong
+                    // fix — these are dense numeric targets and an avatar
+                    // crowds the number and throws off the wrap — so the port is
+                    // identified on hover instead, and the chip stays a number.
+                    final emporium = s.port?.isHardwareEmporium == true;
+                    final hasPort = s.hasPort;
 
                     return ChoiceChip(
                       label: Text(
@@ -562,6 +572,14 @@ class _WarpConsoleState extends State<WarpConsole> {
                               : cs.onSurface.withValues(alpha: 0.8),
                         ),
                       ),
+                      // The tooltip carries the port's actual name, so an
+                      // emporium is identifiable and not just purple. Scoped to
+                      // its own content rather than `find.byType(Tooltip)`,
+                      // which throws the moment a second one exists.
+                      tooltip: !hasPort
+                          ? null
+                          : '${s.name} — ${s.port?.name ?? 'Port'}'
+                              '${emporium ? ' (hardware emporium)' : ''}',
                       selected: isHighlighted,
                       onSelected: (v) {
                         if (!_isWarping) _executeWarp(s.id);

@@ -9,6 +9,7 @@ import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 
 class HardwareEmporiumWidget extends StatefulWidget {
   final Player player;
@@ -1863,7 +1864,7 @@ class EmporiumConsumablesTab extends StatelessWidget {
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
-                      Text('${_format(item.priceCredits)} cr',
+                      Text('${compact(item.priceCredits)} cr',
                           style: TextStyle(
                               fontSize: 13,
                               fontFamily: 'monospace',
@@ -1914,11 +1915,5 @@ class EmporiumConsumablesTab extends StatelessWidget {
         ],
       ],
     );
-  }
-
-  static String _format(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
   }
 }

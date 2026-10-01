@@ -1,3 +1,5 @@
+import 'package:cosmic_trader/services/game_clock.dart';
+
 /// A bounty posted on a pilot's head.
 class Bounty {
   final String id;
@@ -10,15 +12,29 @@ class Bounty {
   final String posterName;
   final String posterFaction;
   final String reason;
-  final DateTime createdAt;
+
+  /// Game tick this bounty was posted. See `GameClock`.
+  ///
+  /// Ticks rather than a timestamp: this field existed only to derive the
+  /// expiry, and its one display use is an "age ago" label, which is
+  /// tick-derived anyway. Keeping a second clock in the model that nothing
+  /// reads is how the wall-clock version of this rule came to disagree with
+  /// the tick version in the first place.
+  final int createdAtTick;
 
   /// Wall-clock expiry for escrow (bounty review): unclaimed marks lapse
   /// and the poster's credits refund instead of evaporating.
-  final DateTime expiresAt;
+  /// Game tick at which this bounty lapses.
+  final int expiresAtTick;
 
   /// Standard mark lifetime. Long enough to be huntable, short enough
   /// that dead targets stop squatting the board.
-  static const Duration ttl = Duration(days: 7);
+  /// One week, in ticks: 7 x 2,880 = 20,160.
+  ///
+  /// Was `Duration(days: 7)` against a wall-clock stamp, so a bounty lapsed
+  /// during a week the game was closed and could be sat on indefinitely while
+  /// shut — the same defect as the hack ban, in a place nobody had looked.
+  static const int ttlTicks = GameClock.ticksPerDay * 7;
 
   const Bounty({
     required this.id,
@@ -31,8 +47,8 @@ class Bounty {
     required this.posterName,
     this.posterFaction = '',
     required this.reason,
-    required this.createdAt,
-    required this.expiresAt,
+    required this.createdAtTick,
+    required this.expiresAtTick,
   });
 
   Map<String, dynamic> toJson() => {
@@ -46,28 +62,27 @@ class Bounty {
         'posterName': posterName,
         'posterFaction': posterFaction,
         'reason': reason,
-        'createdAt': createdAt.toIso8601String(),
-        'expiresAt': expiresAt.toIso8601String(),
+        'createdAtTick': createdAtTick,
+        'expiresAtTick': expiresAtTick,
       };
 
   factory Bounty.fromJson(Map<String, dynamic> json) {
-    DateTime createdAt;
-    try {
-      createdAt = json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'] as String)
-          : DateTime.now();
-    } catch (_) {
-      createdAt = DateTime.now();
-    }
-    DateTime expiresAt;
-    try {
-      expiresAt = json['expiresAt'] != null
-          ? DateTime.parse(json['expiresAt'] as String)
-          // Legacy rows predate expiry: full TTL from creation.
-          : createdAt.add(Bounty.ttl);
-    } catch (_) {
-      expiresAt = createdAt.add(Bounty.ttl);
-    }
+    // Read the tick keys, and fall back to *now* rather than trying to convert a
+    // wall-clock timestamp.
+    //
+    // The obvious migration — turn `createdAt` into "one second ago" — was
+    // rejected: it would silently re-stamp every pre-existing bounty as brand new,
+    // resetting both its age label and its remaining life, and a player with a
+    // week-old bounty would see it as freshly posted. Reading the legacy key as
+    // absent means the same thing for the expiry (a full TTL from load) but is at
+    // least honest about it: the row's age is unknown, so it is treated as
+    // starting now. Bounties are paid by players who posted them deliberately,
+    // so losing a little elapsed time is the cheap direction.
+    final createdAtTick =
+        (json['createdAtTick'] as num?)?.toInt() ?? GameClock.tick;
+    // Legacy rows that predate expiry get a full TTL from load, as before.
+    final expiresAtTick = (json['expiresAtTick'] as num?)?.toInt() ??
+        createdAtTick + Bounty.ttlTicks;
     return Bounty(
       id: json['id'] as String? ?? '',
       targetId: json['targetId'] as String? ?? '',
@@ -79,8 +94,8 @@ class Bounty {
       posterName: json['posterName'] as String? ?? 'Anonymous',
       posterFaction: json['posterFaction'] as String? ?? '',
       reason: json['reason'] as String? ?? '',
-      createdAt: createdAt,
-      expiresAt: expiresAt,
+      createdAtTick: createdAtTick,
+      expiresAtTick: expiresAtTick,
     );
   }
 }

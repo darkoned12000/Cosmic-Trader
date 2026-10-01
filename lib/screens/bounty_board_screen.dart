@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -12,6 +13,7 @@ import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/shared/data_table_shell.dart';
 import 'package:cosmic_trader/widgets/shared/panel_card.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 
 /// Computer → Bounty Board (B4).
 ///
@@ -54,20 +56,10 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   bool _claimableOnly = false;
   FactionClass? _factionFilter;
 
-  /// Thousands separators for credit amounts (bounty review L1).
-  static String _commas(int n) {
-    final s = n.abs().toString();
-    final buf = StringBuffer();
-    for (var i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
-      buf.write(s[i]);
-    }
-    return '${n < 0 ? '-' : ''}$buf';
-  }
-
   /// Compact age for bounty rows (bounty review L1).
-  static String _age(DateTime at) {
-    final mins = DateTime.now().difference(at).inMinutes;
+  static String _age(int createdAtTick) {
+    final mins =
+        GameClock.periodsSince(createdAtTick, GameClock.ticksPerMinute);
     if (mins < 1) return 'now';
     if (mins < 60) return '${mins}m';
     final hours = mins ~/ 60;
@@ -76,8 +68,9 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   }
 
   /// Countdown to escrow expiry (future-aware sibling of [_age]).
-  static String _expiresIn(DateTime at) {
-    final mins = at.difference(DateTime.now()).inMinutes;
+  static String _expiresIn(int expiresAtTick) {
+    final mins =
+        -GameClock.periodsSince(expiresAtTick, GameClock.ticksPerMinute);
     if (mins < 1) return 'expiring';
     if (mins < 60) return '${mins}m left';
     final hours = mins ~/ 60;
@@ -228,9 +221,18 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
   Widget _targetCard(BuildContext context, ColorScheme cs, BountyBoard board,
       Set<String> kills, BountyTargetGroup g) {
     final claimable = kills.contains(g.targetId);
+    // `min`, not `reduce`: the old form needed a comparator that compared two
+    // `DateTime`s by `.isBefore`, which cannot be lifted to a `min` on ticks.
+    // Taking the min of the ticks is the same answer with less ceremony.
     final soonest =
-        g.marks.map((b) => b.expiresAt).reduce((a, b) => a.isBefore(b) ? a : b);
+        g.marks.map((b) => b.expiresAtTick).reduce((a, b) => a < b ? a : b);
     final targetNpc = _npcById[g.targetId];
+    // A mark can be posted on a **player** — the Federation does exactly that
+    // from a pilot's alignment — and a player is not in the NPC roster, so
+    // resolving the face purely from `_npcById` left the one row the player is
+    // most likely to be looking at as the only one without a face on the board.
+    // It read as a rendering fault rather than as a fact about the target.
+    final isPlayerTarget = g.targetId == widget.player.id;
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
@@ -241,12 +243,17 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
       child: ExpansionTile(
         dense: true,
         // A face when the target is still in the roster; nothing when it is not.
-        leading: targetNpc == null
-            ? null
-            : AvatarPortraitView(
+        leading: targetNpc != null
+            ? AvatarPortraitView(
                 portrait: NpcPortraits.of(targetNpc),
                 size: 40,
-              ),
+              )
+            : isPlayerTarget
+                ? AvatarCanvas(
+                    selection: widget.player.effectiveAvatar,
+                    size: 40,
+                  )
+                : null,
         title: Row(
           children: [
             Expanded(
@@ -260,7 +267,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
               ),
             ),
             Text(
-              _commas(g.total),
+              grouped(g.total),
               style: const TextStyle(
                   fontSize: 13,
                   fontFamily: 'monospace',
@@ -289,7 +296,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                 children: [
                   Expanded(
                     child: Text(
-                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAt)}',
+                      '${b.posterName}${b.reason.isNotEmpty ? ' · ${b.reason}' : ''} · ${_age(b.createdAtTick)}',
                       style: TextStyle(
                         fontSize: 11,
                         color: _factionColorOf(b.posterFaction) ??
@@ -298,7 +305,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                     ),
                   ),
                   Text(
-                    _commas(b.amount),
+                    grouped(b.amount),
                     style:
                         const TextStyle(fontSize: 11, fontFamily: 'monospace'),
                   ),
@@ -403,7 +410,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                       onPressed: _collectRefund,
                       icon: const Icon(Icons.savings_rounded, size: 16),
                       label: Text(
-                        'Collect ${_commas(board.pendingRefundFor(widget.player.id))} cr lapsed escrow',
+                        'Collect ${grouped(board.pendingRefundFor(widget.player.id))} cr lapsed escrow',
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
@@ -513,7 +520,7 @@ class _BountyBoardScreenState extends State<BountyBoardScreen> {
                                           color: _factionColorOf(
                                               p.killerFaction)))),
                               Expanded(
-                                  child: Text(_commas(p.amount),
+                                  child: Text(grouped(p.amount),
                                       style: const TextStyle(
                                           fontSize: 12,
                                           fontFamily: 'monospace'))),

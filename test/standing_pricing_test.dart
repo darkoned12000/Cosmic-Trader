@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_memory.dart';
@@ -249,36 +250,59 @@ void main() {
     expect(recovered.currentGoal?.type, isNot(NpcGoalType.refuelEnergy));
   });
 
-  test('interest accrues daily, clock starts without retro payout', () {
-    final now = DateTime.now();
-    // First balance: clock starts, no payout.
+  test(
+      'interest accrues per game day, and the clock starts with no retro payout',
+      () {
+    // Ticks throughout. A game day is `GameClock.ticksPerDay` (2,880) — a real
+    // day at the default 30-second tick, and **nothing at all** while the game is
+    // closed. That last half is the whole point: a wall-clock period here meant a
+    // player who closed the game for a week came back to seven days of interest
+    // for a week they never played.
+    final t0 = 1000;
+
+    // First balance: the clock starts, nothing is paid retroactively.
     final first = BankingAi.accrueInterest(
       bankBalance: 100000,
-      lastInterestTime: null,
-      rate: 0.01,
-      now: now,
+      lastInterestTick: null,
+      rate: 0.011,
+      nowTick: t0,
     );
     expect(first, isNotNull);
     expect(first!.interest, 0);
-    expect(first.stamp, now);
+    expect(first.stamp, t0,
+        reason: 'a null stamp is initialised to now, never to zero \u2014 '
+            'stamping zero would credit a year of interest on first load');
 
-    // Same day: nothing.
+    // One tick short of a day: nothing.
     expect(
       BankingAi.accrueInterest(
         bankBalance: 100000,
-        lastInterestTime: now,
-        rate: 0.01,
-        now: now.add(const Duration(hours: 23)),
+        lastInterestTick: t0,
+        rate: 0.011,
+        nowTick: t0 + GameClock.ticksPerDay - 1,
       ),
       isNull,
     );
 
+    // Exactly one day at 1.1%: 100,000 * 0.011 = 1,100 cr.
+    //
+    // The user's own worked example, which is the reason the rate is quotable:
+    // 1,100 cr over 2,880 ticks is **0.38194 cr per tick**.
+    final oneDay = BankingAi.accrueInterest(
+      bankBalance: 100000,
+      lastInterestTick: t0,
+      rate: 0.011,
+      nowTick: t0 + GameClock.ticksPerDay,
+    );
+    expect(oneDay!.interest, 1100);
+    expect(1100 / GameClock.ticksPerDay, closeTo(0.38194, 0.00001));
+
     // Two days at 1%: 2000.
     final paid = BankingAi.accrueInterest(
       bankBalance: 100000,
-      lastInterestTime: now,
+      lastInterestTick: t0,
       rate: 0.01,
-      now: now.add(const Duration(hours: 48)),
+      nowTick: t0 + GameClock.ticksPerDay * 2,
     );
     expect(paid!.interest, 2000);
 
@@ -286,11 +310,64 @@ void main() {
     expect(
       BankingAi.accrueInterest(
         bankBalance: 0,
-        lastInterestTime: now.subtract(const Duration(days: 30)),
+        lastInterestTick: t0 - GameClock.ticksPerDay * 30,
         rate: 0.01,
-        now: now,
+        nowTick: t0,
       ),
       isNull,
     );
+  });
+
+  test('a partial day carries forward instead of being discarded', () {
+    // The old rule stamped "now" after paying, which threw the remainder away.
+    // An NPC paid on **every tick** therefore collected 2,880 partial payouts
+    // instead of one, and each discarded remainder was a rounding loss in the
+    // player's favour; a player visiting every twelve hours was paid
+    // `floor(half) x 2` rather than `floor(whole)` \u2014 quietly under the
+    // advertised rate, and worse the *more* often they checked in.
+    final t0 = 5000;
+
+    // Half a day, nothing due.
+    expect(
+      BankingAi.accrueInterest(
+        bankBalance: 100000,
+        lastInterestTick: t0,
+        rate: 0.01,
+        nowTick: t0 + GameClock.ticksPerDay ~/ 2,
+      ),
+      isNull,
+    );
+
+    // A day and a half: one day's interest, and the stamp advances by exactly
+    // one day \u2014 so the other half is still owed in six hours' time.
+    final aDayAndAHalf = BankingAi.accrueInterest(
+      bankBalance: 100000,
+      lastInterestTick: t0,
+      rate: 0.01,
+      nowTick: t0 + GameClock.ticksPerDay + GameClock.ticksPerDay ~/ 2,
+    );
+    // **One** day's interest, not one and a half's: the half day is not consumed,
+    // so it must not be paid for. Paying `days` (1.5) while advancing the stamp
+    // by `wholeDays` (1) was my first version and it leaked — the next payout
+    // charged a full day for the same half day, so two days paid 2,500 instead of
+    // 2,000.
+    expect(aDayAndAHalf!.interest, 1000);
+    expect(aDayAndAHalf.stamp, t0 + GameClock.ticksPerDay,
+        reason: 'the stamp must advance by whole days only, or the remainder '
+            'is paid for twice');
+
+    // Completing that second day pays exactly one more day.
+    final secondDay = BankingAi.accrueInterest(
+      bankBalance: 100000,
+      lastInterestTick: aDayAndAHalf.stamp,
+      rate: 0.01,
+      nowTick: t0 + GameClock.ticksPerDay * 2,
+    );
+    expect(secondDay!.interest, 1000);
+    expect(secondDay.stamp, t0 + GameClock.ticksPerDay * 2);
+    // Two elapsed days have now paid for two days and no more — the property the
+    // two-halves-must-agree rule exists to hold.
+    expect(aDayAndAHalf.interest + secondDay.interest, 2000,
+        reason: '2,500 here would mean the fractional day was paid twice');
   });
 }

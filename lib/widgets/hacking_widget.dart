@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -14,7 +15,9 @@ class HackingWidget extends StatefulWidget {
   final int failCount;
   final int maxAttempts;
   final int maxFailures;
-  final int? banUntilEpoch;
+
+  /// Game tick at which the hack ban lifts. Null = not banned. See `GameClock`.
+  final int? banUntilTick;
   final ValueChanged<Player> onSuccess;
   final ValueChanged<Port>? onPortModified;
   final ValueChanged<int> onFailure;
@@ -27,7 +30,7 @@ class HackingWidget extends StatefulWidget {
     this.failCount = 0,
     this.maxAttempts = 5,
     this.maxFailures = 3,
-    this.banUntilEpoch,
+    this.banUntilTick,
     required this.onSuccess,
     this.onPortModified,
     required this.onFailure,
@@ -242,23 +245,20 @@ class _HackingWidgetState extends State<HackingWidget>
         'Connection established.',
       ];
 
-  bool get _isBanned =>
-      widget.banUntilEpoch != null &&
-      widget.banUntilEpoch! > DateTime.now().millisecondsSinceEpoch;
+  bool get _isBanned => GameClock.isActive(widget.banUntilTick);
 
-  Duration get _banRemaining {
-    final until = widget.banUntilEpoch;
-    if (until == null) return Duration.zero;
-    final remaining = until - DateTime.now().millisecondsSinceEpoch;
-    return remaining > 0 ? Duration(milliseconds: remaining) : Duration.zero;
-  }
+  /// Ticks until the ban lifts — 0 when not banned.
+  int get _banRemainingTicks => GameClock.remaining(widget.banUntilTick ?? -1);
 
+  /// `23h 58m`, tick-granular.
+  ///
+  /// Not `HH:MM:SS`: a tick is 30 seconds, so the seconds digits could only
+  /// change once every 30 frames and would be wrong for 29 of them. The
+  /// deadline's real resolution is the honest thing to render.
   String get _banCountdown {
-    final remaining = _banRemaining;
-    final hours = remaining.inHours.toString().padLeft(2, '0');
-    final minutes = (remaining.inMinutes % 60).toString().padLeft(2, '0');
-    final seconds = (remaining.inSeconds % 60).toString().padLeft(2, '0');
-    return '$hours:$minutes:$seconds';
+    final ticks = _banRemainingTicks;
+    if (ticks <= 0) return '';
+    return GameClock.format(ticks);
   }
 
   void _startBootSequence() {
@@ -1727,11 +1727,13 @@ class _HackingWidgetState extends State<HackingWidget>
             subtitle: '30 MIN DEFENSE REDUCTION',
             color: const Color(0xFFFF8A00),
             onTap: () {
-              final until = DateTime.now()
-                  .add(const Duration(minutes: 30))
-                  .millisecondsSinceEpoch;
+              // 30 minutes is 60 ticks at 30 seconds each — the conversion
+              // the whole game now speaks. Previously an epoch timestamp, so
+              // the debuff expired during the player's dinner and the sabotage
+              // was a tax on playing sessions rather than a cost.
+              final until = GameClock.tick + GameClock.ticksPerHour ~/ 2;
               widget.onPortModified!(
-                widget.port!.copyWith(securityCompromisedUntil: until),
+                widget.port!.copyWith(securityCompromisedUntilTick: until),
               );
               final updated = widget.player.copyWith(
                 researchPoints: widget.player.researchPoints + 15,

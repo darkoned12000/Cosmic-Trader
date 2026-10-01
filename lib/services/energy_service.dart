@@ -15,11 +15,15 @@ class EnergyService {
   /// Base cost of a one-hop warp before engine-efficiency discounts.
   static const int baseWarpCost = 10;
 
-  /// Energy spent by a manual planet scan.
-  static const int planetScanCost = 4;
-
-  /// Energy spent by a lightweight sector/interaction scan.
-  static const int quickScanCost = 1;
+  /// Energy spent by a scan.
+  ///
+  /// One price for one verb. There were two (`planetScanCost = 4` and
+  /// `quickScanCost = 1`) for what was the same action — the same flag, the
+  /// same revealed detail — reached from two screens, which made the expensive
+  /// one strictly dominated with nothing to recommend it. A deeper scan that
+  /// reveals production figures and fleet strength will be a *different* verb
+  /// with its own cost, not a third price on this one.
+  static const int scanCost = 1;
 
   /// Credits charged per unit of energy when refueling at a port.
   static const int refuelCreditsPerUnit = 1;
@@ -127,11 +131,8 @@ class EnergyService {
   static bool canWarp(Player player, {int hops = 1}) =>
       player.hasEnergy(warpCost(player, hops: hops));
 
-  /// True when a manual planet scan can be paid for right now.
-  static bool canScanPlanet(Player player) => player.hasEnergy(planetScanCost);
-
-  /// True when a lightweight scan can be paid for right now.
-  static bool canQuickScan(Player player) => player.hasEnergy(quickScanCost);
+  /// True when a scan can be paid for right now.
+  static bool canScan(Player player) => player.hasEnergy(scanCost);
 
   /// Missing energy units before [Player.maxEnergy] is reached.
   static int missingEnergy(Player player) {

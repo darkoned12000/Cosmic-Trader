@@ -5,21 +5,7 @@ import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/port_screen.dart';
-
-class _FakeUniverseStorage extends UniverseStorage {
-  final List<Sector> sectors;
-
-  _FakeUniverseStorage(this.sectors);
-
-  @override
-  Future<void> ensureUniverse() async {}
-
-  @override
-  Future<List<Sector>> loadUniverse() async => sectors;
-
-  @override
-  void logSectorStats(List<Sector> _) {}
-}
+import 'support/storage_fakes.dart';
 
 Player _makePlayer() => Player(
       name: 'Tester',
@@ -57,7 +43,7 @@ void main() {
       hasPort: true,
       port: port,
     );
-    UniverseStorage.instanceForTest = _FakeUniverseStorage([sector]);
+    UniverseStorage.instanceForTest = ReadOnlyUniverse([sector]);
 
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));

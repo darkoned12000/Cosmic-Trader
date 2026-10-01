@@ -1,6 +1,8 @@
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 
 /// Colony production, once per game tick.
 ///
@@ -24,7 +26,14 @@ class PlanetProductionService {
   /// Skips destroyed worlds and empty colonies — there is nothing to produce
   /// and a corpse must never look busy in the log. Returns what happened so
   /// the tick can summarise it without re-walking every sector.
-  static PlanetProductionSummary process(List<Sector> sectors) {
+  /// [creditFaction] scopes [PlanetProductionSummary.constructionsCompleted] to
+  /// worlds that faction owns, because the caller pays reputation for the count
+  /// and the galaxy holds worlds the player never paid to build. Null counts
+  /// every completion, which is what the headless callers and most tests want.
+  static PlanetProductionSummary process(
+    List<Sector> sectors, {
+    FactionClass? creditFaction,
+  }) {
     var colonies = 0;
     var minerals = 0;
     var organics = 0;
@@ -36,6 +45,12 @@ class PlanetProductionService {
 
     var completed = 0;
     final finished = <String>[];
+
+    // Colonists that reached their world this pass, and where they landed. The
+    // colony card already shows a live "in transit" row, so this is the arrival
+    // notice for a shipment the player ordered while looking at something else.
+    var arrivedColonists = 0;
+    final settled = <String>[];
 
     for (final sector in sectors) {
       // Every world in the sector, not just the first. A three-world sector is
@@ -54,9 +69,25 @@ class PlanetProductionService {
           final before = planet.level;
           planet.advanceConstruction();
           if (planet.level != before) {
-            completed++;
+            // Counted only when the caller is paying for it. A Citadel the
+            // player did not commission must not put reputation in their
+            // pocket, and `creditFaction` is how the tick says who they are.
+            if (creditFaction == null || planet.owner == creditFaction) {
+              completed++;
+            }
             finished.add('${planet.name} -> ${planet.level}');
           }
+        }
+
+        // Colonist arrivals advance here for the same reason construction does,
+        // and the same trap: **a world with no colonists yet is exactly the world
+        // a first shipment is going to.** Behind the `population <= 0` skip below,
+        // the one world guaranteed to be buying its first colonists would be the
+        // one world whose shipment never lands.
+        final arrived = planet.advanceColonistTransit();
+        if (arrived > 0) {
+          arrivedColonists += arrived;
+          settled.add('${planet.name} +${compact(arrived)}');
         }
 
         if (planet.population <= 0) continue;
@@ -73,7 +104,7 @@ class PlanetProductionService {
           GameEventLog.global.system(
             '[Colony] ${planet.name} (sector #${sector.id}) cannot cover its '
             'supply: ${report.supplyShortfall} units short of a '
-            '${_formatShort(planet.supplyDraw)} unit draw. Haul goods in, or '
+            '${compact(planet.supplyDraw)} unit draw. Haul goods in, or '
             'plant a world beside it that makes what it cannot.',
           );
         }
@@ -98,6 +129,13 @@ class PlanetProductionService {
       );
     }
 
+    if (settled.isNotEmpty) {
+      GameEventLog.global.system(
+        '[Colony] ${settled.length} colonist shipment(s) arrived: '
+        '${settled.take(5).join(', ')}${settled.length > 5 ? ', ...' : ''}',
+      );
+    }
+
     return PlanetProductionSummary(
       colonies: colonies,
       minerals: minerals,
@@ -108,16 +146,9 @@ class PlanetProductionService {
       unsupplied: unsupplied,
       overflowed: overflow.length,
       constructionsCompleted: completed,
+      colonistsArrived: arrivedColonists,
     );
   }
-}
-
-/// Compact number for a log line, so a supply shortfall does not read as a wall
-/// of digits.
-String _formatShort(int n) {
-  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-  return '$n';
 }
 
 /// Aggregate result of one production pass, for the tick's own log line.
@@ -135,6 +166,17 @@ class PlanetProductionSummary {
   final int unsupplied;
   final int overflowed;
 
+  /// Citadel tiers finished during this pass.
+  final int constructionsCompleted;
+
+  /// Purchased colonists that reached their world this pass.
+  ///
+  /// Its own field rather than a fold-in: an arrival is the one colony event a
+  /// player spent money to cause, and it can happen on a world with no colony
+  /// yet — which is exactly the case [isQuiet] would otherwise swallow, since
+  /// `colonies` counts only worlds that pass the population check.
+  final int colonistsArrived;
+
   const PlanetProductionSummary({
     this.colonies = 0,
     this.minerals = 0,
@@ -145,10 +187,8 @@ class PlanetProductionSummary {
     this.unsupplied = 0,
     this.overflowed = 0,
     this.constructionsCompleted = 0,
+    this.colonistsArrived = 0,
   });
-
-  /// Citadel tiers finished during this pass.
-  final int constructionsCompleted;
 
   /// Nothing to say. A galaxy with no colonies is normal, not worth a log line.
   ///
@@ -159,5 +199,6 @@ class PlanetProductionSummary {
       colonies == 0 &&
       unsupplied == 0 &&
       overflowed == 0 &&
-      constructionsCompleted == 0;
+      constructionsCompleted == 0 &&
+      colonistsArrived == 0;
 }

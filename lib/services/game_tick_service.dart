@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'package:cosmic_trader/data/models/npc_ship.dart';
+import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
@@ -12,6 +14,7 @@ import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/repopulation_service.dart';
@@ -58,6 +61,32 @@ class GameTickService {
   /// a session to learn something that cannot change. A universe regenerated
   /// with a new cap re-sets it, because the shell reloads settings.
   int worldCap = 3;
+
+  /// Whose completed Citadels earn reputation this tick.
+  ///
+  /// Set by the shell from the active player, exactly like [worldCap] and
+  /// [fedSpaceEnd] — the tick loads *every* player and has no notion of which
+  /// one is being played, so it cannot work this out for itself. Null credits
+  /// nothing.
+  FactionClass? reputationFaction;
+
+  /// Citadel tiers that finished on the [reputationFaction]'s own worlds since the
+  /// shell last drained this, and so the reputation owed for them.
+  ///
+  /// Single-consumption on purpose: the shell pays it out and zeroes it in the
+  /// same call. A field that merely accumulated would pay for the same upgrade
+  /// again on every tick, which is the same shape as the per-tick production
+  /// getters that consumed a remainder — the number would look right and the
+  /// side effect would be the bug.
+  int _unpaidConstructionReputation = 0;
+
+  /// Reputation accrued by completed Citadel tiers, awaiting payout. Zero after
+  /// [drainConstructionReputation].
+  int drainConstructionReputation() {
+    final owed = _unpaidConstructionReputation;
+    _unpaidConstructionReputation = 0;
+    return owed;
+  }
 
   static void lockNpc(String npcId) => _lockedNpcIds.add(npcId);
   static void unlockNpc(String npcId) => _lockedNpcIds.remove(npcId);
@@ -164,20 +193,41 @@ class GameTickService {
       final players = await DevProfiler.instance.traceAsync(
           'tick_load_players', () => PlayerStorage.instance.loadPlayers());
 
-      if (sectors.isEmpty || npcs.isEmpty) {
-        GameEventLog.global
-            .system('[TickService] No sectors or NPCs to process');
+      if (sectors.isEmpty) {
+        GameEventLog.global.system('[TickService] No sectors to process');
         onTickComplete?.call(npcs);
         return;
       }
 
+      // An **empty roster is not a reason to skip the tick.** This guard used to
+      // read `sectors.isEmpty || npcs.isEmpty`, and the second term quietly
+      // switched off every colony in the galaxy: `PlanetProductionService` runs
+      // below, so an empty NPC list meant no production, no supply bill, no
+      // construction advance, and no colonist arrivals. A pilot working the
+      // bounty board kills ships faster than the homeworld yards replace them,
+      // so the roster can be driven to zero — and a purchased shipment then waits
+      // forever on a tick that never runs the code which would deliver it.
+      // Reported as "I waited ten minutes and the colonists never turned up".
+      //
+      // Colonies need no NPCs. The roster being empty makes the NPC loop a
+      // no-op, which it already handles. What the roster *should* do is recover,
+      // and `RepopulationService.produce` below does that once it is allowed to
+      // run.
+
+      // **The clock moves here and nowhere else.** `GameClock` is persisted, so
+      // game time survives a restart instead of resetting to zero and
+      // invalidating every stored cooldown deadline in the save.
+      final tick = await GameClock.advance();
+
       // Regenerate port supply/demand + drift prices before NPC processing
       int portsRegened = 0;
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
       DevProfiler.instance.trace('tick_port_regen', () {
         for (final sector in sectors) {
           if (sector.hasPort && sector.port != null) {
-            final regenerated = sector.port!.regen(now: nowMs);
+            // One tick, one step. The tick service is the *only* thing that
+            // advances a port's stock — closing the game stops the clock,
+            // so a port that sold out overnight is still sold out on reopen.
+            final regenerated = sector.port!.regenTick();
             if (regenerated != sector.port) {
               sector.port = regenerated;
               portsRegened++;
@@ -206,7 +256,7 @@ class GameTickService {
       // Built from the pre-tick roster; see the staleness contract on
       // the index fields. try/finally: a throwing tick must never leak
       // a stale index into the next one.
-      NpcAiService.beginTick(sectors, npcs);
+      NpcAiService.beginTick(sectors, npcs, playerProximity: closeSectors);
       // Find NPCs with energy remaining and process them
       int processed = 0;
       int skipped = 0;
@@ -323,7 +373,18 @@ class GameTickService {
       // rate, and until this existed nothing applied it — the only code that
       // wrote a planet's stores was the credits-based transfer in the screen.
       DevProfiler.instance.trace('tick_colony_production', () {
-        final colonies = PlanetProductionService.process(sectors);
+        final colonies = PlanetProductionService.process(
+          sectors,
+          // Scoped to the playing faction: the galaxy is full of Citadels the
+          // player did not commission, and paying for those would be reputation
+          // for free.
+          creditFaction: reputationFaction,
+        );
+        if (colonies.constructionsCompleted > 0) {
+          _unpaidConstructionReputation +=
+              (colonies.constructionsCompleted * ReputationActions.upgradeWorld)
+                  .round();
+        }
         if (!colonies.isQuiet) {
           log.system(
             'Colonies: +${colonies.minerals} minerals, '
@@ -348,12 +409,11 @@ class GameTickService {
       // warned about a hazard that could not happen. A rule with no clock
       // attached to it is not a hazard, and its tests were measuring the rule
       // rather than the game.
-      int collided = 0;
       DevProfiler.instance.trace('tick_gravity_checks', () {
-        collided = WorldForging.runDueCollisions(
+        WorldForging.runDueCollisions(
           sectors,
           worldCap,
-          nowMs,
+          tick,
           _tickRng,
         );
       });
@@ -389,10 +449,10 @@ class GameTickService {
           required String name,
           required String faction,
           required bool isPlayer,
-          required double notoriety,
+          required double evilness,
         }) {
           if (posted >= 3) return;
-          final amount = BountyBoard.fedAmount(notoriety);
+          final amount = BountyBoard.fedAmount(evilness);
           if (amount <= 0) return;
           if (BountyBoard.global.totalFor(id) > 0) return;
           BountyBoard.global.post(
@@ -403,7 +463,7 @@ class GameTickService {
             amount: amount,
             posterId: 'FEDERATION',
             posterName: 'Federation Marshal',
-            reason: 'notoriety ${notoriety.toStringAsFixed(0)}',
+            reason: 'reputation -${evilness.toStringAsFixed(0)}',
           );
           // Bounty review: the player always learns their own mark —
           // Action Log warning, never hunter positions (those stay
@@ -423,7 +483,7 @@ class GameTickService {
             name: player.name,
             faction: player.faction.name,
             isPlayer: true,
-            notoriety: player.notoriety,
+            evilness: player.threatRating,
           );
         }
         for (final npc in npcs) {
@@ -433,14 +493,13 @@ class GameTickService {
             name: npc.pilotName,
             faction: npc.faction.name,
             isPlayer: false,
-            notoriety: npc.notoriety,
+            evilness: npc.notoriety,
           );
         }
       });
 
       // NPC bank interest (Guild-rate parity with players).
       DevProfiler.instance.trace('tick_npc_interest', () {
-        final now = DateTime.now();
         for (int i = 0; i < npcs.length; i++) {
           final npc = npcs[i];
           if (npc.isDestroyed || npc.bankBalance <= 0) continue;
@@ -450,14 +509,14 @@ class GameTickService {
           );
           final accrual = BankingAi.accrueInterest(
             bankBalance: npc.bankBalance,
-            lastInterestTime: npc.lastInterestTime,
+            lastInterestTick: npc.lastInterestTick,
             rate: rate,
-            now: now,
+            nowTick: tick,
           );
           if (accrual == null) continue;
           npcs[i] = npc.copyWith(
             bankBalance: npc.bankBalance + accrual.interest,
-            lastInterestTime: accrual.stamp,
+            lastInterestTick: accrual.stamp,
           );
           if (accrual.interest > 0) {
             GameEventLog.global.banking(
@@ -485,15 +544,31 @@ class GameTickService {
       await DevProfiler.instance
           .traceAsync('tick_save_npcs', () => NpcStorage().saveAll(npcs));
 
-      // Save sectors if ports were regenerated, NPCs mutated them, or a
-      // gravity check destroyed worlds. Without the third term a collision would
-      // happen in this tick's object graph, be logged as having happened, and be
-      // silently resurrected on the next load — the player is told they lost two
-      // worlds and wakes up to find both of them.
-      if (portsRegened > 0 || processed > 0 || collided > 0) {
-        await DevProfiler.instance.traceAsync('tick_save_sectors',
-            () => UniverseStorage.instance.saveUniverse(sectors));
-      }
+      // Save the universe. **Unconditionally.**
+      //
+      // This used to be gated on `portsRegened > 0 || processed > 0 ||
+      // collided > 0`, a hand-maintained list of "things the tick might have
+      // changed". Every entry was a way for a real mutation to be silently
+      // discarded: the tick re-parses the whole universe each pass, so anything
+      // not written here is simply gone by the next read.
+      //
+      //  * `collided` was added after a collision happened in the object graph,
+      //    was logged as having happened, and was resurrected on the next load —
+      //    the player was told they lost two worlds and woke up to find both.
+      //  * A colonist shipment's **countdown** was missing, which is worse than
+      //    losing the arrival: nothing is logged when a counter decrements, so
+      //    the countdown reset to its full delay on every tick and the shipment
+      //    could never land at all. Reported as "I waited ten minutes and the
+      //    colonists never turned up."
+      //
+      // A list of counters is not a substitute for saving. The pass mutates
+      // sectors nearly every time — port drift alone is enough — so the gate was
+      // saving by luck on most ticks and hiding its own failure on the rest,
+      // which is the worst of both: it looks like an optimisation and behaves
+      // like a coin flip. One JSON write per tick is not a cost worth optimising
+      // against a correctness bug.
+      await DevProfiler.instance.traceAsync('tick_save_sectors',
+          () => UniverseStorage.instance.saveUniverse(sectors));
 
       // ── Check for NPC attacks on players (all of them, not just first) ──
       NpcAttackEvent? attackEvent;

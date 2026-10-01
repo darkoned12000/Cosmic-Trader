@@ -74,7 +74,7 @@ void main() {
     });
 
     test('the fertile types still can', () {
-      for (final type in ['Terran', 'Jungle', 'Desert', 'Ocean', 'Gas Giant']) {
+      for (final type in ['Terran', 'Jungle', 'Desert', 'Ocean', 'Mountain']) {
         expect(Planet.typeMultipliers[type]!.organics, greaterThan(0.0),
             reason: '$type should still grow organics');
       }

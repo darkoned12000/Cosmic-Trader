@@ -1,6 +1,24 @@
 // Goal execution: dispatcher plus every _execute* leg, trade failure handling, port management, upgrades.
 part of 'npc_ai_service.dart';
 
+/// Player-facing log line, proximity-gated (review batch 4).
+///
+/// [ActionLogProvider] is the player's own feed, and the tick service has
+/// always proximity-filtered its own writes. NPC events bypassed that
+/// and went straight to the panel, so on a wide map the player read
+/// about distant NPCs refuelling, capturing ports, and trading while
+/// their own sector was silent — the log stopped meaning "here" and
+/// started meaning "the galaxy, shuffled". Events stay in
+/// [GameEventLog] at every distance (nothing is lost; it is filed as
+/// world news rather than as something you watched happen), and this
+/// passes everything through when no tick context exists, so tests and
+/// direct [NpcAiService.processTurn] calls are unaffected.
+void _logPlayerVisible(int sectorId, LogType type, String message) {
+  if (NpcAiService.isNearPlayer(sectorId)) {
+    ActionLogProvider.global.add(message, type);
+  }
+}
+
 // ────────────────────────────────────────────────────────────────
 // Step 2 — Goal execution
 // ────────────────────────────────────────────────────────────────
@@ -88,7 +106,9 @@ NpcShip _executeRefuelGoal(
       .energy('NPC_ENERGY event=refuel_buy pilot=${npc.pilotName} '
           'units=${result.unitsAdded} spent=${result.creditsSpent} '
           'energy=${result.npc.energy}');
-  ActionLogProvider.global.trade(
+  _logPlayerVisible(
+    npc.currentSectorId,
+    LogType.trade,
     '${npc.pilotName} refueled ${result.unitsAdded} energy '
     '(${result.creditsSpent} cr)',
   );
@@ -170,7 +190,6 @@ NpcShip _executeTradeGoal(
   final phase = liveGoal.params['phase'] as String? ?? 'travel_to_buy';
   // From here the (possibly de-convoyed) goal is the live one.
   goal = liveGoal;
-  final nowMs = DateTime.now().millisecondsSinceEpoch;
 
   // ── Phase: arrived at buy port ──
   if (phase == 'travel_to_buy' && npc.currentSectorId == buyPortId) {
@@ -197,9 +216,11 @@ NpcShip _executeTradeGoal(
       return _failTrade(npc, goal, '${port.name} refuses service');
     }
 
-    // Regen before reading
-    port = port.regen(now: nowMs);
-    sector.port = port;
+    // No regen here on purpose. This runs inside a tick, and the tick has
+    // already advanced every port in the galaxy before NPC processing, so
+    // regenerating again was a second pass over the same stocks. More to the
+    // point, it read the wall clock, which meant an NPC's view of a port's
+    // stock depended on real elapsed time rather than on the game's clock.
 
     final sellPrice = port.getEffectiveSellPriceFor(
       commodity,
@@ -261,7 +282,6 @@ NpcShip _executeTradeGoal(
       supply: newSupply,
       portCredits: port.portCredits + cost,
       accumulatedRevenue: port.accumulatedRevenue + ownerSurcharge,
-      lastRegenTime: nowMs,
     );
 
     GameEventLog.global
@@ -317,9 +337,11 @@ NpcShip _executeTradeGoal(
       return _failTrade(npc, goal, '${port.name} refuses service');
     }
 
-    // Regen before reading
-    port = port.regen(now: nowMs);
-    sector.port = port;
+    // No regen here on purpose. This runs inside a tick, and the tick has
+    // already advanced every port in the galaxy before NPC processing, so
+    // regenerating again was a second pass over the same stocks. More to the
+    // point, it read the wall clock, which meant an NPC's view of a port's
+    // stock depended on real elapsed time rather than on the game's clock.
 
     final buyPrice = port.getEffectiveBuyPriceFor(
       commodity,
@@ -381,7 +403,6 @@ NpcShip _executeTradeGoal(
       demand: newDemand,
       portCredits: port.portCredits - actualRevenue,
       accumulatedRevenue: port.accumulatedRevenue + ownerTax,
-      lastRegenTime: nowMs,
     );
 
     GameEventLog.global.trade(
@@ -757,7 +778,9 @@ NpcShip _executeAttackGoal(
 
   final myPower = CombatService.calculateFirepower(npc);
   final targetPower = CombatService.calculateFirepower(target);
-  final log = ActionLogProvider.global;
+  // All four panel lines below describe a fight in this sector, so they
+  // share one proximity decision.
+  final here = npc.currentSectorId;
 
   // ── Distress call: unfair fight, or any fight the defender is
   // losing badly (P5: hull under 40% calls for help regardless of the
@@ -765,7 +788,9 @@ NpcShip _executeAttackGoal(
   final defenderBleeding =
       target.maxHull > 0 && target.hull < target.maxHull * 0.4;
   if (myPower > targetPower * 2.0 || defenderBleeding) {
-    log.info(
+    _logPlayerVisible(
+      here,
+      LogType.info,
       '${target.pilotName} (${target.shipName}) sends a distress signal '
       'from sector #${npc.currentSectorId}!',
     );
@@ -818,9 +843,17 @@ NpcShip _executeAttackGoal(
   if (result.result.defenderDestroyed) {
     // Clear distress signal if defender had one
     _activeDistressSignals.remove(target.id);
-    log.combat('[${result.attacker.pilotName}] Destroyed ${target.pilotName} '
-        '(${target.shipName}) in Sector ${npc.currentSectorId}');
-    log.combat(NpcDeathCries.formatDeathCry(target.pilotName, target.faction));
+    _logPlayerVisible(
+      here,
+      LogType.combat,
+      '[${result.attacker.pilotName}] Destroyed ${target.pilotName} '
+      '(${target.shipName}) in Sector ${npc.currentSectorId}',
+    );
+    _logPlayerVisible(
+      here,
+      LogType.combat,
+      NpcDeathCries.formatDeathCry(target.pilotName, target.faction),
+    );
     GameEventLog.global.combat(
         '[${result.attacker.pilotName}] Combat: Destroyed ${target.pilotName} '
         'in Sector ${npc.currentSectorId}');
@@ -905,9 +938,13 @@ NpcShip _executeAttackGoal(
       currentGoal: goal.copyWith(status: NpcGoalStatus.complete),
     );
   } else {
-    log.combat('[${result.attacker.pilotName}] Engaged ${target.pilotName} '
-        '(dealt ${result.result.damageToDefender}, '
-        'took ${result.result.damageToAttacker})');
+    _logPlayerVisible(
+      here,
+      LogType.combat,
+      '[${result.attacker.pilotName}] Engaged ${target.pilotName} '
+      '(dealt ${result.result.damageToDefender}, '
+      'took ${result.result.damageToAttacker})',
+    );
     GameEventLog.global.combat(
         '[${result.attacker.pilotName}] Combat: Engaged ${target.pilotName} '
         '(dealt ${result.result.damageToDefender}, '
@@ -1096,7 +1133,9 @@ NpcShip _executeRaidPortGoal(
       );
       GameEventLog.global
           .combat('[${npc.pilotName}] Raid: Captured ${port.name}');
-      ActionLogProvider.global.warning(
+      _logPlayerVisible(
+        sector.id,
+        LogType.warning,
         '${npc.pilotName} captured ${port.name} in Sector ${sector.id}',
       );
     } else {
@@ -1108,7 +1147,9 @@ NpcShip _executeRaidPortGoal(
       );
       GameEventLog.global
           .combat('[${npc.pilotName}] Raid: Destroyed ${port.name}');
-      ActionLogProvider.global.error(
+      _logPlayerVisible(
+        sector.id,
+        LogType.error,
         '${npc.pilotName} destroyed ${port.name} in Sector ${sector.id}',
       );
     }
@@ -1117,7 +1158,9 @@ NpcShip _executeRaidPortGoal(
     updatedNpc = updatedNpc.copyWith(clearGoal: true);
     GameEventLog.global
         .combat('[${npc.pilotName}] Raid: Defeated by ${port.name} defenses');
-    ActionLogProvider.global.info(
+    _logPlayerVisible(
+      sector.id,
+      LogType.info,
       '${npc.pilotName} was repelled from ${port.name} in Sector ${sector.id}',
     );
   } else {
@@ -1165,7 +1208,9 @@ NpcShip _executeUpgradeGoal(
     GameEventLog.global
         .energy('NPC_ENERGY event=array_buy pilot=${updated.pilotName} '
             'spent=$NpcAiService.npcSolarArrayCostCredits');
-    ActionLogProvider.global.trade(
+    _logPlayerVisible(
+      updated.currentSectorId,
+      LogType.trade,
       '${updated.pilotName} installed a Solar Array',
     );
     return updated.copyWith(
@@ -1327,7 +1372,9 @@ NpcShip _executeBuyPortGoal(
   GameEventLog.global.goal(
     '[${npc.pilotName}] BuyPort: bought ${port.name} for $price cr',
   );
-  ActionLogProvider.global.warning(
+  _logPlayerVisible(
+    sector.id,
+    LogType.warning,
     '${npc.pilotName} bought ${port.name} in Sector ${sector.id}',
   );
   return npc.copyWith(

@@ -1,8 +1,8 @@
 import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Fixed epoch base so the regen maths is deterministic.
-const t0 = 1700000000000;
 
 /// The economy's brake on planetary output.
 ///
@@ -20,7 +20,9 @@ const t0 = 1700000000000;
 void main() {
   /// A port that buys minerals and sells nothing, so the demand side is the
   /// only thing under test.
-  /// Fixed epoch base so regen maths is deterministic.
+  ///
+  /// No clock stamp: regen is driven by explicit tick counts now, so a port
+  /// carries no wall-clock state to make deterministic.
   Port portWith(int minerals) => Port(
         name: 'Test Port',
         portClass: PortClass.free,
@@ -30,7 +32,6 @@ void main() {
         sellPrices: const {},
         maxDemand: {'minerals': minerals},
         demand: {'minerals': minerals},
-        lastRegenTime: t0,
       );
 
   group('demand is a real sink', () {
@@ -44,19 +45,63 @@ void main() {
     });
 
     test('demand refills toward its cap rather than resetting', () {
-      // Half a day elapsed: roughly half the shortfall comes back.
+      // Half a game day is half of [PlanetClock.ticksPerDay] ticks, and a game
+      // day is a real day, so half the shortfall comes back.
       final p = portWith(1000).copyWith(demand: {'minerals': 0});
-      final halfDay = 12 * 60 * 60 * 1000;
-      final regen = p.regen(now: t0 + halfDay);
+      final regen = p.regenTick(ticks: PlanetClock.ticksPerDay ~/ 2);
       expect(regen.demand['minerals']! > 400, isTrue);
       expect(regen.demand['minerals']! < 600, isTrue,
-          reason: 'half a day should not fully refill a 24h cycle');
+          reason: 'half a day should not fully refill a full-day cycle');
     });
 
     test('a full day refills completely', () {
       final p = portWith(1000).copyWith(demand: {'minerals': 0});
-      final regen = p.regen(now: t0 + 25 * 60 * 60 * 1000);
+      final regen = p.regenTick(ticks: PlanetClock.ticksPerDay);
       expect(regen.demand['minerals'], 1000);
+    });
+
+    test('a port that is never ticked stays sold out', () {
+      // The property the whole change exists for. [regenTick] takes a tick
+      // count and nothing else — there is no wall-clock input to pass — so the
+      // only thing that can refill a port is the tick, and the game being shut
+      // off means the tick is not running. A player who closes the app
+      // mid-trade must not come back to a restocked market.
+      final p = portWith(1000).copyWith(demand: {'minerals': 0});
+      expect(p.demand['minerals'], 0);
+      expect(p.regenTick().demand['minerals'], 0,
+          reason: 'one tick is 1,000 / 2,880 = 0.347 of a unit, which is not '
+              'yet a unit — and 10 ticks was tried first, which is 3 units and '
+              'so does NOT satisfy "no time has passed". The fixture has to '
+              'reach the actual boundary, not a convenient one.');
+      expect(p.regenTick(ticks: 10).demand['minerals'], 3,
+          reason: 'ten ticks is 3.47 units, so a sold-out small port does move '
+              '— which is the rate working, not the clock running');
+    });
+
+    test('the per-tick rate is the cap over a game day', () {
+      // 50,000 / 2,880 = 17.361 per tick. The fraction is carried, so a whole
+      // day still yields the whole cap — which is the property truncation would
+      // have quietly broken for a small port (1,000 / 2,880 = 0.347, i.e. zero).
+      final big = portWith(50000).copyWith(demand: {'minerals': 0});
+      final one = big.regenTick();
+      expect(one.demand['minerals'], 17,
+          reason: '50,000 / 2,880 truncates to 17');
+
+      var p = big;
+      for (var i = 0; i < PlanetClock.ticksPerDay; i++) {
+        p = p.regenTick();
+      }
+      expect(p.demand['minerals'], 50000,
+          reason:
+              'a whole day must land on the cap exactly, not on 17 x 2,880');
+
+      final small = portWith(1000).copyWith(demand: {'minerals': 0});
+      var s = small;
+      for (var i = 0; i < PlanetClock.ticksPerDay; i++) {
+        s = s.regenTick();
+      }
+      expect(s.demand['minerals'], 1000,
+          reason: 'a small port is the case truncation would have starved');
     });
   });
 

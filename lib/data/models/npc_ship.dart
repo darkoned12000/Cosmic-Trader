@@ -38,7 +38,10 @@ class NpcShip {
 
   // ── Banking ──────────────────────────────────────────
   final int bankBalance;
-  final DateTime? lastInterestTime;
+
+  /// Game tick at which interest was last paid. Ticks, not a timestamp — see
+  /// `GameClock` and the note on `Player.lastInterestTick`.
+  final int? lastInterestTick;
 
   // ── Equipment Levels ─────────────────────────────────
   final int hullEquipmentLevel;
@@ -138,7 +141,7 @@ class NpcShip {
     this.cargoUsed = 0,
     this.cargo = const {},
     this.bankBalance = 0,
-    this.lastInterestTime,
+    this.lastInterestTick,
     this.hullEquipmentLevel = 1,
     this.shieldEquipmentLevel = 1,
     this.engineEquipmentLevel = 1,
@@ -228,7 +231,7 @@ class NpcShip {
     int? cargoUsed,
     Map<String, int>? cargo,
     int? bankBalance,
-    DateTime? lastInterestTime,
+    int? lastInterestTick,
     int? hullEquipmentLevel,
     int? shieldEquipmentLevel,
     int? engineEquipmentLevel,
@@ -275,7 +278,7 @@ class NpcShip {
       cargoUsed: cargoUsed ?? this.cargoUsed,
       cargo: cargo ?? this.cargo,
       bankBalance: bankBalance ?? this.bankBalance,
-      lastInterestTime: lastInterestTime ?? this.lastInterestTime,
+      lastInterestTick: lastInterestTick ?? this.lastInterestTick,
       hullEquipmentLevel: hullEquipmentLevel ?? this.hullEquipmentLevel,
       shieldEquipmentLevel: shieldEquipmentLevel ?? this.shieldEquipmentLevel,
       engineEquipmentLevel: engineEquipmentLevel ?? this.engineEquipmentLevel,
@@ -320,7 +323,7 @@ class NpcShip {
       'cargoUsed': cargoUsed,
       'cargo': cargo,
       'bankBalance': bankBalance,
-      'lastInterestTime': lastInterestTime?.toIso8601String(),
+      'lastInterestTick': lastInterestTick,
       'hullEquipmentLevel': hullEquipmentLevel,
       'shieldEquipmentLevel': shieldEquipmentLevel,
       'engineEquipmentLevel': engineEquipmentLevel,
@@ -371,9 +374,11 @@ class NpcShip {
       cargoUsed: json['cargoUsed'] as int? ?? 0,
       cargo: Map<String, int>.from(json['cargo'] ?? {}),
       bankBalance: json['bankBalance'] as int? ?? 0,
-      lastInterestTime: json['lastInterestTime'] != null
-          ? DateTime.parse(json['lastInterestTime'] as String)
-          : null,
+      // A pre-clock save holds a wall-clock timestamp here. Read as nothing:
+      // there is no correct conversion to ticks, and guessing would either
+      // pay a year of interest on load or none at all. Starting unpaid is
+      // the safe reading and costs the player nothing they had.
+      lastInterestTick: (json['lastInterestTick'] as num?)?.toInt(),
       hullEquipmentLevel: json['hullEquipmentLevel'] as int? ?? 1,
       shieldEquipmentLevel: json['shieldEquipmentLevel'] as int? ?? 1,
       engineEquipmentLevel: json['engineEquipmentLevel'] as int? ?? 1,

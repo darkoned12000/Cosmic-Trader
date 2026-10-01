@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/services/colonist_supply.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 import 'package:flutter/material.dart';
 
 /// Player-facing reference for the planet system, swapped inline inside
@@ -44,12 +46,10 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             [
               'Planets sit in sectors. A planet marker is brown on the galaxy map and the tactical map, and shows whether it is scanned, unclaimed, or owned.',
               '',
-              'You must scan a world before you can land on it. There are two ways to pay for that:',
-              '  • Quick scan — 1 energy, available from the sector view. Identifies the world and its owner.',
-              '  • Full scan — 4 energy, from the Planet screen. Same information, plus +1 standing with the owner.',
-              'A world with a Scanner module installed scans itself on sector entry for free.',
+              'You must scan a world before you can land on it. Scanning costs '
+                  '${EnergyService.scanCost} energy, and it is one action, not two — the sector view and the Planet screen both run the same scan, so neither can charge a different price for the same look.',
               '',
-              'Once scanned, the Planet screen shows the colony, its stores, and — if you own the world — the controls to run it.',
+              'A scan identifies the world and its owner, and credits you +1 standing with whoever owns it. A world you already own is scanned on sight.',
             ],
           ),
           const SizedBox(height: 12),
@@ -59,10 +59,12 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             Icons.groups_rounded,
             'The Colony and Its Workforce',
             [
-              'Every colony is a population of colonists split across four production tracks, plus a reserve.',
+              'Every colony is a population of colonists split across three production tracks, plus a reserve.',
               '',
-              'Minerals, Organics, Industrial, Drones — colonists on a track produce that commodity every tick.',
-              'Reserve — colonists not on a track. They produce nothing, but they still eat, and they are the pool you draw from when you reassign a workforce.',
+              'Minerals, Organics, Industrial — colonists on a track produce that commodity every tick.',
+              'Reserve — colonists not on a track. They produce nothing, and they are the pool you draw from when you reassign a workforce.',
+              '',
+              'Drones are not a fourth track. They are derived from what the three tracks above actually make, so there is no stepper for them and nothing to assign — a workforce row for drones would let you staff it and watch the figure refuse to move. See Production below.',
               '',
               'On a world you own, the + and − buttons on each track move colonists between that track and the reserve. The step scales with your population so a large colony is not adjusted ten at a time.',
               'You can only reassign a workforce on a world your faction owns.',
@@ -81,10 +83,14 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               '',
               '    colonists on track  ×  type multiplier  ×  world efficiency  ×  development',
               '',
-              'World efficiency (0.5–1.5) is rolled once when the galaxy is generated, so two identical worlds are not identical colonies.',
+              'World efficiency (${Planet.minEfficiency}–${Planet.maxEfficiency}) is rolled once when the galaxy is generated, so two identical worlds are not identical colonies.',
               'Development is your Citadel level. It is deliberately shallow — see the Citadel section for why.',
               '',
-              'Nothing you produce is ever thrown away. Each store has its own limit, and when one fills the surplus moves into a shipment pool that keeps growing while you are away. Collect it whenever you are here — the planet screen offers a Collect button and tells you what it is worth.',
+              'Per-tick output is usually a fraction of a unit. A Jungle minerals track staffed with 5,000 colonists yields about 0.38 a tick, so the stored whole number moves only every few ticks. The Resources card shows two decimals and includes the fraction not yet banked, which is why a working colony can look like a still one — it is not, and nothing is being rounded away.',
+              '',
+              'Drones are derived, not staffed: a day of drones is the sum of the three tracks\' output divided by a per-class figure, so the ceiling on your fleet falls out of the production caps rather than being a separate number. Overstaffing a track past its optimum lowers all three outputs, and therefore the drones too.',
+              '',
+              'Nothing is thrown away while you are away. Each store has its own limit, and when one fills the surplus moves into a shipment pool that holds ${Planet.pendingCapMultiple}× the store and keeps growing. Collect it whenever you are here — the planet screen offers a Collect button and tells you what it is worth.',
             ],
           ),
           const SizedBox(height: 12),
@@ -108,10 +114,10 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             [
               'The full numbers behind the table above, read straight from the game data. Output is per colonist per tick before your world\'s efficiency and level bonuses.',
               '',
-              'Output/colonist      Min   Org   Ind   Dro | Colonist max | Food upkeep | Colonists to feed it | Strongest at',
+              'Output/colonist      Min   Org   Ind   Dro | Colonist max | Organics to import | Strongest at',
               ..._referenceRows(),
               '',
-              'Food upkeep is what a world costs to run at full population. "Colonists to feed it" is how many must sit on the Organics track for the colony to break even — on a world with poor soil (Lava, Barren) that is most of your population, which is what makes those worlds expensive to run rather than merely unlucky.',
+              '"Organics to import" is how many organics a world that cannot grow any must be shipped in to pay every Citadel level-up cost from here to level 6 — a figure rather than a multiplier, because "×0.00" does not tell you that you have a problem to solve. On a world with poor soil (Lava, Barren, Toxic, Ice, Moon) it is the whole requirement; everywhere else it is zero.',
               '',
               'Note that a world\'s output per colonist and its capacity are two different things. A Lava world out-produces any other type per colonist, but it also holds the fewest colonists, so its total output is small. A Terran world does less per head and holds twenty times as many.',
             ],
@@ -123,7 +129,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             Icons.commute_rounded,
             'Colonist Supply',
             [
-              'Colonists come from your own faction\'s homeworld, and the price is set by how many warps away your planet is from it. The trip has to be paid for whether or not you are watching it happen.',
+              'Colonists come from your own faction\'s homeworld, and the price is set by how many warps away your planet is from it.',
               '',
               'A Duran Hegemony pilot draws Duran colonists; a Vinari draws Vinari. Nobody ships in settlers of another species, so a world under your control is the only supply of your own people — and if you lose it, you cannot grow.',
               '',
@@ -131,6 +137,8 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               ..._transportRows(),
               '',
               'Your capital is the cheapest place to settle, and a reserve capital takes over if the main one is captured or lost. A faction with neither is an exile and buys from Terra Prime at a punishing rate — expensive, but never stuck.',
+              '',
+              'A purchase is a shipment, not an instant edit. Credits leave the moment you order, and the colonists spend ${Planet.colonistTransitDelayTicks} ticks in transit before joining the world\'s reserve — the colony card shows a progress bar for the flight. They arrive in the reserve, not on a track, so you still assign them yourself.',
               '',
               'Each shipment also burns the energy it would cost to fly there — the same engine-aware rate as a real warp — whatever the shipment size. So sending one lot of a thousand costs the same fuel as ten lots of a hundred, and a good engine genuinely makes a distant empire cheaper to run.',
               '',
@@ -146,7 +154,9 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             Icons.restaurant_rounded,
             'Colony Supply',
             [
-              'Every ${Planet.supplyInterval} ticks a colony is billed for the goods its people need: ${(Planet.supplyShareOfOutput * 100).round()}% of one tick\'s own output, drawn at random from minerals, organics or industrial.',
+              'Every ${Planet.supplyInterval} ticks — one game day — a colony is billed for the goods its people need: ${(Planet.supplyShareOfOutput * 100).round()}% of the output it produces in those same ${Planet.supplyInterval} ticks, drawn at random from ${Planet.supplyCommodities.join(', ')}.',
+              '',
+              'The base is the output of ${Planet.supplyInterval} ticks, not of one. It said "one tick\'s own output" until that was caught, which understated the bill by a factor of ${Planet.supplyInterval} — a help text quoting a number the model does not use is worse than no help text, and the guard that pinned the interval and the percentage did not cover the base.',
               '',
               'It is a share of what the colony makes rather than a fixed amount per colonist, so the bill is the same relative size whether you are running a world of a hundred or a world of two million.',
               '',
@@ -156,7 +166,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               '',
               'There is no starvation and no population loss. A colony whose stores are empty simply goes unpaid, and the planet screen says so with the fix: haul goods in, or plant a world beside it that grows what it cannot.',
               '',
-              'A harsh world **cannot make organics at all** — Lava, Barren, Toxic, Ice and Moon have no organics output whatsoever, matching the classic Volcanic world. Their workforce stepper is locked on that track and says so, because a stepper that accepts colonists onto a dead track looks like a bug.',
+              'A harsh world cannot make organics at all — Lava, Barren, Toxic, Ice and Moon have no organics output whatsoever, matching the classic Volcanic world. Their workforce stepper is locked on that track and says so, because a stepper that accepts colonists onto a dead track looks like a bug.',
               '',
               'That is a gap rather than a penalty: a harsh world is not taxed for being harsh, it is structurally unable to feed itself. The two answers are to unload organics you have hauled in, or to plant a world beside it that grows them — and a sector holds up to three.',
             ],
@@ -202,9 +212,11 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             Icons.shield_moon_rounded,
             'Defence',
             [
-              'Every world carries a defence level, a shield rating and an armour (hull) rating. Drones are a colony product, produced by colonists on the Drones track, and are counted separately from your ship\'s drones.',
+              'Every world carries a defence level, a shield rating and an armour (hull) rating. Levelling the world raises all three — see the Citadel section for what each tier grants.',
               '',
-              'A defence level is set when the galaxy is generated and does not currently change as a world levels up.',
+              'Drones are a colony product, derived from what the three production tracks make rather than staffed from a track of their own, and they are counted separately from your ship\'s drones. A world that produces nothing produces no drones.',
+              '',
+              'Invasion — attacking and capturing a defended world — is not implemented yet, so these figures are what the world will defend itself with rather than something you can currently test.',
             ],
           ),
           const SizedBox(height: 12),
@@ -216,11 +228,13 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
             [
               'Each major faction — Duran, Vinari, Traders — has a homeworld that quietly builds their ships. Pirates hold scattered outposts instead of a capital.',
               '',
-              'A homeworld produces one ship roughly every ${10} ticks. Two things govern it:',
+              'A homeworld produces one ship every ${Planet.defaultSpawnInterval} ticks. Two things govern it:',
               '  • Control. A homeworld captured by another faction stops building. Recapture it and production resumes — losing your capital is a serious setback, not a permanent end.',
               '  • Population. Yards stand down once a faction already has ships to spare, so a strong faction stops adding to its numbers.',
               '',
               'A second, reserve homeworld sits cold while the primary is intact and takes over if the primary is captured or lost.',
+              '',
+              'Pirate outposts work the same way on a slower cadence (${Planet.pirateOutpostSpawnInterval} ticks) — they are not a capital, but they do replace their losses while they hold ground.',
               '',
               'If a faction has no world under its control at all, it cannot rebuild its fleet, and its numbers will only fall.',
             ],
@@ -237,7 +251,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               'World        Minerals  Organics  Industrial  Drones',
               ..._storageRows(),
               '',
-              'A Volcanic world is a minerals fortress that cannot feed itself; an Oceanic world is the mirror image. Gas Giants and Glacial worlds are cramped everywhere. That is what makes choosing a world a decision rather than a lottery.',
+              'A Volcanic world is a minerals fortress that cannot feed itself; an Oceanic world is the mirror image. Glacial worlds are cramped everywhere. That is what makes choosing a world a decision rather than a lottery.',
             ],
           ),
           const SizedBox(height: 12),
@@ -269,8 +283,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               '• Invasion — attacking and capturing a defended world.',
               '• Colonist transport — carrying colonists from Terra in cargo holds rather than recruiting them at a port.',
               '• Supply routes — a world feeding a nearby port, which would move port prices.',
-              '• Scanner module auto-scan on sector entry.',
-              '• Genesis Torpedoes — creating a new world in an empty sector.',
+              '• Scanner module auto-scan on sector entry — there is no Scanner module in the catalogue, so nothing scans a world for free.',
               '• Planet specialisation and reserve-worker roles.',
             ],
             comingSoon: true,
@@ -287,10 +300,10 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
       final p = Planet(name: type, planetType: type);
       rows.add(
         '${type.padRight(12)}'
-        '${_compact(p.maxMinerals).padLeft(8)}'
-        '${_compact(p.maxOrganics).padLeft(10)}'
-        '${_compact(p.maxIndustrial).padLeft(12)}'
-        '${_compact(p.maxDrones).padLeft(8)}',
+        '${compact(p.maxMinerals).padLeft(8)}'
+        '${compact(p.maxOrganics).padLeft(10)}'
+        '${compact(p.maxIndustrial).padLeft(12)}'
+        '${compact(p.maxDrones).padLeft(8)}',
       );
     }
     return rows;
@@ -303,8 +316,8 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
       rows.add(
         '${(hops == 8 ? '$hops (farthest)' : '$hops').padRight(18)}'
         '${ColonistSupply.pricePerColonist(hops).toString().padLeft(22)}'
-        '${_compact(ColonistSupply.costFor(100000, hops)).padLeft(21)}'
-        '${_compact(ColonistSupply.costFor(1000000, hops)).padLeft(22)}',
+        '${compact(ColonistSupply.costFor(100000, hops)).padLeft(21)}'
+        '${compact(ColonistSupply.costFor(1000000, hops)).padLeft(22)}',
       );
     }
     return rows;
@@ -342,8 +355,8 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
         '${m.organics.toStringAsFixed(1).padLeft(6)}'
         '${m.industrial.toStringAsFixed(1).padLeft(6)}'
         '${m.drones.toStringAsFixed(1).padLeft(6)} |'
-        '${_compact(max).padLeft(9)} |'
-        '${toFeed > 0 ? _compact(toFeed) : '-'} | '
+        '${compact(max).padLeft(9)} |'
+        '${toFeed > 0 ? compact(toFeed) : '-'} | '
         '${tied > 1 ? 'all-round' : winner.key.toLowerCase()}',
       );
     }
@@ -362,7 +375,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
         'org ${m.organics.toStringAsFixed(1)}  '
         'ind ${m.industrial.toStringAsFixed(1)}  '
         'dro ${m.drones.toStringAsFixed(1)}  '
-        '| colonists ${_compact(Planet.colonistMaxByType[type] ?? 0)}',
+        '| colonists ${compact(Planet.colonistMaxByType[type] ?? 0)}',
       );
     }
     return rows;
@@ -376,10 +389,10 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
       final from = Planet.levelTitles[i];
       final to = Planet.levelTitles[i + 1];
       final heading = '${(i + 1).toString().padLeft(2)}  $from -> $to';
-      final needs = 'needs ${_compact(c.requiredColonists)} colonists, '
-          '${_compact(c.requiredMinerals)} minerals, '
-          '${_compact(c.requiredOrganics)} organics, '
-          '${_compact(c.requiredIndustrial)} industrial';
+      final needs = 'needs ${compact(c.requiredColonists)} colonists, '
+          '${compact(c.requiredMinerals)} minerals, '
+          '${compact(c.requiredOrganics)} organics, '
+          '${compact(c.requiredIndustrial)} industrial';
       final ticks = Planet.constructionLengthFor(i + 1);
       rows.add('${heading.padRight(34)}$needs');
       rows.add('${' '.padRight(34)}build time $ticks game ticks');
@@ -410,12 +423,25 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
         '${'DEV'.padRight(8)}'
         '${'STORE'.padRight(8)}'
         'POP CAP');
-    for (var i = 1; i < Planet.levelTitles.length; i++) {
-      final title = Planet.levelTitles[i];
-      final popScale = Planet.levelColonistScale[i] ?? 1.0;
+    // Iterate the **level number**, not the title index.
+    //
+    // Two of these tables are 0-indexed and the rest are 1-indexed, which is the
+    // whole trap: `levelTitles[i]` is the title of level `i + 1`, while
+    // `levelDefense[i]`, `levelArmour[i]` and friends are the stats of level `i`.
+    // Looping `i` from 1 paired the *Citadel* label with level 5's numbers, showed
+    // level 2 under the name "Settlement" with level 1's stats, and never printed
+    // Outpost at all — six tiers of the guide quietly mislabelled.
+    //
+    // So: `title` comes from `levelTitles[level - 1]` and every stat map is
+    // indexed by `level` directly.
+    for (var level = 1; level <= Planet.levelTitles.length; level++) {
+      final title = Planet.levelTitles[level - 1];
+      final popScale = Planet.levelColonistScale[level] ?? 1.0;
       final capped = (tightest * popScale).round();
-      final gate = i < Planet.levelUpCosts.length
-          ? Planet.levelUpCosts[i - 1].requiredColonists
+      // The gate to the *next* tier. `levelUpCosts` is indexed by transition, so
+      // level L's gate is `levelUpCosts[L - 1]`, and the top level has none.
+      final gate = level <= Planet.levelUpCosts.length
+          ? Planet.levelUpCosts[level - 1].requiredColonists
           : null;
       // Flag a ceiling that cannot clear the next gate. Should be unreachable —
       // the scale table is what makes it so — but printing it means a future
@@ -423,19 +449,19 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
       // player's playthrough.
       final tight = gate != null && capped < gate;
       rows.add('  ${title.padRight(22)}'
-          '${_defenceWord(Planet.levelDefense[i] ?? 0).padRight(12)}'
-          '${_compact(Planet.levelArmour[i] ?? 0).padRight(10)}'
-          '${_compact(Planet.levelShield[i] ?? 0).padRight(10)}'
-          '${'x${(Planet.levelDevelopment[i] ?? 1.0).toStringAsFixed(2)}'.padRight(8)}'
-          '${'x${_trimScale(Planet.levelStorageScale[i])}'.padRight(8)}'
-          '${_compact(capped)}${tight ? '  <-- CANNOT REACH NEXT TIER' : ''}');
+          '${_defenceWord(Planet.levelDefense[level] ?? 0).padRight(12)}'
+          '${compact(Planet.levelArmour[level] ?? 0).padRight(10)}'
+          '${compact(Planet.levelShield[level] ?? 0).padRight(10)}'
+          '${'x${(Planet.levelDevelopment[level] ?? 1.0).toStringAsFixed(2)}'.padRight(8)}'
+          '${'x${_trimScale(Planet.levelStorageScale[level])}'.padRight(8)}'
+          '${compact(capped)}${tight ? '  <-- CANNOT REACH NEXT TIER' : ''}');
     }
     rows.add('');
     rows.add(
         '  POP CAP is shown for a Toxic world, which has the tightest base '
         'ceiling in the game');
     rows.add(
-        '  (${_compact(tightest)} at level 1). Every other world type starts '
+        '  (${compact(tightest)} at level 1). Every other world type starts '
         'higher and');
     rows.add('  scales by the same factor, so none is excluded.');
     return rows;
@@ -458,24 +484,33 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
   /// Transfer prices, matching the panel on the planet screen. Kept in step by
   /// hand with `PlanetScreen._transferPrices`; the two are documented as a pair
   /// so a price change touches both.
-  List<String> _transferRows() {
-    const prices = {
-      'minerals': 5,
-      'organics': 8,
-      'industrial': 12,
-      'drones': 10,
-      'colonists': 20,
-    };
-    return prices.entries
-        .map((e) => '  ${e.key.padRight(11)} ${e.value} cr per unit')
-        .toList();
-  }
-
-  static String _compact(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
-  }
+  /// What a transfer actually costs.
+  ///
+  /// It used to print a per-unit credit price for every commodity — minerals at
+  /// 5 cr, colonists at 20 cr — which was wrong twice over. `_depositToPlanet`
+  /// charges **no credits at all**: bulk goods move freely between the hold and
+  /// the store, bounded only by free cargo space and the store's cap. (There was a
+  /// credits-based transfer here once, and a `Dep`/`Wdr` button that debited
+  /// credits, credited the store, and never touched `player.cargo` — so
+  /// `maxCargo` was never a constraint and the same minerals had three invented
+  /// values in one screen.) And colonists are not a flat price either: they are
+  /// priced by distance from your faction's homeworld, which the very next
+  /// paragraph of this same guide already said — so the table contradicted its
+  /// own author.
+  ///
+  /// A hand-typed price table is the failure mode: it drifts the moment the rule
+  /// moves and there is nothing to fail a test. Stated as the rule instead, so
+  /// there is no second copy to disagree with.
+  List<String> _transferRows() => const [
+        '  Bulk goods  free. Moving them costs no credits and no energy — a',
+        '              deposit is bounded by your free cargo space, a withdrawal',
+        '              by the room left in your hold. A hauler is worth flying',
+        '              because of that room, not because of a better rate.',
+        '  Colonists    15 cr x hops^1.5, measured from your faction\u2019s homeworld,',
+        '              plus the energy to fly the shipment. Batching pays: one',
+        '              shipment of many colonists costs far less than the same',
+        '              colonists taken in several small trips.',
+      ];
 
   Widget _sectionCard(
     ThemeData theme,

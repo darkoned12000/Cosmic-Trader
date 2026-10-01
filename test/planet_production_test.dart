@@ -115,6 +115,127 @@ void main() {
     return scaled > spec.maxOutputPerDay ? spec.maxOutputPerDay : scaled;
   }
 
+  group('reading a capacity does not consume production', () {
+    // Found by peer review, not by me. The storage cap is sized at
+    // `minimumTicksOfOutput` of what the colony currently makes, so `_cap` read
+    // the **per-tick getter** — which advances and floors the production
+    // remainder. That put a second and third draw inside every tick:
+    //
+    //   deposit('minerals', mineralOutput);   // draw 1, kept
+    //     -> capFor -> maxMinerals -> _cap -> outputFor   // draw 2, discarded
+    //   deposit('drones', droneOutput);
+    //     -> capFor -> maxDrones -> maxMinerals -> _cap -> outputFor  // draw 3
+    //
+    // A track yielding 1.7/tick banked 1 and threw 3 away. It also made
+    // `maxMinerals` — an ordinary-looking read-only getter that the colony card's
+    // storage bar calls — drain production every time it was *displayed*.
+    //
+    // The guard asserts the whole tick's production arrives, which is the
+    // property that actually broke, plus that a bare capacity read is inert.
+    Planet staffed(int colonists) {
+      final p =
+          colony(type: 'Lava', population: colonists, minerals: colonists);
+      p.storedMinerals = 0;
+      p.storedOrganics = 0;
+      p.storedIndustrial = 0;
+      p.storedDrones = 0;
+      return p;
+    }
+
+    test('a day of ticks banks a day of production', () {
+      // Deliberately a **slow** track.
+      //
+      // The first version of this guard used a Volcanic ore colony at its
+      // optimum — 17.36 units/tick — and passed against the injected fault. That
+      // was not a weak assertion, it was a fixture that cannot see the bug: when
+      // a track yields more than a unit per tick the kept draw is always
+      // `floor(remainder + 17.36) == 17`, so the extra discarded draw costs only
+      // its fractional share and a whole day still banks within 2% of nominal.
+      // Loss is worst exactly where production is hardest to see.
+      //
+      // Terran equipment, 3,000 colonists: 230/day, which is **0.08 per tick**.
+      // The extra draw then steals every other whole unit, and half of the
+      // colony's production vanishes.
+      final p = colony(
+        type: 'Terran',
+        population: 3000,
+        industrial: 3000,
+      );
+      p.storedMinerals = 0;
+      p.storedOrganics = 0;
+      p.storedIndustrial = 0;
+      p.storedDrones = 0;
+
+      final perDay = p.outputPerDayFor('industrial');
+      expect(perDay, 230, reason: 'sanity: 3,000 colonists at 13 per unit');
+      expect(perDay / PlanetClock.ticksPerDay, lessThan(1.0),
+          reason: 'sanity: this track must be slow, or the guard cannot see a '
+              'whole unit being stolen');
+
+      for (var i = 0; i < PlanetClock.ticksPerDay; i++) {
+        p.produce();
+      }
+      // Less the day's supply bill, which is 8% of the day's output. Forgetting
+      // it twice was the second false alarm in this guard: both came up short by
+      // exactly the bill, which is correct behaviour rather than a defect.
+      final billed = p.supplyDraw;
+      expect(billed, (perDay * Planet.supplyShareOfOutput).round(),
+          reason: 'sanity: one bill a day, 8% of that day output');
+      expect(
+          p.storedIndustrial + p.pendingIndustrial, closeTo(perDay - billed, 1),
+          reason: 'a day of ticks must bank a day of production less one bill. '
+              'An extra discarded draw per tick halves a sub-unit track.');
+    });
+
+    test('a fast track is not allowed to hide behind a loose tolerance', () {
+      // The same property at the other end of the scale, with a tolerance that
+      // cannot absorb the loss. A fast track loses only its fractional share,
+      // so this pins that it loses *nothing*.
+      final p = colony(type: 'Lava', population: 50000, minerals: 50000);
+      p.storedMinerals = 0;
+      p.storedOrganics = 0;
+      p.storedIndustrial = 0;
+      p.storedDrones = 0;
+
+      final perDay = p.outputPerDayFor('minerals');
+      for (var i = 0; i < PlanetClock.ticksPerDay; i++) {
+        p.produce();
+      }
+      final billed = p.supplyDraw;
+      expect(billed, (perDay * Planet.supplyShareOfOutput).round(),
+          reason: 'sanity: one bill a day, 8% of that day output');
+      expect(p.storedMinerals + p.pendingMinerals, closeTo(perDay - billed, 1),
+          reason: 'an exact figure within a unit. The first version of this '
+              'guard used a 1% tolerance, which is 500 units — wider than the '
+              'entire 2% loss, so it passed against the fault.');
+    });
+
+    test('reading a capacity is inert', () {
+      final p = staffed(50000);
+      for (var i = 0; i < 10; i++) {
+        p.maxMinerals;
+        p.maxOrganics;
+        p.maxIndustrial;
+        p.maxDrones;
+        p.capFor('minerals');
+      }
+      expect(p.productionRemainder, isEmpty,
+          reason: 'a capacity getter must not advance production');
+    });
+
+    test('the storage floor is still sized against real output', () {
+      // The other half: the cap must still respond to what the colony makes, or
+      // fixing it by returning a constant would pass the test above. At the
+      // Volcanic optimum the floor is 120 ticks of 17.36/tick = 2,083.
+      final p = staffed(50000);
+      final expected =
+          (p.perTickFor('minerals') * Planet.minimumTicksOfOutput).round();
+      expect(expected, greaterThan(0));
+      expect(p.maxMinerals, greaterThanOrEqualTo(expected),
+          reason: 'the floor must be at least a hundred ticks of output');
+    });
+  });
+
   group('the formula', () {
     test('output per day follows the triangle, not a linear product', () {
       // The Volcanic ore track: ratio 1, maximum 100,000 colonists, so the

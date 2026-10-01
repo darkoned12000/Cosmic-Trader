@@ -1,5 +1,6 @@
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/services/colonist_supply.dart';
+import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/screens/planets_knowledge_base.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +29,149 @@ void main() {
     ));
     await tester.pumpAndSettle();
   }
+
+  /// The guide's own text, joined. Sized by `pumpGuide`, which builds the whole
+  /// `ListView` — see its note about lazy building.
+  Future<String> guideText(WidgetTester tester) async {
+    await pumpGuide(tester);
+    return tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data ?? '')
+        .join('\n');
+  }
+
+  group('claims that had gone stale', () {
+    testWidgets('scanning quotes the model cost, not the deleted second verb',
+        (tester) async {
+      // The guide described **two** scan verbs and priced the second at 4
+      // energy. They were unified into one action at `EnergyService.scanCost`,
+      // and the comment on that constant says so — but the guide kept the old
+      // pair for the whole life of the change.
+      final text = await guideText(tester);
+      expect(text, contains('${EnergyService.scanCost} energy'));
+      expect(text, isNot(contains('4 energy')),
+          reason: 'the 4-energy full scan was deleted');
+      expect(text, isNot(contains('Quick scan')),
+          reason: 'there is one scan verb now, so there is no "quick" one');
+      expect(text, isNot(contains('Full scan')));
+    });
+
+    testWidgets('does not describe a Scanner module, which does not exist',
+        (tester) async {
+      // The guide claimed a Scanner module auto-scans on sector entry, while
+      // also listing that same feature as not-yet-available 200 lines below.
+      // "scanner" appears nowhere in the hardware catalogue or the scan path.
+      final text = await guideText(tester);
+      expect(text, isNot(contains('scans itself on sector entry')),
+          reason: 'no such module exists; the feature is listed as unbuilt');
+      // And the not-yet-available list must still say so.
+      expect(text, contains('Scanner module auto-scan'));
+    });
+
+    testWidgets('says three production tracks, and that drones are derived',
+        (tester) async {
+      // Drones stopped being a workforce track when they became derived from
+      // the other three. The guide still called it a four-track split and told
+      // the player to put colonists on a Drones track — which no stepper offers.
+      final text = await guideText(tester);
+      expect(text, contains('three production tracks'));
+      expect(text, isNot(contains('four production tracks')));
+      expect(text, isNot(contains('colonists on the Drones track')));
+      expect(text, contains('Drones are not a fourth track'));
+    });
+
+    testWidgets('does not claim levelling leaves defence alone',
+        (tester) async {
+      // `levelUp()` applies `levelDefense`/`levelShield`/`levelArmour` on
+      // completion, so the old sentence was simply false.
+      final text = await guideText(tester);
+      expect(
+          text, isNot(contains('does not currently change as a world levels')),
+          reason: 'levelling raises defence, shield and armour');
+      expect(text, contains('raises all three'));
+    });
+
+    testWidgets('does not list Genesis Torpedoes as unbuilt', (tester) async {
+      // They ship: the Ship screen carries them and the sector panel launches
+      // them. The unbuilt list is the one place a player checks whether a thing
+      // exists, so a stale entry there is a lie with a cost.
+      final text = await guideText(tester);
+      expect(text, isNot(contains('Genesis Torpedoes — creating a new world')),
+          reason: 'torpedoes are playable; they must not be listed as unbuilt');
+      expect(text, contains('Invasion — attacking and capturing'),
+          reason: 'and the genuinely unbuilt entries stay');
+    });
+
+    testWidgets('quotes the homeworld cadence from the model', (tester) async {
+      final text = await guideText(tester);
+      expect(text, contains('${Planet.defaultSpawnInterval} ticks'));
+      expect(text, contains('${Planet.pirateOutpostSpawnInterval} ticks'),
+          reason: 'pirate outposts run on their own cadence and the guide said '
+              'one number for both');
+    });
+
+    testWidgets('quotes the efficiency range from the model', (tester) async {
+      final text = await guideText(tester);
+      expect(text, contains('${Planet.minEfficiency}–${Planet.maxEfficiency}'));
+    });
+
+    testWidgets('mentions the colonist transit delay', (tester) async {
+      final text = await guideText(tester);
+      expect(text,
+          contains('${Planet.colonistTransitDelayTicks} ticks in transit'),
+          reason: 'a purchase is a shipment now, and the guide did not say so');
+      expect(text, isNot(contains('whether or not you are watching it happen')),
+          reason: 'that sentence predates the transit timer');
+    });
+  });
+
+  group('formatting the surface cannot render', () {
+    testWidgets('no literal markdown markers reach the player', (tester) async {
+      // `_sectionCard` renders a plain `Text`, so `**bold**` and `*italic*`
+      // arrive as literal asterisks. There were fourteen of them in here, all
+      // invisible to every existing guard — the words were right and the
+      // emphasis was punctuation on screen. Found by rendering the guide and
+      // looking at it.
+      final text = await guideText(tester);
+      expect(text, isNot(contains('**')),
+          reason: 'the guide renders plain text; emphasis markers show up as '
+              'asterisks');
+      expect(
+        RegExp(r'\*[A-Za-z][^*]*\*').hasMatch(text),
+        isFalse,
+        reason: 'no markdown italics either',
+      );
+    });
+  });
+
+  group('the generated tables', () {
+    testWidgets('the Type Reference header matches its own column count',
+        (tester) async {
+      // The header listed four columns after the commodity block and the rows
+      // emitted three — `Food upkeep` was a phantom left over from the deleted
+      // per-capita upkeep, so every value was labelled one column to the left.
+      // A misaligned table is worse than a missing one: the numbers are right
+      // and the headings lie about what they mean.
+      final text = await guideText(tester);
+      final lines = text.split('\n');
+      final headerIndex =
+          lines.indexWhere((l) => l.startsWith('Output/colonist'));
+      expect(headerIndex, greaterThanOrEqualTo(0),
+          reason: 'the reference table header moved');
+      final header = lines[headerIndex];
+      // **The row immediately after the header**, not `firstWhere(startsWith
+      // ('Terran'))`: the Planet Types table also prints rows beginning with a
+      // type name, and it has a different column count, so a name-based finder
+      // compared this header against the wrong table.
+      final row = lines[headerIndex + 1];
+
+      int separators(String s) => '|'.allMatches(s).length;
+      expect(separators(header), separators(row),
+          reason: 'header: "$header"\nrow: "$row"');
+      expect(header, isNot(contains('Food upkeep')),
+          reason: 'the per-capita upkeep mechanic was deleted, not retuned');
+    });
+  });
 
   testWidgets('renders at phone and desktop widths', (tester) async {
     // Overflow is a test failure in this framework, so pumping is the assertion.
@@ -70,7 +214,7 @@ void main() {
   testWidgets('derives "strongest at" from the winning multiplier',
       (tester) async {
     // A help screen that tells a player a Lava world is good at organics, or a
-    // Gas Giant is good at minerals, is worse than no table at all. The claim is
+    // an Ice world is good at organics, is worse than no table at all. The claim
     // computed from the same multipliers the game uses, so it cannot contradict
     // them; this pins the computation itself.
     await pumpGuide(tester);

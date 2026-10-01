@@ -5,6 +5,7 @@ import 'package:cosmic_trader/core/ui_scale.dart';
 import 'package:cosmic_trader/data/models/avatar_selection.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 import 'package:cosmic_trader/data/models/ship_equipment_types.dart';
 import 'package:cosmic_trader/data/models/ship_templates.dart';
 
@@ -16,15 +17,24 @@ import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/shared/panel_card.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
 import 'package:cosmic_trader/services/tow_service.dart';
+import 'package:cosmic_trader/widgets/genesis_launcher.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 
 class ShipStatusView extends StatefulWidget {
   final Player player;
   final Function(Player) onPlayerUpdate;
 
+  /// The universe's `planetsPerSector`, supplied by the shell exactly as the
+  /// sector panel and the tick service receive it. A parameter rather than a
+  /// settings read inside the view, so the slot limit has one source and the
+  /// launch cannot disagree with the tick about how many worlds fit.
+  final int worldCap;
+
   const ShipStatusView({
     super.key,
     required this.player,
     required this.onPlayerUpdate,
+    this.worldCap = 3,
   });
 
   @override
@@ -1017,7 +1027,7 @@ class _ShipStatusViewState extends State<ShipStatusView> {
                     child: Text(_titleCase(e.key),
                         style: const TextStyle(fontSize: 12)),
                   ),
-                  Text(_compact(e.value),
+                  Text(compact(e.value),
                       style: const TextStyle(
                           fontSize: 12,
                           fontFamily: 'monospace',
@@ -1064,18 +1074,68 @@ class _ShipStatusViewState extends State<ShipStatusView> {
                 ],
               ),
             ),
+        if (p.genesisTorpedoes > 0) ...[
+          const SizedBox(height: 12),
+          // Launching from the Ship screen as well as the sector panel, so the
+          // ordnance you can see here is the ordnance you can use. Both call
+          // `WorldForging.launch`, which spends the torpedo itself, so the two
+          // entry points cannot drift on the accounting.
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.rocket_launch_rounded, size: 18),
+              label: const Text('LAUNCH GENESIS TORPEDO'),
+              onPressed: _sectors.isEmpty ? null : _launchTorpedo,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Fires into the sector you are in. The world type is rolled at '
+            'random — an Atomic Detonator frees the slot if you roll badly.',
+            style: TextStyle(
+                fontSize: 10, color: cs.onSurface.withValues(alpha: 0.45)),
+          ),
+        ],
       ],
     );
   }
 
+  /// Fires a Genesis Torpedo into the player's current sector.
+  ///
+  /// Delegates the entire flow to [runGenesisLaunch] — the roll, the naming
+  /// dialog, the over-stack warning and the write-through all live there, so
+  /// this screen and the Sector Contents panel cannot disagree about what a
+  /// launch does. What is left here is the one thing that genuinely differs:
+  /// this screen keeps its own copy of the universe, so it reloads to show the
+  /// new world in its sector list.
+  Future<void> _launchTorpedo() async {
+    if (_sectors.isEmpty) return;
+    final sector = _sectors.firstWhere(
+      (s) => s.id == widget.player.currentSectorId,
+      orElse: () => _sectors.first,
+    );
+    final outcome = await runGenesisLaunch(
+      context: context,
+      player: widget.player,
+      sector: sector,
+      worldCap: widget.worldCap,
+    );
+    if (outcome == null || !mounted) return;
+
+    // `launch` spent the torpedo; `outcome.player` carries the result. Sending
+    // anything else here is how a launch ends up costing two.
+    widget.onPlayerUpdate(outcome.player);
+    await _loadUniverse();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+          content: Text('${outcome.world.planetType} world created: '
+              '${outcome.world.name}')));
+  }
+
   static String _titleCase(String s) =>
       s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
-
-  static String _compact(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
-  }
 
   Widget _shipResourcesCard(ThemeData theme, ColorScheme cs) {
     return PanelCard(
@@ -1085,7 +1145,7 @@ class _ShipStatusViewState extends State<ShipStatusView> {
         _resourceRow(cs, Icons.science_rounded, 'Research',
             '${widget.player.researchPoints.toStringAsFixed(0)} RP'),
         const SizedBox(height: 12),
-        _notorietyRow(cs),
+        _alignmentRow(cs),
         const SizedBox(height: 12),
         _factionStandingSection(theme, cs),
         _ownedPortsSection(theme, cs),
@@ -1125,20 +1185,35 @@ class _ShipStatusViewState extends State<ShipStatusView> {
     );
   }
 
-  Widget _notorietyRow(ColorScheme cs) {
+  /// The reputation readout: a signed value, a rank title, and progress to the
+  /// next rung.
+  ///
+  /// Replaces a `x/100` bar with a one-direction fill. On a signed scale a bar
+  /// drawn from zero has to grow either way, so it is driven by
+  /// [Player.alignmentMagnitude] and coloured by [Player.alignmentSide] — and
+  /// the title is the *rank*, because "Medium notoriety" told a player nothing
+  /// they could act on while "Menace 2nd Class" is a thing to climb out of.
+  Widget _alignmentRow(ColorScheme cs) {
     final p = widget.player;
-    final notorietyPct = (p.notoriety / 100.0).clamp(0.0, 1.0);
+    final rank = p.alignmentRank;
+    final toNext = p.alignmentPointsToNext;
+    final rankNumber = rank.index == 0 ? '—' : '#${rank.index}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(Icons.local_fire_department_rounded,
-                size: 16, color: p.notorietyColor),
+            Icon(
+              p.alignmentSide == ReputationSide.evil
+                  ? Icons.local_fire_department_rounded
+                  : Icons.verified_user_rounded,
+              size: 16,
+              color: p.alignmentColor,
+            ),
             const SizedBox(width: 8),
             Text(
-              'Notoriety',
+              'Reputation',
               style: TextStyle(
                 color: cs.onSurface.withValues(alpha: 0.6),
                 fontSize: 13,
@@ -1146,30 +1221,53 @@ class _ShipStatusViewState extends State<ShipStatusView> {
             ),
             const Spacer(),
             Text(
-              '${p.notoriety.toStringAsFixed(0)}/100',
+              // Signed, always: a bare magnitude would read a hated pilot as a
+              // popular one.
+              p.alignment >= 0
+                  ? '+${p.alignment.toStringAsFixed(0)}'
+                  : p.alignment.toStringAsFixed(0),
               style: TextStyle(
                 fontWeight: FontWeight.w500,
                 fontSize: 13,
-                color: p.notorietyColor,
+                color: p.alignmentColor,
               ),
             ),
           ],
         ),
         const SizedBox(height: 6),
         LinearProgressIndicator(
-          value: notorietyPct,
+          value: p.alignmentProgress,
           backgroundColor: cs.surfaceContainerHighest,
-          valueColor: AlwaysStoppedAnimation(p.notorietyColor),
+          valueColor: AlwaysStoppedAnimation(p.alignmentColor),
           minHeight: 6,
           borderRadius: BorderRadius.circular(3),
         ),
         const SizedBox(height: 2),
-        Text(
-          '${p.notorietyLabel} notoriety',
-          style: TextStyle(
-            fontSize: 11,
-            color: p.notorietyColor.withValues(alpha: 0.7),
-          ),
+        Row(
+          children: [
+            Flexible(
+              child: Text(
+                '$rankNumber · ${p.alignmentTitle}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: p.alignmentColor.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const Spacer(),
+            // How far the next rung is. Null at Fleet Admiral / Prime Evil, so
+            // it says "maximum" rather than printing a zero gap forever.
+            Text(
+              toNext == null ? 'maximum' : '$toNext to next rank',
+              style: TextStyle(
+                fontSize: 10,
+                color: cs.onSurface.withValues(alpha: 0.45),
+              ),
+            ),
+          ],
         ),
       ],
     );

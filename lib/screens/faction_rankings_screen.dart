@@ -15,15 +15,7 @@ import 'package:cosmic_trader/core/faction_colors.dart' as fcol;
 import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/shared/hud_pill.dart';
-
-String _formatCredits(int credits) {
-  if (credits >= 1000000000) {
-    return '${(credits / 1000000000).toStringAsFixed(1)}B';
-  }
-  if (credits >= 1000000) return '${(credits / 1000000).toStringAsFixed(1)}M';
-  if (credits >= 1000) return '${(credits / 1000).toStringAsFixed(1)}K';
-  return credits.toString();
-}
+import 'package:cosmic_trader/core/number_format.dart';
 
 class FactionRankingsScreen extends StatefulWidget {
   const FactionRankingsScreen({super.key});
@@ -292,7 +284,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              '${_formatCredits(leader.totalCredits + leader.totalBankCredits)} cr total wealth • $totalShips ships tracked',
+              '${compact(leader.totalCredits + leader.totalBankCredits)} cr total wealth • $totalShips ships tracked',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: cs.onSurface.withValues(alpha: 0.6),
               ),
@@ -672,7 +664,7 @@ class _FactionRankingsScreenState extends State<FactionRankingsScreen> {
                   label: _getFactionName(s.faction),
                   value: total.toDouble(),
                   color: fcol.factionColor(s.faction),
-                  formattedValue: '${_formatCredits(total)} cr',
+                  formattedValue: '${compact(total)} cr',
                 );
               }).toList(),
             ),
@@ -880,7 +872,7 @@ class _RankingCard extends StatelessWidget {
                   _statPill(
                     cs,
                     Icons.account_balance_wallet_rounded,
-                    '${_formatCredits(stats.totalCredits + stats.totalBankCredits)} cr',
+                    '${compact(stats.totalCredits + stats.totalBankCredits)} cr',
                   ),
                   const SizedBox(width: 8),
                   _statPill(cs, Icons.hail, '${stats.portsControlled} ports'),
@@ -897,7 +889,7 @@ class _RankingCard extends StatelessWidget {
                         '${stats.deaths} deaths'),
                     const SizedBox(width: 8),
                     _statPill(cs, Icons.bolt_rounded,
-                        '${_formatCredits(stats.totalDamageDealt)} dmg'),
+                        '${compact(stats.totalDamageDealt)} dmg'),
                   ],
                 ),
               ],

@@ -17,6 +17,96 @@ import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.da
 import 'package:cosmic_trader/services/npc_ai/npc_death_cries.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/services/salvage_service.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
+
+/// What one destroyed pilot settles: the killer's updated account, and the
+/// line the combat log owes them for a collected bounty (null when there was no
+/// live mark).
+typedef KillSettlement = ({Player player, String? bountyLine});
+
+/// Settles a kill — the bounty payout, the faction standing it earns, and the
+/// alignment the kill itself is worth.
+///
+/// Extracted from the combat screen for exactly one reason: **the ordering
+/// inside it is the rule, and a rule cannot be guarded from inside a widget.**
+/// Whether this kill was worth anything is a fact the *board* owns, so the claim
+/// is settled first and its answer is the only thing the alignment charge reads.
+/// The code used to charge unconditionally and settle the bounty afterwards,
+/// which meant a bounty kill paid out credits **and** cost −32 or −64 — the
+/// money arrived and the rank went down, and a Guild pilot collecting on a
+/// wanted Duran trader (at peace with the Guild, so the murder rate) was billed
+/// for the one job the board had hired him for.
+///
+/// The single invariant is **read the board before you settle it**, and it binds
+/// twice over:
+///
+///  * **The alignment charge** needs to know a live mark existed. It reads the
+///    board's own payout, which is the strongest available signal — it is the
+///    same fact the credits came from, so the two cannot disagree.
+///  * **The poster factions**, for the +5 standing, are read *before* the claim,
+///    because paying removes the marks.
+///
+/// One correction worth recording, because I got it wrong first and fault
+/// injection caught it: an earlier version of this comment claimed the claim had
+/// to come first, and that "a second board lookup cannot stand in for it".
+/// Moving the claim back *after* the charge, and probing `forTarget` beforehand
+/// instead, passes every guard here unchanged — the two signals are equivalent,
+/// because a mark that exists before paying is a mark that pays. What is *not*
+/// interchangeable is reading the board *after* settling it: that returns empty,
+/// and the fault is invisible in the credits (the payout already happened) and
+/// shows up only as a charge. So the rule is about **when**, not about **which
+/// signal**. The test `the board is unreadable once it has paid` states the fact
+/// this rests on, so if it ever stops holding, this comment is wrong.
+KillSettlement settleKill({
+  required Player killer,
+  required NpcShip victim,
+  required BountyBoard board,
+}) {
+  // **Read the board before settling it.** `payKiller` removes every mark it pays
+  // (`_active.remove(b)` per mark), so `posterFactionsFor` asked *after* the claim
+  // always came back empty and the +5 standing for a posting faction never fired
+  // on this path. It was dead code that read as a reward: the one piece of
+  // reputation a bounty kill did grant, silently granting nothing.
+  final posterFactions =
+      board.posterFactionsFor(victim.id, excludePosterId: killer.id);
+
+  // Recorded so the board can verify the kill.
+  var out = killer.withKill(victim.id);
+
+  final bountyTake = board.claim(
+    targetId: victim.id,
+    targetName: victim.pilotName,
+    killerName: out.name,
+    verifiedKills: {victim.id},
+    killerFaction: killer.faction.name,
+    targetFaction: victim.faction.name,
+  );
+
+  out = out
+      // A mark on the victim costs the killer a little standing with them: the
+      // families still notice who did it, wanted or not.
+      .withFactionStandingChange(victim.faction, -5)
+      .copyWith(
+        alignment: out.alignment +
+            ReputationActions.forKilling(
+              victimFaction: victim.faction,
+              killerFaction: killer.faction,
+              wanted: bountyTake > 0,
+            ),
+      );
+
+  if (bountyTake <= 0) return (player: out, bountyLine: null);
+
+  out = out.copyWith(credits: out.credits + bountyTake);
+  for (final faction in posterFactions) {
+    for (final value in FactionClass.values) {
+      if (value.name == faction) {
+        out = out.withFactionStandingChange(value, 5);
+      }
+    }
+  }
+  return (player: out, bountyLine: '>>> Bounty collected: $bountyTake cr <<<');
+}
 
 class CombatScreen extends StatefulWidget {
   final Player player;
@@ -534,47 +624,23 @@ class _CombatScreenState extends State<CombatScreen>
         lootedUnits += take;
         freeHolds -= take;
       }
+      // Kill recorded, bounty settled, alignment charged, standing moved. The
+      // ordering inside `settleKill` is the rule — see its doc.
       _player = SalvageService.applyToPlayer(
-        _player.withFactionStandingChange(_npc.faction, -5).copyWith(
-              credits: _player.credits + loot,
-              cargo: lootedCargo,
-              cargoUsed: _player.cargoUsed + lootedUnits,
-              notoriety: math.min(100.0, _player.notoriety + 3).toDouble(),
-            ),
+        _player.copyWith(
+          credits: _player.credits + loot,
+          cargo: lootedCargo,
+          cargoUsed: _player.cargoUsed + lootedUnits,
+        ),
         salvage,
       );
-      // Kill recorded for Bounty Board claims (payout happens via Claim).
-      _player = _player.withKill(_npc.id);
-      // Bounty review H2: claims auto-pay at kill time (mirroring the NPC
-      // instant path) so the 50-kill ledger can never strand a payout.
-      // The board Claim stays as a harmless fallback (nothing left owed).
-      final bountyTake = BountyBoard.global.claim(
-        targetId: _npc.id,
-        targetName: _npc.pilotName,
-        killerName: _player.name,
-        verifiedKills: {_npc.id},
-        killerFaction: _player.faction.name,
-        targetFaction: _npc.faction.name,
+      final settled = settleKill(
+        killer: _player,
+        victim: _npc,
+        board: BountyBoard.global,
       );
-      var standingPlayer = _player;
-      if (bountyTake > 0) {
-        standingPlayer = standingPlayer.copyWith(
-          credits: standingPlayer.credits + bountyTake,
-        );
-        for (final faction in BountyBoard.global.posterFactionsFor(
-          _npc.id,
-          excludePosterId: _player.id,
-        )) {
-          for (final value in FactionClass.values) {
-            if (value.name == faction) {
-              standingPlayer =
-                  standingPlayer.withFactionStandingChange(value, 5);
-            }
-          }
-        }
-        _combatLog.add('>>> Bounty collected: $bountyTake cr <<<');
-      }
-      _player = standingPlayer;
+      _player = settled.player;
+      if (settled.bountyLine != null) _combatLog.add(settled.bountyLine!);
       _npc = _npc.copyWith(
         credits: 0,
         cargo: {},
@@ -591,7 +657,7 @@ class _CombatScreenState extends State<CombatScreen>
       );
     } else if (fled) {
       _player = _player.copyWith(
-        notoriety: math.min(100.0, _player.notoriety + 1).toDouble(),
+        alignment: _player.alignment + ReputationActions.scanPilot,
       );
     }
 

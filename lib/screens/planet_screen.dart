@@ -2,14 +2,22 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
-import 'package:cosmic_trader/data/models/planet_classes.dart';
+import 'package:cosmic_trader/core/number_format.dart';
+import 'package:cosmic_trader/widgets/planet/planet_colony_card.dart';
+import 'package:cosmic_trader/widgets/planet/planet_construction_panel.dart';
+import 'package:cosmic_trader/widgets/planet/planet_defense_card.dart';
+import 'package:cosmic_trader/widgets/planet/planet_info_row.dart';
+import 'package:cosmic_trader/widgets/planet/planet_resources_card.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
-import 'package:cosmic_trader/widgets/shared/stat_bar.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/scan_service.dart';
 import 'package:cosmic_trader/services/colonist_supply.dart';
+import 'package:cosmic_trader/services/world_forging.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 
 class PlanetScreen extends StatefulWidget {
   final Player player;
@@ -23,11 +31,33 @@ class PlanetScreen extends StatefulWidget {
   /// and in a widget test that await never completes at all.
   final double constructionTimeScale;
 
+  /// The universe's `planetsPerSector`. A detonation has to reconcile the
+  /// sector's stability clock, and that needs the cap — so it is passed in
+  /// from the shell like [constructionTimeScale] rather than read from
+  /// storage inside the tap handler.
+  final int worldCap;
+
+  /// Leaves the Planet tab for the Sector view.
+  ///
+  /// A detonation ends with the world **gone from the sector**, so there is
+  /// nothing left on this tab to show: it would fall back to a neighbour world,
+  /// or to an empty sector, and either way the player is left looking at a
+  /// screen whose subject they just deleted. Returning them to the sector they
+  /// acted on puts the change where it happened — the contents list they will
+  /// look for the world in, to confirm it is gone.
+  ///
+  /// A callback rather than a route push: the tab bar is the shell's business,
+  /// and pushing a `SectorView` from here would give the player a *second* one
+  /// with its own copy of the universe and its own nav bar.
+  final VoidCallback? onExitToSector;
+
   const PlanetScreen({
     super.key,
     required this.player,
     required this.onPlayerUpdate,
     this.constructionTimeScale = 1.0,
+    this.worldCap = 3,
+    this.onExitToSector,
   });
 
   @override
@@ -64,10 +94,26 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// Every mutating action on this screen has to go through here rather than
   /// calling [UniverseStorage.saveSectors] directly, because the poll and the
   /// write race each other.
-  Future<void> _persist(Sector sector) async {
+  /// Writes one sector back and reports whether it landed.
+  ///
+  /// The bool is the point. This used to be `Future<void>`, and
+  /// `UniverseStorage.saveSectors` has two silent exits — it refuses outright
+  /// when the last load failed, and it drops a sector whose id it cannot find in
+  /// the file it just read — plus a `catch` that only `debugPrint`s. A caller
+  /// that cannot tell "written" from "quietly dropped" cannot tell the player
+  /// either, which is how a purchase came to take the credits and show nothing.
+  ///
+  /// A failure is **remembered**, not just reported: see [_pendingWrite].
+  Future<bool> _persist(Sector sector) async {
     _writeInFlight = true;
     try {
-      await UniverseStorage.instance.saveSectors([sector]);
+      final ok = await UniverseStorage.instance.saveSectors([sector]);
+      _pendingWrite = ok ? null : sector;
+      return ok;
+    } catch (e) {
+      debugPrint('[PlanetScreen] persist failed: $e');
+      _pendingWrite = sector;
+      return false;
     } finally {
       _writeInFlight = false;
     }
@@ -80,6 +126,32 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// A sector can hold up to `planetsPerSector` worlds, and the screen can only
   /// show one at a time, so this is state the player controls.
   String? _selectedPlanetId;
+
+  /// A sector whose last write did **not** land, kept so the 1-second refresh
+  /// cannot revert it. Null means disk agrees with this screen.
+  ///
+  /// This is the mitigation for `saveSectors`'s silent failure modes, not a
+  /// substitute for them: a retry is attempted on every refresh, so a transient
+  /// refusal self-heals, and the player is told when it does not.
+  Sector? _pendingWrite;
+
+  /// Shipments this screen dispatched that the stored universe has not yet
+  /// confirmed **landed** — see the reconciliation in [_syncFromDisk].
+  ///
+  /// Held as the *intent* (which world, how many, and the population it started
+  /// from) rather than as a snapshot of the sector, because the tick legitimately
+  /// owns the rest of that sector: re-writing a whole stale sector would revert
+  /// its port restock and any NPC that moved through. Re-dispatching onto the
+  /// freshly-read world touches only the one field the player actually changed.
+  ///
+  /// Settled by the **population** moving, not by a single sighting of
+  /// `colonistsInTransit > 0`. The first version cleared the intent as soon as
+  /// disk agreed once, which left the shipment unguarded for the rest of its
+  /// flight — and the clobber that matters happens *after* the write, when the
+  /// tick finishes its pass. A guard that stops guarding one tick too early is
+  /// not a guard.
+  final List<({String planetId, int headcount, int populationAtDispatch})>
+      _unconfirmedShipments = [];
 
   /// The world to display: the selection if it still exists, else the first
   /// living one, else the first of any.
@@ -115,7 +187,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
       p.colonistsMinerals,
       p.colonistsOrganics,
       p.colonistsIndustrial,
-      p.colonistsDrones,
       p.level,
       p.shield,
       p.hull,
@@ -124,6 +195,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
       // anything having to call setState when the tick decrements it.
       p.constructionTicksRemaining,
       p.constructionTarget,
+      // Same reason, for a shipment in the air. Without these two the transit
+      // row is pinned at whatever it read when the order was placed: the
+      // countdown would sit at "1m" through the whole flight and the headcount
+      // would not clear on arrival, because `population` alone cannot tell a
+      // repaint apart from the ordering that is already finished.
+      p.colonistsInTransit,
+      p.colonistTransitTicks,
     );
   }
 
@@ -164,6 +242,25 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// selection to slot 0 on every poll.
   Future<void> _syncFromDisk() async {
     if (_writeInFlight) return;
+
+    // **A write we could not land must not be reverted by a read.**
+    //
+    // Disk is behind memory here: the player made a change, the save silently
+    // refused (or threw), and the file still holds the old value. Adopting the
+    // fresh read would undo what they just did — which is precisely the reported
+    // bug: credits deducted, no panel, and one second later the purchase gone
+    // without a word. `saveSectors` has two silent exits and a swallowed
+    // `catch`, so this is reachable without anything looking broken.
+    //
+    // So retry the write, and while it is outstanding, keep our own copy. The
+    // refresh resumes the moment a write lands, which is the only condition
+    // under which disk is trustworthy again.
+    final pending = _pendingWrite;
+    if (pending != null) {
+      await _persist(pending);
+      if (_pendingWrite != null) return;
+    }
+
     final previousId = _currentSector?.id;
     final List<Sector> fresh;
     try {
@@ -176,6 +273,54 @@ class _PlanetScreenState extends State<PlanetScreen> {
     // predate it, and clobbering it would make a button look inert.
     if (_writeInFlight) return;
 
+    // **A change this screen made must survive the tick's write-back.**
+    //
+    // `GameTickService` loads the whole universe, runs the NPC pass over the
+    // roster (seconds of BFS-heavy work at scale), then writes that snapshot
+    // back unconditionally. A recruit landing inside that window is overwritten
+    // by a copy taken before it existed — no error, no log, and indistinguishable
+    // from the feature never having worked. Reproduced in
+    // `test/concurrent_write_clobber_test.dart`.
+    //
+    // So the screen holds its own intent until the stored universe agrees. If
+    // the stored world has the shipment, the intent is settled; if it does not,
+    // the shipment is re-dispatched onto the freshly-read world and written
+    // again. It converges rather than fighting: the next tick loads what we just
+    // wrote, so it cannot clobber the same shipment twice.
+    final intent = _unconfirmedShipments;
+    if (intent.isNotEmpty) {
+      var rewrote = false;
+      final settled =
+          <({String planetId, int headcount, int populationAtDispatch})>[];
+      for (final s in intent) {
+        final stored = _planetById(fresh, s.planetId);
+        // Gone, or the population has moved: either way there is nothing left to
+        // guard. Population is the settle signal because it is what the shipment
+        // *becomes* — a single sighting of `colonistsInTransit > 0` only proves
+        // the write landed, not that it will survive the tick now in flight.
+        if (stored == null || stored.population > s.populationAtDispatch) {
+          settled.add(s);
+          continue;
+        }
+        // Still on its way, and the write landed: nothing to do this pass.
+        if (stored.colonistsInTransit > 0) continue;
+        stored.dispatchColonists(s.headcount);
+        final sector = _sectorHolding(fresh, s.planetId);
+        if (sector != null) {
+          await _persist(sector);
+          rewrote = true;
+        }
+      }
+      intent.removeWhere(settled.contains);
+      if (rewrote) {
+        if (!mounted) return;
+        _allSectors = fresh;
+        _fingerprint = _fingerprintOf(_resolvePlanetFrom(fresh));
+        setState(() {});
+        return;
+      }
+    }
+
     final next = _fingerprintOf(_resolvePlanetFrom(fresh));
     if (next == _fingerprint && previousId == _currentSector?.id) {
       _allSectors = fresh;
@@ -185,6 +330,29 @@ class _PlanetScreenState extends State<PlanetScreen> {
     setState(() {
       _allSectors = fresh;
     });
+  }
+
+  /// The world with [planetId] anywhere in [all], or null.
+  ///
+  /// By **id**, not by `planets.first`: a sector holds several worlds and the
+  /// one the shipment belongs to is not necessarily slot 0.
+  Planet? _planetById(List<Sector> all, String planetId) {
+    for (final sector in all) {
+      for (final planet in sector.planets) {
+        if (planet.id == planetId) return planet;
+      }
+    }
+    return null;
+  }
+
+  /// The sector holding [planetId], or null.
+  Sector? _sectorHolding(List<Sector> all, String planetId) {
+    for (final sector in all) {
+      for (final planet in sector.planets) {
+        if (planet.id == planetId) return sector;
+      }
+    }
+    return null;
   }
 
   /// The selected world, resolving against an explicit sector list.
@@ -226,22 +394,16 @@ class _PlanetScreenState extends State<PlanetScreen> {
     final planet = _resolvePlanet(sector);
     if (sector == null || planet == null) return;
 
-    if (planet.scanned) return;
-
-    // Spend energy for the manual scan.
-    if (!EnergyService.canScanPlanet(widget.player)) return;
-    var updatedPlayer = widget.player.spendEnergy(EnergyService.planetScanCost);
-    final ownerFaction = planet.owner;
-    if (ownerFaction != null) {
-      updatedPlayer = updatedPlayer.withFactionStandingChange(ownerFaction, 1);
-    }
-    widget.onPlayerUpdate(updatedPlayer);
-
-    planet.scanned = true;
-    await _persist(sector);
-    ActionLogProvider.global.info(
-      'Scan complete: ${planet.name} — ${planet.planetType}',
+    // The rule lives in [ScanService] so this screen and the sector panel cannot
+    // drift into charging different prices for the same act — which is exactly
+    // what happened (4 energy here, 1 there, identical result).
+    final result = await ScanService.scanPlanet(
+      player: widget.player,
+      planet: planet,
+      onPersist: () => _persist(sector),
     );
+    if (!result.performed) return;
+    widget.onPlayerUpdate(result.player);
     if (mounted) {
       setState(() {});
     }
@@ -335,14 +497,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 ),
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: EnergyService.canScanPlanet(widget.player)
-                      ? _scanPlanet
-                      : null,
+                  onPressed:
+                      EnergyService.canScan(widget.player) ? _scanPlanet : null,
                   icon: const Icon(Icons.science_rounded),
-                  label: Text(
-                      'Scan Planet (${EnergyService.planetScanCost} energy)'),
+                  label: Text('Scan Planet (${EnergyService.scanCost} energy)'),
                 ),
-                if (!EnergyService.canScanPlanet(widget.player))
+                if (!EnergyService.canScan(widget.player))
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
@@ -365,6 +525,19 @@ class _PlanetScreenState extends State<PlanetScreen> {
       appBar: AppBar(
         title: Text(planet.name),
         forceMaterialTransparency: true,
+        // The detonator lives here rather than on the world row because it acts
+        // on a *specific* world, and the AppBar is the one place on this screen
+        // that is unambiguously about the world being shown. Red because it is
+        // the only irreversible control in the game, and greyed rather than
+        // hidden when the player has none, so the capability is discoverable
+        // before they buy one.
+        actions: [
+          if (!planet.isDestroyed)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _destroyPlanetButton(cs),
+            ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -443,17 +616,27 @@ class _PlanetScreenState extends State<PlanetScreen> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              _infoRow('Status',
-                                  planet.isHomeworld ? 'Homeworld' : 'Colony'),
-                              _infoRow('Colonists',
-                                  _formatNumber(planet.population)),
-                              _infoRow('Level',
+                              // Status, Colonists, Level, Creator, Owner — the
+                              // world's whole situation in one block, so
+                              // "whose is this and did I make it" is answerable
+                              // without scrolling to the ownership card.
+                              PlanetInfoRow('Status', _statusLabel(planet)),
+                              PlanetInfoRow(
+                                  'Colonists', compact(planet.population)),
+                              PlanetInfoRow('Level',
                                   '${planet.level} ${_levelTitle(planet.level)}'),
-                              if (planet.owner != null)
-                                _infoRow('Owner',
-                                    '${planet.owner!.displayName} (${planet.owner!.name.toUpperCase()})'),
-                              if (planet.owner == null)
-                                _infoRow('Claim', 'Unclaimed'),
+                              // Blank for a generator-placed world, which is
+                              // nearly all of them. Deliberately not a
+                              // placeholder like "unknown": nobody made it, and
+                              // a word there would imply somebody did.
+                              PlanetInfoRow('Creator', planet.creator ?? ''),
+                              PlanetInfoRow(
+                                'Owner',
+                                planet.owner == null
+                                    ? 'Unclaimed'
+                                    : '${planet.owner!.displayName} '
+                                        '(${planet.owner!.name.toUpperCase()})',
+                              ),
                             ],
                           ),
                         ),
@@ -496,8 +679,11 @@ class _PlanetScreenState extends State<PlanetScreen> {
             // full width and the readout fits properly.
             LayoutBuilder(
               builder: (context, constraints) {
-                final resources = _buildResourcesCard(planet, cs);
-                final defense = _buildDefenseCard(planet, cs);
+                final resources = PlanetResourcesCard(
+                    planet: planet,
+                    cs: cs,
+                    onCollect: (v) => _collectShipment(planet, v));
+                final defense = PlanetDefenseCard(planet: planet, cs: cs);
                 if (constraints.maxWidth < 560) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -519,8 +705,20 @@ class _PlanetScreenState extends State<PlanetScreen> {
               },
             ),
             const SizedBox(height: 12),
-            if (planet.population > 0) _buildColonyCard(planet, cs),
-            if (planet.population > 0) const SizedBox(height: 12),
+            // Not gated on `population > 0`. It used to be, and that made the
+            // card *disappear* rather than read as empty — so the two states a
+            // player most needs told apart, "no colonists" and "the panel is
+            // broken", rendered identically: nothing. It also meant the one
+            // world guaranteed to be buying its first shipment was the one world
+            // with no colony panel to show the shipment arriving in. Empty state,
+            // plainly labelled, is the fix; the card is cheap and always has a
+            // Recruit control on it.
+            PlanetColonyCard(
+                planet: planet,
+                cs: cs,
+                canAssign: planet.owner == widget.player.faction,
+                onAdjust: (t, d) => _adjustWorkforce(planet, t, d)),
+            const SizedBox(height: 12),
             // Actions / Management
             _buildActions(planet, cs),
           ],
@@ -790,7 +988,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
     // can move".
     final canDeposit = isColonists
         ? (widget.player.credits >= depositCost &&
-            stored + amount <= max &&
+            stored + planet.colonistsInTransit < max &&
             widget.player.energy >= shipmentEnergy)
         : (inHold > 0 && stored < max);
     final canWithdraw = !isColonists && stored > 0 && holdSpace > 0;
@@ -844,7 +1042,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
             // three times now.
             Flexible(
               child: Text(
-                '${_formatNumber(stored)} / ${_formatNumber(max)}',
+                '${compact(stored)} / ${compact(max)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -861,9 +1059,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 // credits change hands on an unload or a load. What the player
                 // actually needs to see is how much of the goods is already in
                 // the hold, because that is what bounds a deposit.
-                isColonists
-                    ? '${pricePerUnit}cr'
-                    : 'hold ${_formatNumber(inHold)}',
+                isColonists ? '${pricePerUnit}cr' : 'hold ${compact(inHold)}',
                 textAlign: TextAlign.right,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -1034,11 +1230,20 @@ class _PlanetScreenState extends State<PlanetScreen> {
         ColonistSupply.energyPerShipment(widget.player, _hopsFor(sector));
     if (widget.player.energy < energy) return;
 
-    final moved = amount < planet.colonistMax - planet.population
-        ? amount
-        : planet.colonistMax - planet.population;
-    if (moved <= 0) return;
-    final actualCost = cost ~/ amount * moved;
+    // A purchase is a **shipment**, not an edit to the population figure: the
+    // credits leave now and the colonists land a tick or two later, with the
+    // colony card showing the headcount in transit so the player can watch it
+    // arrive. It also means the room check has to count what is already on its
+    // way — two orders placed against the same free space would otherwise both
+    // pass and overrun the cap on arrival.
+    final sending = planet.dispatchColonists(amount);
+    if (sending <= 0) return;
+    // `sending > 0` above already implies `amount > 0` (`sending` is `amount` or
+    // something smaller than it), so the divide cannot throw — but the ordering
+    // could still be wrong. `cost ~/ amount * sending` divides *first*, so a
+    // 10-credit colonist moved 3 at a time costs 9 for the full step instead of
+    // 10: the player quietly underpays by the remainder, once per step.
+    final actualCost = (cost * sending) ~/ amount;
 
     var updated = widget.player.copyWith(
       credits: widget.player.credits - actualCost,
@@ -1047,14 +1252,42 @@ class _PlanetScreenState extends State<PlanetScreen> {
       updated = updated.copyWith(energy: widget.player.energy - energy);
     }
     widget.onPlayerUpdate(updated);
-    planet.population += moved;
 
-    await _persist(sector);
-    ActionLogProvider.global.info(
-      'Recruited $moved colonists onto ${planet.name} '
-      '($actualCost cr${energy > 0 ? ', $energy energy' : ''})',
-    );
+    // **The screen repaints before the write, not after.** `setState` used to sit
+    // below `await _persist(...)`, which made the UI's acknowledgement of a
+    // purchase depend on a disk write succeeding. `UniverseStorage.saveSectors`
+    // can *refuse* — it declines to merge when the last load failed, and it
+    // silently drops a sector whose id it cannot find in the freshly-loaded file
+    // — and it swallows its own errors. Any of those left the player with credits
+    // deducted and no panel, because the one line that would have shown the
+    // shipment never ran. A purchase that happened in memory must be visible in
+    // memory; durability is a separate question, and a failure to persist is
+    // reported rather than swallowed.
     if (mounted) setState(() {});
+
+    // Held until the stored universe confirms the shipment **landed**. A
+    // successful write is not enough: the tick can overwrite it seconds later
+    // with a snapshot taken before this purchase existed, and the player would
+    // watch the panel vanish.
+    _unconfirmedShipments.add((
+      planetId: planet.id,
+      headcount: sending,
+      // `dispatchColonists` moves nobody into `population` yet, so this is the
+      // pre-shipment figure — the baseline the landing has to beat.
+      populationAtDispatch: planet.population,
+    ));
+
+    final wrote = await _persist(sector);
+    if (!wrote && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Colonists dispatched, but the universe could not be saved — '
+            'they may not survive a restart.',
+          ),
+        ),
+      );
+    }
   }
 
   /// Moves units from the ship's hold into the planet's store. Free.
@@ -1092,7 +1325,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
 
     await _persist(sector);
     ActionLogProvider.global.info(
-      'Unloaded $_format(movedFits) $type to ${planet.name}'
+      'Unloaded ${compact(movedFits)} $type to ${planet.name}'
       '${movedFits < amount ? ' (store was full)' : ''}',
     );
     if (mounted) setState(() {});
@@ -1127,7 +1360,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
 
     await _persist(sector);
     ActionLogProvider.global.info(
-      'Loaded $_format(movedFits) $type from ${planet.name}'
+      'Loaded ${compact(movedFits)} $type from ${planet.name}'
       '${movedFits < amount ? ' (hold is full)' : ''}',
     );
     if (mounted) setState(() {});
@@ -1155,12 +1388,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
   }
 
-  static String _format(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
-  }
-
   Future<void> _claimPlanet(Planet planet) async {
     final sector = _currentSector;
     if (sector == null) return;
@@ -1172,10 +1399,15 @@ class _PlanetScreenState extends State<PlanetScreen> {
       updatedPlayer =
           updatedPlayer.withFactionStandingChange(previousOwner, -3);
     }
+    // Settling a world you found: half of what *creating* one is worth, so
+    // making something outweighs taking it.
+    updatedPlayer =
+        updatedPlayer.withAlignmentDelta(ReputationActions.buildWorld);
     widget.onPlayerUpdate(updatedPlayer);
     await _persist(sector);
     ActionLogProvider.global.info(
-      '${widget.player.faction.displayName} has claimed ${planet.name}',
+      '${widget.player.faction.displayName} has claimed ${planet.name} '
+      '(reputation +${ReputationActions.buildWorld.toInt()})',
     );
     if (mounted) {
       setState(() {});
@@ -1184,12 +1416,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
 
   String _levelTitle(int level) {
     return level >= 1 && level <= 6 ? Planet.levelTitles[level - 1] : 'Unknown';
-  }
-
-  String _formatNumber(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return n.toString();
   }
 
   /// A level-gate row: `have / need`, with the **requirement** coloured.
@@ -1231,7 +1457,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                '${_formatNumber(have)} / ${_formatNumber(need)}',
+                '${compact(have)} / ${compact(need)}',
                 textAlign: TextAlign.right,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -1254,112 +1480,40 @@ class _PlanetScreenState extends State<PlanetScreen> {
     );
   }
 
-  Widget _infoRow(String label, String value) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: TextStyle(
-                  color: cs.onSurface.withValues(alpha: 0.6),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500)),
-          // The value is flexible and the label is not, so a long value (a
-          // population against a million-colonist cap, say) ellipsises instead
-          // of overflowing the row. Both were natural width once, which meant
-          // adding any "12,450 / 1.5M" value broke every card at 430px.
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _resourceBar(String label, int value, int max, Color color) {
-    return StatBar(
-      layout: StatBarLayout.stacked,
-      label: label,
-      // Current against cap, not just the current figure. The bar was already
-      // drawn proportionally, so the number beside it was the only place a
-      // player could not see how much room a world has left — which matters
-      // because a full store spills the surplus into the shipment pool rather
-      // than wasting it, and the player's next decision is whether to collect
-      // or to reassign colonists.
-      value: max > 0
-          ? '${_formatNumber(value)}/${_formatNumber(max)}'
-          : _formatNumber(value),
-      percent: max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0,
-      color: color,
-    );
-  }
-
-  Widget _defenseBar(String label, double value, double max, Color color) {
-    return StatBar(
-      layout: StatBarLayout.stacked,
-      label: label,
-      value: '${value.toInt()} / ${max.toInt()}',
-      percent: max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0,
-      color: color,
-    );
-  }
-
-  /// Colonists moved per tap of a workforce stepper, scaled to the colony so a
-  /// world of a million is not adjusted ten at a time.
-  static int _workforceStep(int population) {
-    if (population >= 100000) return 1000;
-    if (population >= 10000) return 500;
-    if (population >= 1000) return 100;
-    return 10;
-  }
-
-  /// The step actually used for a move of [delta] colonists.
+  /// What is going on with this world, derived rather than assumed.
   ///
-  /// A fixed step is unusable at the small end: a 900-colony world steps 100 at
-  /// a time, so with 40 colonists in the reserve the add button was **dead** —
-  /// `reserve >= 100` was false and there was no way to move any of them. The
-  /// player saw a full population and four disabled buttons.
-  ///
-  /// So the step is clamped to what is actually available on the side being
-  /// moved. A 40-colonist reserve still moves 40, not "nothing, because 100
-  /// did not fit". `delta` is negative for a removal, hence the sign test.
-  static int _effectiveStep(int step, int delta, int available) {
-    if (available > 0 && step > available) {
-      return delta < 0 ? available : available;
+  /// It used to be `isHomeworld ? 'Homeworld' : 'Colony'`, which called an
+  /// unclaimed rock with no colonists on it a *colony* — the one word a player
+  /// scanning this block most needs to be correct about. Derived from the actual
+  /// state instead, in the order that answers "can I use it".
+  String _statusLabel(Planet world) {
+    if (world.isDestroyed) return 'Destroyed';
+    if (world.isHomeworld) {
+      final of = world.homeworldOf;
+      return of == null ? 'Homeworld' : 'Homeworld of ${of.displayName}';
     }
-    return step;
+    if (world.owner == null) return 'Unclaimed';
+    // Claimed but nobody living on it: not yet a colony, and saying so is the
+    // difference between "I own this" and "this is producing for me".
+    if (world.population <= 0) return 'Claimed, unsettled';
+    if (world.isBackupHomeworld) return 'Reserve capital';
+    return 'Colony';
   }
 
-  /// Moves colonists between the reserve and a production track.
-  ///
-  /// The reserve is implicit — `population - assigned` — so this can never drive
-  /// the tracks above the population, and can never produce a negative count on
-  /// either side. Both bounds are re-checked here rather than trusted to the
-  /// button's `enabled` flag, because a held button keeps firing after the state
-  /// it was enabled for has changed.
   Future<void> _adjustWorkforce(Planet planet, String track, int delta) async {
     final sector = _currentSector;
     if (sector == null) return;
     if (planet.owner != widget.player.faction) return;
 
     final reserve = planet.reserveColonists;
+    // Three tracks, because three tracks exist. `trackRow` is only ever called
+    // with these names, so a fourth arm here was reachable-looking dead code —
+    // and it read the legacy `colonistsDrones`, which is exactly the kind of
+    // vestigial arm that later gets "fixed" into a live one.
     final current = switch (track) {
       'minerals' => planet.colonistsMinerals,
       'organics' => planet.colonistsOrganics,
       'industrial' => planet.colonistsIndustrial,
-      'drones' => planet.colonistsDrones,
       _ => 0,
     };
 
@@ -1376,409 +1530,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
         planet.colonistsOrganics = applied;
       case 'industrial':
         planet.colonistsIndustrial = applied;
-      case 'drones':
-        planet.colonistsDrones = applied;
+      // No drone case: `trackRow` is only ever called with the three real
+      // track names, because drones are derived rather than staffed. This
+      // branch was unreachable and reachable-looking, which is worse than
+      // absent — it invited someone to add a fourth row.
     }
 
     await _persist(sector);
     if (mounted) setState(() {});
-  }
-
-  Widget _buildColonyCard(Planet planet, ColorScheme cs) {
-    final canAssign = planet.owner == widget.player.faction;
-    final step = _workforceStep(planet.population);
-    final unsupplied = planet.storesEmpty;
-
-    Widget trackRow(
-      String label,
-      int count,
-      int perDay,
-      int optimum,
-      int trackCeiling,
-      Color colour,
-      String track,
-    ) {
-      // A track the world cannot produce is **locked**, not merely empty.
-      // A stepper that accepts colonists onto a track yielding nothing looks
-      // like a bug, and a player who cannot see why their organics stay at zero
-      // will assume the mechanic is broken. The label says it outright.
-      final producible = planet.canProduce(track);
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 74,
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurface.withValues(alpha: 0.7),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 58,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _formatNumber(count),
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w600,
-                      color: colour,
-                    ),
-                  ),
-                  // Where the peak is, under the count. Without this the whole
-                  // mechanic is invisible: a player sees a number fall when they
-                  // add colonists and has no way to learn that a specific number
-                  // would have been the best one.
-                  if (producible && optimum > 0)
-                    Text(
-                      'of ${_formatNumber(optimum)}',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontFamily: 'monospace',
-                        color: cs.onSurface.withValues(alpha: 0.45),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                !producible
-                    ? 'cannot produce'
-                    // **Per day, not per tick.** A day is 2,880 ticks, so a
-                    // track at its peak yields a fraction of a unit per tick and
-                    // the per-tick figure is either zero or a rounding artefact.
-                    // It was also read from a getter that *consumes* the
-                    // production remainder, so simply looking at the screen was
-                    // taking production away from the colony.
-                    : perDay <= 0
-                        ? '—'
-                        // Overshooting the peak is the mechanic, so when it
-                        // happens the row says so rather than showing a smaller
-                        // number with no explanation.
-                        : count > optimum && optimum > 0
-                            ? '${_formatNumber(perDay)}/day '
-                                '(max ${_formatNumber(trackCeiling)})'
-                            : '${_formatNumber(perDay)}/day'
-                                '${optimum > 0 ? ' / max ${_formatNumber(trackCeiling)}' : ''}',
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  color: perDay > 0
-                      ? cs.onSurface.withValues(alpha: 0.6)
-                      : cs.onSurface.withValues(alpha: 0.3),
-                ),
-              ),
-            ),
-            if (canAssign) ...[
-              const SizedBox(width: 6),
-              // Each button's step is clamped to what is available on its own
-              // side, so a 40-colonist reserve moves 40 rather than being
-              // disabled for not fitting 100. Enabled on `> 0`, not `>= step`.
-              _stepButton(
-                icon: Icons.add,
-                // Names the source, because a bare +/- pair on a row of numbers
-                // does not say where the colonists come from. It is the reserve —
-                // the implicit `population - on tracks` figure three rows above —
-                // and the tooltip is the only place that says so.
-                tooltip: producible
-                    ? 'Assign from reserve (${_formatNumber(planet.reserveColonists)} idle)'
-                    : 'Cannot produce this - the reserve is not assignable here',
-                enabled: producible && planet.reserveColonists > 0,
-                onTap: () => _adjustWorkforce(planet, track,
-                    _effectiveStep(step, 1, planet.reserveColonists)),
-              ),
-              _stepButton(
-                icon: Icons.remove,
-                tooltip: 'Return to reserve',
-                // Remove stays enabled even on a dead track: a colony generated
-                // before a world became unable to produce something should not be
-                // stuck holding colonists who will never work again. That is also
-                // why the step is clamped to what is actually on the track rather
-                // than being the full step.
-                enabled: count > 0,
-                onTap: () => _adjustWorkforce(
-                    planet, track, -_effectiveStep(step, -1, count)),
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Colony',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            _infoRow('Population',
-                '${_formatNumber(planet.population)} / ${_formatNumber(planet.colonistMax)}'),
-            _infoRow('On tracks', _formatNumber(planet.assignedColonists)),
-            _infoRow('Reserve', _formatNumber(planet.reserveColonists)),
-            _infoRow(
-                'Supply draw',
-                '${_formatNumber(planet.supplyDraw)} every '
-                    '${Planet.supplyInterval} ticks'),
-            _infoRow('Next supply', '${planet.ticksToSupply} ticks'),
-            if (unsupplied) ...[
-              const SizedBox(height: 8),
-              _buildSupplyWarning(planet, cs),
-            ],
-            const SizedBox(height: 12),
-            for (final t in PlanetClassSpec.tracks)
-              trackRow(
-                _trackLabel(t),
-                _staffedOn(planet, t),
-                planet.outputPerDayFor(t),
-                _optimumFor(planet, t),
-                _ceilingFor(planet, t),
-                _trackColour(t),
-                t,
-              ),
-            const SizedBox(height: 8),
-            // Drones are **derived**, not staffed: they come from what the three
-            // tracks above actually produce. A fourth workforce row would have
-            // to lie about where they come from, and a stepper on it would let a
-            // player "staff" drones and watch the figure refuse to move.
-            _droneReadout(planet, cs),
-            Divider(color: cs.onSurface.withValues(alpha: 0.1), height: 1),
-            const SizedBox(height: 8),
-            Text(
-              canAssign
-                  ? '+ moves colonists off the reserve and onto the track; '
-                      '\u2212 brings them back. The reserve is everyone not on a '
-                      'track \u2014 they still eat. Note the drones are not '
-                      'production: they are your haul crew, and they do not work '
-                      'this planet\u2019s stores.'
-                  : 'This world is not yours to reassign.',
-              style: TextStyle(
-                fontSize: 10,
-                color: cs.onSurface.withValues(alpha: 0.5),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// The colony cannot cover its supply draw.
-  ///
-  /// The replacement for the starvation warning, and deliberately softer in
-  /// tone: nobody is dying, the colony is simply drawing on empty stores. The
-  /// fix is a haul or a planted neighbour, not a rescue.
-  Widget _buildSupplyWarning(Planet planet, ColorScheme cs) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.errorContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.error.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.warning_amber_rounded, size: 16, color: cs.error),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Stores empty — supply unpaid',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: cs.error,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  planet.canProduce('organics')
-                      ? 'Haul minerals, organics or industrial in, or collect '
-                          'what is already queued.'
-                      : 'This world cannot make organics. Unload organics from '
-                          'your hold, or plant a world beside it that grows '
-                          'them.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    height: 1.35,
-                    color: cs.onSurface.withValues(alpha: 0.85),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// The derived drone output, and the ceiling it is measured against.
-  ///
-  /// Shown as a **ceiling with a progress figure** rather than a plain number,
-  /// because the number on its own cannot be acted on: drones fall when any
-  /// track is mis-staffed, so the useful information is how close this world is
-  /// to what it could produce at all. That is the whole reason the cap is
-  /// derived — a player can see the gap their own decisions opened.
-  Widget _droneReadout(Planet planet, ColorScheme cs) {
-    final perDay = planet.classSpec.droneOutputPerDay(
-      orePerDay: planet.outputPerDayFor('minerals'),
-      organicsPerDay: planet.outputPerDayFor('organics'),
-      equipmentPerDay: planet.outputPerDayFor('industrial'),
-    );
-    final ceiling = planet.maxDroneOutputPerDay;
-    final onPeak = _tracksOnOptimum(planet);
-
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.error.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.error.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Drones (derived)',
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface.withValues(alpha: 0.75))),
-              Text('${_formatNumber(perDay)}/day',
-                  style: const TextStyle(
-                      fontSize: 12,
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w700,
-                      color: Colors.redAccent)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Made from what the three tracks produce. Ceiling '
-            '${_formatNumber(ceiling)}/day at $onPeak of 3 tracks on optimum.',
-            style: TextStyle(
-                fontSize: 10, color: cs.onSurface.withValues(alpha: 0.5)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Colonists on a track, by track name.
-  int _staffedOn(Planet planet, String track) => switch (track) {
-        'minerals' => planet.colonistsMinerals,
-        'organics' => planet.colonistsOrganics,
-        'industrial' => planet.colonistsIndustrial,
-        _ => 0,
-      };
-
-  String _trackLabel(String track) => switch (track) {
-        'minerals' => 'Minerals',
-        'organics' => 'Organics',
-        'industrial' => 'Industrial',
-        _ => track,
-      };
-
-  Color _trackColour(String track) => switch (track) {
-        'minerals' => Colors.orange,
-        'organics' => Colors.green,
-        'industrial' => Colors.blue,
-        _ => Colors.grey,
-      };
-
-  /// The staffing at which this track produces the most it can.
-  int _optimumFor(Planet planet, String track) =>
-      planet.classSpec.productFor(track).optimumColonists;
-
-  /// The most this track can produce in a day, whatever the colony does.
-  int _ceilingFor(Planet planet, String track) =>
-      planet.classSpec.productFor(track).maxOutputPerDay;
-
-  /// How many of a world's three production tracks sit exactly at their optimum.
-  ///
-  /// Counts tracks that are *at* the optimum rather than tracks that produce,
-  /// because a track past its optimum still produces and still counts as badly
-  /// staffed. Reported rather than derived into a judgement, so the colony card
-  /// states the situation instead of grading the player.
-  int _tracksOnOptimum(Planet planet) {
-    var n = 0;
-    for (final track in PlanetClassSpec.tracks) {
-      final spec = planet.classSpec.productFor(track);
-      if (!spec.isPossible) continue;
-      final staffed = switch (track) {
-        'minerals' => planet.colonistsMinerals,
-        'organics' => planet.colonistsOrganics,
-        'industrial' => planet.colonistsIndustrial,
-        _ => 0,
-      };
-      if (staffed == spec.optimumColonists) n++;
-    }
-    return n;
-  }
-
-  Widget _stepButton({
-    required IconData icon,
-    required bool enabled,
-    required VoidCallback onTap,
-    String? tooltip,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final button = SizedBox(
-      width: 26,
-      height: 24,
-      child: Material(
-        color: enabled
-            ? scheme.surfaceContainerHighest
-            : scheme.onSurface.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: enabled ? onTap : null,
-          child: Icon(
-            icon,
-            size: 14,
-            color: enabled
-                ? scheme.onSurface
-                : scheme.onSurface.withValues(alpha: 0.25),
-          ),
-        ),
-      ),
-    );
-    if (tooltip == null) return button;
-    // Wrapping rather than putting the text in the row: a workforce row is four
-    // numbers wide and there is no room to spell out what each glyph does. This
-    // is the fix for a genuine confusion - a bare +/- pair on a row of numbers
-    // does not say that the pair *moves colonists between two places*, which is
-    // the only thing these buttons do.
-    return Tooltip(message: tooltip, child: button);
   }
 
   Widget _buildLevelUpSection(Planet planet, ColorScheme cs) {
@@ -1799,7 +1558,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
     // describe work that has already been paid for, so showing them again next
     // to a progress bar would invite the player to think they still had a choice.
     if (planet.isUnderConstruction) {
-      return _buildConstructionPanel(planet, cs);
+      return PlanetConstructionPanel(planet: planet, cs: cs);
     }
 
     final canLevel = planet.canStartConstruction;
@@ -1809,19 +1568,35 @@ class _PlanetScreenState extends State<PlanetScreen> {
       children: [
         Row(
           children: [
-            Text(
-              'Level ${planet.level} → ${planet.level + 1}  ',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-                color: Colors.amber.shade400,
+            // **Both sides flex.** This is the fourth instance of the same bug
+            // on this screen: two natural-width `Text`s in a `Row` overflow as
+            // soon as either gets long, and `"Level 3 → 4  "` beside
+            // `"Fortified Colony"` is over by 23px at 430px. It never showed up
+            // before because the level-up header only renders for a world that
+            // is *not* already building — which is most of the time, so this was
+            // live, not latent. Found by asserting no overflow at phone width
+            // with the resource figures, not by looking at the header.
+            Flexible(
+              child: Text(
+                'Level ${planet.level} → ${planet.level + 1}  ',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: Colors.amber.shade400,
+                ),
               ),
             ),
-            Text(
-              Planet.levelTitles[planet.level],
-              style: TextStyle(
-                fontSize: 12,
-                color: cs.onSurface.withValues(alpha: 0.6),
+            Flexible(
+              child: Text(
+                Planet.levelTitles[planet.level],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: cs.onSurface.withValues(alpha: 0.6),
+                ),
               ),
             ),
           ],
@@ -1881,7 +1656,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
   void _showLevelPreview(BuildContext context, Planet planet) {
     final from = planet.level;
     final to = from + 1;
-    if (to >= Planet.levelTitles.length) return;
+    // The bound is "can this world still upgrade", not "is `to` inside the
+    // title list". `levelTitles` is 0-indexed, so its length is 6 while the
+    // highest *level* is also 6 — and `to >= length` therefore rejected the
+    // 5→6 preview, which is a real upgrade with a real cost, silently and with
+    // no error. `levelUpCost` is the model's own answer and is null exactly when
+    // there is no next tier.
+    if (planet.levelUpCost == null) return;
 
     // levelTitles is 0-indexed from level 1, so a level L is titles[L - 1].
     // Getting this wrong labels the whole dialog one tier ahead, and it is
@@ -1910,20 +1691,17 @@ class _PlanetScreenState extends State<PlanetScreen> {
                         'Defence',
                         _defenceWord(planet.defenseLevel),
                         _defenceWord(Planet.levelDefense[to] ?? 0)),
-                    _benefitRow(
-                        ctx,
-                        'Armour',
-                        _formatNumber(planet.maxHull.round()),
-                        _formatNumber(Planet.levelArmour[to] ?? 0)),
+                    _benefitRow(ctx, 'Armour', compact(planet.maxHull.round()),
+                        compact(Planet.levelArmour[to] ?? 0)),
                     _benefitRow(
                         ctx,
                         'Shields',
                         planet.maxShield.round() <= 0
                             ? 'none'
-                            : _formatNumber(planet.maxShield.round()),
+                            : compact(planet.maxShield.round()),
                         (Planet.levelShield[to] ?? 0) <= 0
                             ? 'none'
-                            : _formatNumber(Planet.levelShield[to] ?? 0)),
+                            : compact(Planet.levelShield[to] ?? 0)),
                     _benefitRow(
                         ctx,
                         'Storage',
@@ -1933,14 +1711,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
                     _previewStat(
                       ctx,
                       'New population cap',
-                      _formatNumber((planet.baseColonistMax *
+                      compact((planet.baseColonistMax *
                               (Planet.levelColonistScale[to] ?? 1.0))
                           .round()),
                     ),
                     _previewStat(
                       ctx,
                       'Needed for this level',
-                      _formatNumber(planet.levelUpCost!.requiredColonists),
+                      compact(planet.levelUpCost!.requiredColonists),
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -2104,86 +1882,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// The wording is deliberate on one point: the countdown is **game ticks, not
   /// wall-clock time**. "40 ticks" is honest about what the player can actually
   /// affect; an "ETA" in hours would quietly lie every time they closed the game.
-  Widget _buildConstructionPanel(Planet planet, ColorScheme cs) {
-    final remaining = planet.constructionTicksRemaining;
-    final total = planet.constructionTotalTicks;
-    final title = planet.constructionTarget > 0 &&
-            planet.constructionTarget <= Planet.levelTitles.length - 1
-        ? Planet.levelTitles[planet.constructionTarget]
-        : 'Level ${planet.constructionTarget}';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            // No spinner here. The bar below is determinate, so a spinner would be
-            // redundant *and* worse: an indeterminate indicator animates forever,
-            // which never settles, costs a frame every rebuild, and reads as
-            // "working" even on a build the player has set to instant.
-            const Icon(Icons.construction_rounded,
-                size: 16, color: Colors.amber),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Building $title — level ${planet.level + 1}',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Colors.amber,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(5),
-          child: LinearProgressIndicator(
-            value: planet.constructionProgress,
-            minHeight: 10,
-            // The track is a real requirement, not decoration: a determinate bar
-            // at 0% is *only* its track, and `surfaceContainerHighest` on this
-            // background is so close to the card fill that a freshly started
-            // build looked like no bar at all.
-            backgroundColor: Colors.amber.withValues(alpha: 0.18),
-            valueColor: const AlwaysStoppedAnimation(Colors.amber),
-          ),
-        ),
-        const SizedBox(height: 8),
-        _infoRow(
-          'Progress',
-          '${total - remaining} / $total ticks'
-              '${total > 0 ? '  (${_estimateMinutes(remaining)})' : ''}',
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Advances one step per game tick, so it only moves while you are '
-          'playing — the same clock the galaxy runs on.',
-          style: TextStyle(
-            fontSize: 11,
-            fontStyle: FontStyle.italic,
-            color: cs.onSurface.withValues(alpha: 0.6),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Ticks left rendered as play time, at the 30s tick interval.
-  ///
-  /// Prefers coarse units so the number stays short at phone width, and returns
-  /// an empty string when the figure would be noise.
-  String _estimateMinutes(int ticksLeft) {
-    if (ticksLeft <= 0) return '';
-    const secondsPerTick = 30;
-    final minutes = (ticksLeft * secondsPerTick / 60).round();
-    if (minutes < 1) return 'under a minute';
-    if (minutes < 60) return '~$minutes min';
-    final hours = minutes / 60;
-    return '~${hours.toStringAsFixed(hours < 2 ? 1 : 0)} h';
-  }
-
   Future<void> _levelUpPlanet(Planet planet) async {
     final sector = _currentSector;
     if (sector == null) return;
@@ -2208,7 +1906,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
       // state of a running build, so it has to reach disk before the player
       // can navigate away.
       await _persist(sector);
-      final mins = _estimateMinutes(planet.constructionTicksRemaining);
+      final mins = GameClock.estimate(planet.constructionTicksRemaining);
       ActionLogProvider.global.info(
         '${planet.name} began building level ${planet.level + 1}'
         '${mins.isEmpty ? '' : ' ($mins of play time)'}',
@@ -2218,123 +1916,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
     if (mounted) {
       setState(() {});
     }
-  }
-
-  Widget _buildResourcesCard(Planet planet, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Resources',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            // Each commodity against its own cap. A single shared cap shown
-            // next to a sum of three stores made a legal planet read as
-            // overfull.
-            _resourceBar('Minerals', planet.storedMinerals, planet.maxMinerals,
-                Colors.orange),
-            _resourceBar('Organics', planet.storedOrganics, planet.maxOrganics,
-                Colors.green),
-            _resourceBar('Industrial', planet.storedIndustrial,
-                planet.maxIndustrial, Colors.blue),
-            if (planet.pendingTotal > 0) ...[
-              const SizedBox(height: 12),
-              _buildShipmentPanel(planet, cs),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Output waiting to be collected.
-  ///
-  /// A colony keeps producing once its working store is full — that surplus is
-  /// queued here rather than discarded, so a world nobody has visited in a
-  /// while is still earning. Collection pays the midpoint of the commodity
-  /// spread, which is deliberately neutral; once colonies can supply an actual
-  /// port, that payout should use the port's live buy price and the player's
-  /// standing, which will be worth considerably more.
-  Widget _buildShipmentPanel(Planet planet, ColorScheme cs) {
-    final value = Planet.shipmentValue({
-      if (planet.pendingMinerals > 0) 'minerals': planet.pendingMinerals,
-      if (planet.pendingOrganics > 0) 'organics': planet.pendingOrganics,
-      if (planet.pendingIndustrial > 0) 'industrial': planet.pendingIndustrial,
-      if (planet.pendingDrones > 0) 'drones': planet.pendingDrones,
-    });
-
-    Widget line(String label, int amount, Color colour) {
-      if (amount <= 0) return const SizedBox.shrink();
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 2),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: TextStyle(fontSize: 11, color: colour)),
-            Text('${_formatNumber(amount)} ready',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontFamily: 'monospace',
-                  color: cs.onSurface.withValues(alpha: 0.6),
-                )),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.primary.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.local_shipping_rounded, size: 14, color: cs.primary),
-              const SizedBox(width: 6),
-              Text('Ready to collect',
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: cs.primary)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          line('Minerals', planet.pendingMinerals, Colors.orange),
-          line('Organics', planet.pendingOrganics, Colors.green),
-          line('Industrial', planet.pendingIndustrial, Colors.blue),
-          line('Drones', planet.pendingDrones, Colors.red),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () => _collectShipment(planet, value),
-              icon: const Icon(Icons.download_rounded, size: 16),
-              label: Text('Collect  ${_formatNumber(value)} cr'),
-              style: FilledButton.styleFrom(
-                backgroundColor: cs.primary,
-                foregroundColor: cs.onPrimary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _collectShipment(Planet planet, int value) async {
@@ -2350,37 +1931,511 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
     await _persist(sector);
     ActionLogProvider.global.trade(
-      'Collected ${_formatNumber(planet.pendingTotal + collected.values.fold<int>(0, (a, b) => a + b))} units of colony output from ${planet.name} for ${_formatNumber(payout)} cr',
+      'Collected ${compact(planet.pendingTotal + collected.values.fold<int>(0, (a, b) => a + b))} units of colony output from ${planet.name} for ${compact(payout)} cr',
     );
     if (mounted) setState(() {});
   }
 
-  Widget _buildDefenseCard(Planet planet, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+  // ── Atomic Detonator ─────────────────────────────────────────────
+
+  /// The red control in the title bar.
+  ///
+  /// Enabled on possession alone: a player holding a detonator may use it on
+  /// any world they can reach, because ordnance is ordnance and the harsh-type
+  /// design explicitly wants a bad roll to be undoable. The warning dialog is
+  /// where the cost is stated.
+  Widget _destroyPlanetButton(ColorScheme cs) {
+    final armed = widget.player.atomicDetonators > 0;
+    // `TextButton.icon` has no tooltip parameter, so the explanation is a
+    // wrapper rather than an argument — and on a disabled button a Tooltip is
+    // the only thing that can still say *why* it is disabled.
+    return Tooltip(
+      message: armed
+          ? 'Vaporise this world with an Atomic Detonator'
+          : 'No Atomic Detonators aboard — emporiums stock them',
+      child: TextButton.icon(
+        icon: const Icon(Icons.dangerous_rounded, size: 18),
+        label: const Text('Destroy Planet'),
+        style: TextButton.styleFrom(
+          // Red when live, and visibly inert when not. Never hidden — a control
+          // the player has not unlocked yet should be discoverable, or the
+          // detonator in the emporium is a purchase with no visible purpose.
+          foregroundColor:
+              armed ? cs.error : cs.onSurface.withValues(alpha: 0.3),
+          disabledForegroundColor: cs.onSurface.withValues(alpha: 0.3),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+        ),
+        onPressed: armed ? _confirmDestroyPlanet : null,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Defense',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.bold),
+    );
+  }
+
+  /// The warning. It states what is about to be lost, because "are you sure?"
+  /// on an irreversible action is not consent — and the thing being destroyed is
+  /// frequently a colony the player spent hours populating.
+  Future<void> _confirmDestroyPlanet() async {
+    final sector = _currentSector;
+    final planet = _resolvePlanet(sector);
+    if (sector == null || planet == null) return;
+
+    final before = widget.player;
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.warning_amber_rounded,
+            color: Theme.of(ctx).colorScheme.error, size: 32),
+        title: Text('Destroy ${planet.name}?'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'An Atomic Detonator vaporises this world and everything on it. '
+                'This cannot be undone.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              _destroyStat(ctx, 'Type', planet.planetType),
+              _destroyStat(ctx, 'Owner', _ownerLabel(planet)),
+              _destroyStat(ctx, 'Citadel level', '${planet.level}'),
+              _destroyStat(ctx, 'Population', compact(planet.population)),
+              _destroyStat(ctx, 'Minerals', compact(planet.storedMinerals)),
+              _destroyStat(ctx, 'Organics', compact(planet.storedOrganics)),
+              _destroyStat(ctx, 'Industrial', compact(planet.storedIndustrial)),
+              _destroyStat(ctx, 'Drones', compact(planet.storedDrones)),
+              const SizedBox(height: 12),
+              Text(
+                'Blast risk: a detonator sometimes catches the firing ship — '
+                'around '
+                '${(WorldForging.blastChanceMin * 100).round()}–'
+                '${(WorldForging.blastChanceMax * 100).round()}%. Shields '
+                'usually absorb it.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(ctx)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Abort'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
             ),
-            const SizedBox(height: 8),
-            _infoRow('Defense Level', '${planet.defenseLevel} / 4'),
-            _resourceBar(
-                'Drones', planet.storedDrones, planet.maxDrones, Colors.red),
-            const SizedBox(height: 4),
-            _defenseBar('Shield', planet.shield, planet.maxShield, Colors.cyan),
-            _defenseBar('Armor', planet.hull, planet.maxHull, Colors.green),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Launch Detonator'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
+
+    final (result, after, reputation) = WorldForging.detonate(
+      player: before,
+      sector: sector,
+      world: planet,
+      cap: widget.worldCap,
+      tick: GameClock.tick,
+    );
+    if (!mounted) return;
+    if (result != DetonateResult.destroyed) {
+      _notify(result == DetonateResult.alreadyDead
+          ? '${planet.name} is already destroyed.'
+          : 'The detonator did not fire.');
+      return;
+    }
+
+    // The transaction is committed **before** the animation, not after.
+    //
+    // It used to be the other way round, with a comment claiming the animation
+    // was "theatre after the fact" — which was true of the *model* and false of
+    // everything that mattered. `_DetonationSequence` had no pop path at all, so
+    // this `await` never returned: no `onPlayerUpdate`, no `_persist`, no log.
+    // The player got a permanent full-screen overlay, the detonator was never
+    // spent, and the world was never written — so it came straight back on the
+    // next login. One missing `Navigator.pop` silently discarded an
+    // irreversible action, and it was invisible in testing because every
+    // detonator test drives the rule, not this screen.
+    //
+    // Ordering it this way makes the destruction durable no matter what the
+    // animation does, whether it is interrupted, crashes, or is later given a
+    // skip button. Theatre must not gate a transaction.
+    widget.onPlayerUpdate(after);
+    // Write through, or the destruction is resurrected: the tick re-reads the
+    // universe from disk every cycle, so a change living only in this screen's
+    // copy is undone on the next load and the player finds the colony they were
+    // just told they lost. `_persist` guards the poll with `_writeInFlight`.
+    await _persist(sector);
+
+    final hurt = _blastDamage(before, after);
+    // No sector number. The log is the player's own feed today, so this is not
+    // leaking anything *yet* — but the reason stands on its own: a destroyed
+    // world is something people hunt for, and a message naming where one stood
+    // is a map to it. `WorldForging` scrubs the same detail from its
+    // world-news line, which is the one a future shared log would expose.
+    ActionLogProvider.global.error(
+      'Atomic Detonator vaporised ${planet.name}'
+      '${hurt > 0 ? ' — the blast caught your ship for $hurt' : ''}'
+      '${_reputationNote(reputation)}',
+    );
+    setState(() {});
+
+    // Now the theatre, with the outcome already committed and logged. The
+    // snackbar is deliberately shown *before* the overlay rather than after it:
+    // it is the confirmation that will still be on screen when the overlay
+    // closes, and it does not depend on the animation finishing.
+    _notify(hurt > 0
+        ? '${planet.name} destroyed. The blast caught you for $hurt.'
+        : '${planet.name} destroyed. The blast missed you.');
+    if (!mounted) return;
+
+    // **Nothing about getting out of here may depend on the animation finishing.**
+    //
+    // The overlay used to be dismissed by an `AnimationStatusListener`, so if the
+    // ticker was ever suspended — `TickerMode` does exactly that for an offstage
+    // `IndexedStack` child, and this screen *is* one, since a detonation leaves
+    // for the Sector tab — the controller never completed, the listener never
+    // fired, and the dialog sat there. The exit now runs on a plain `Timer`,
+    // which ticks regardless of TickerMode, and a watchdog force-pops the route
+    // if the overlay is somehow still up long after it should have gone. A report
+    // the player cannot dismiss is a trap, and the only escape being "kill the
+    // process" is a soft-lock.
+    // One owner for the exit, and it is guarded. It used to be reached twice —
+    // from `onFinished` and from a bare `onExitToSector?.call()` after the
+    // `await` — so the callback fired twice and the flag between them meant
+    // nothing. The overlay fires `onFinished` from `CLOSE`, from the automatic
+    // end, and from its own ticker-independent timer, so every real exit is
+    // covered; this local is just the single place the flag lives.
+    var left = false;
+    void leave() {
+      if (left) return;
+      left = true;
+      widget.onExitToSector?.call();
+    }
+
+    // **Every** way out of this dialog goes through `_DetonationSequence
+    // ._finish`, which is the only caller of `onFinished`. The barrier is not
+    // dismissible on purpose: a tap outside pops a route *silently*, so it would
+    // be a third exit that navigates nowhere — and the one the player is most
+    // likely to try. With `CLOSE`, the automatic end, and the watchdog all going
+    // through one method, there is nothing to keep in agreement.
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black87,
+      builder: (ctx) => _DetonationSequence(
+        worldName: planet.name,
+        onFinished: leave,
+      ),
+    );
+    // Belt and braces: if the route somehow popped without `onFinished`, the
+    // player still leaves rather than sitting on a tab with nothing on it.
+    leave();
+  }
+
+  /// Damage the blast actually landed, shields first. Zero when it missed or
+  /// was fully absorbed — which is the common case, and the dialog says so
+  /// rather than leaving the player bracing for damage that never came.
+  int _blastDamage(Player before, Player after) =>
+      (before.shields - after.shields) + (before.hull - after.hull);
+
+  /// Trailing clause for the destruction log line, when the act cost something.
+  ///
+  /// Named rather than left to the player to notice on the reputation card three
+  /// screens later: the whole point of charging for this is that destroying a
+  /// world is *not* a neutral action, and a silent deduction teaches nothing.
+  ///
+  /// "Falls", not "rises" — reputation is signed and this is a bad deed. The
+  /// wording was written against the old one-direction scale and would have been
+  /// the loudest possible lie on the screen.
+  String _reputationNote(ReputationHit? hit) {
+    if (hit == null) return '';
+    final faction = hit.faction;
+    final standing =
+        faction == null ? '' : ' The ${faction.name} will remember this.';
+    // Unconditional now, so this always has something to say — including for a
+    // world the player made themselves. Demolishing a populated world is a
+    // violent act whoever signed for it, and the number is shown every time so
+    // the cost is never a surprise discovered on the reputation card later.
+    return ' Your reputation falls by ${hit.alignment.abs().toInt()}.$standing';
+  }
+
+  String _ownerLabel(Planet world) {
+    final owner = world.owner;
+    if (owner == null) return 'Unclaimed';
+    return '${owner.name}${world.isHomeworld ? ' (homeworld)' : ''}';
+  }
+
+  Widget _destroyStat(BuildContext ctx, String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 3),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(ctx)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.6))),
+            Text(value,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w600)),
           ],
+        ),
+      );
+
+  void _notify(String message) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+/// The detonation, as a two-beat sequence: the ordnance travels, then the
+/// world goes up.
+///
+/// Kept as one small widget with its own controller rather than a pile of
+/// `setState` calls on the screen, so the timing lives in one readable place
+/// and disposing it is a single `dispose`. A `Ticker`-driven `AnimationController`
+/// is used with a `CurvedAnimation` per beat so the travel eases in and the
+/// flash snaps — the difference between something that looks mechanical and
+/// something that looks like it was aimed.
+///
+/// Total ~1.5s, and it cannot be skipped: `barrierDismissible: false`, because
+/// letting a player tap past the end of a world disappearing invites a
+/// "did that actually happen?" moment.
+class _DetonationSequence extends StatefulWidget {
+  final String worldName;
+
+  /// Called once, when the overlay has finished — whether that is the automatic
+  /// end, the `CLOSE` button, or a tap outside. The caller uses it to leave for
+  /// the Sector tab, so **both** ways out of this widget lead somewhere. It used
+  /// to be dismissed by a status listener alone and navigation happened after
+  /// the caller's `await`, so a suspended ticker meant no exit at all.
+  final VoidCallback onFinished;
+
+  const _DetonationSequence({
+    required this.worldName,
+    required this.onFinished,
+  });
+
+  /// Animation plus the hold — published so the caller's watchdog can be set
+  /// from the same number rather than a second guess at it.
+  static const Duration totalDuration = Duration(milliseconds: 3900);
+
+  @override
+  State<_DetonationSequence> createState() => _DetonationSequenceState();
+}
+
+class _DetonationSequenceState extends State<_DetonationSequence>
+    with SingleTickerProviderStateMixin {
+  /// Travel is the first half of the timeline, the blast the rest.
+  ///
+  /// Half rather than the original 45% because the two beats want comparable
+  /// screen time: the detonator closing and the flash decaying are the two
+  /// things worth watching, and the flash needs longer than the approach to
+  /// read as an explosion rather than a flicker.
+  static const double _impactAt = 0.5;
+
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2800),
+  );
+
+  /// Dismisses the overlay on a **plain timer**, scheduled at init.
+  ///
+  /// This is the second exit path and it does not consult the ticker at all,
+  /// which is the whole point: a `TickerMode` offstage subtree suspends
+  /// [AnimationController] indefinitely, and a dismissal that waits for
+  /// `completed` then never arrives. `Timer` fires regardless. The status
+  /// listener below is kept as the tidy path so the frame is not held for a
+  /// tenth of a second longer than it needs to be.
+  Timer? _watchdog;
+
+  bool _finished = false;
+
+  void _finish() {
+    if (_finished) return;
+    _finished = true;
+    _watchdog?.cancel();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    widget.onFinished();
+  }
+
+  late final Animation<double> _travel = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(0, _impactAt, curve: Curves.easeInCubic),
+  );
+
+  late final Animation<double> _blast = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(_impactAt, 1, curve: Curves.easeOut),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _c.addStatusListener(_onStatus);
+    _watchdog = Timer(_DetonationSequence.totalDuration, () {
+      // Only reached if the status listener did not get there first, which is
+      // the case that used to strand the player.
+      _finish();
+    });
+    _c.forward();
+  }
+
+  /// Closes itself when the sequence ends.
+  ///
+  /// This widget used to have **no** pop path at all — it ran an animation and
+  /// stopped. Because the caller awaited this dialog before persisting, that one
+  /// omission silently discarded the entire detonation: no write, no spent
+  /// detonator, and a full-screen overlay with no exit, so the game had to be
+  /// killed from the task manager. The `Close` button below is the second
+  /// guarantee; this is the one that means the common case needs no click.
+  void _onStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    if (_closing) return;
+    _closing = true;
+    // Held for a beat past the last frame so the outcome line can actually be
+    // read. Popping the instant the animation hits 1.0 means the flash's tail
+    // and the message are on screen for roughly one frame, which is a flicker
+    // rather than a report.
+    _hold = Timer(_holdAfterSequence, _finish);
+  }
+
+  /// How long the finished frame stays up. Long enough to read, short enough
+  /// that the overlay never feels like something is being taken from you.
+  static const Duration _holdAfterSequence = Duration(milliseconds: 1100);
+
+  bool _closing = false;
+  Timer? _hold;
+
+  @override
+  void dispose() {
+    _hold?.cancel();
+    _watchdog?.cancel();
+    _c.removeStatusListener(_onStatus);
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      // Present from the first frame, not once the animation finishes. An
+      // escape that appears only after the thing you might want to skip has
+      // already played is not an escape.
+      actions: [
+        TextButton(
+          onPressed: _finish,
+          child: const Text('CLOSE'),
+        ),
+      ],
+      actionsPadding: const EdgeInsets.only(bottom: 4),
+      content: SizedBox(
+        width: 320,
+        height: 220,
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (context, _) {
+            final t = _travel.value;
+            final b = _blast.value;
+            // The world shrinks away as the detonator closes, then the flash
+            // takes the frame. 1.0 -> 0 over the travel, so at impact there is
+            // nothing left to be hit by the flash — it reads as the blast
+            // destroying the thing, not covering it.
+            final worldScale = 1 - t;
+            final flash = (b * (1 - b) * 4).clamp(0.0, 1.0);
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                // The world.
+                if (worldScale > 0.01)
+                  Transform.scale(
+                    scale: worldScale,
+                    child: Opacity(
+                      opacity: worldScale.clamp(0.0, 1.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.public_rounded,
+                              size: 120, color: cs.primary),
+                          const SizedBox(height: 8),
+                          Text(widget.worldName,
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  fontFamily: 'monospace',
+                                  color: Colors.white70)),
+                        ],
+                      ),
+                    ),
+                  ),
+                // The detonator, rising from the bottom edge toward the world.
+                if (t < 1)
+                  Positioned(
+                    bottom: 8 + t * 130,
+                    child: Opacity(
+                      opacity:
+                          (1 - (t - 0.75).clamp(0.0, 1.0) * 4).clamp(0.0, 1.0),
+                      child: const Icon(Icons.rocket_launch_rounded,
+                          size: 30, color: Colors.amberAccent),
+                    ),
+                  ),
+                // The flash.
+                if (flash > 0.01)
+                  Container(
+                    width: 40 + b * 300,
+                    height: 40 + b * 300,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          Colors.white.withValues(alpha: flash),
+                          Colors.amber.withValues(alpha: flash * 0.7),
+                          Colors.orange
+                              .withValues(alpha: flash * 0.25 * (1 - b)),
+                        ],
+                        stops: const [0, 0.45, 1],
+                      ),
+                    ),
+                  ),
+                // The outcome line, once the light is gone.
+                if (b > 0.55)
+                  Opacity(
+                    opacity: ((b - 0.55) / 0.45).clamp(0.0, 1.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 60),
+                        Text('${widget.worldName} destroyed',
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white)),
+                      ],
+                    ),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );

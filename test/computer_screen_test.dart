@@ -5,23 +5,10 @@ import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/computer_screen.dart';
 import 'package:cosmic_trader/screens/ports_knowledge_base.dart';
+import 'support/storage_fakes.dart';
 
 /// Fake universe storage that returns a synthetic universe without touching
 /// the filesystem (path_provider is unavailable in widget tests).
-class _FakeUniverseStorage extends UniverseStorage {
-  final List<Sector> sectors;
-
-  _FakeUniverseStorage(this.sectors);
-
-  @override
-  Future<void> ensureUniverse() async {}
-
-  @override
-  Future<List<Sector>> loadUniverse() async => sectors;
-
-  @override
-  void logSectorStats(List<Sector> _) {}
-}
 
 Player _makePlayer() => Player(
       name: 'Tester',
@@ -47,7 +34,7 @@ Sector _makeSector(int id, String name) => Sector(
 
 void main() {
   setUp(() {
-    UniverseStorage.instanceForTest = _FakeUniverseStorage([
+    UniverseStorage.instanceForTest = ReadOnlyUniverse([
       _makeSector(1, 'Alpha Prime'),
       _makeSector(2, 'Beta Reach'),
     ]);

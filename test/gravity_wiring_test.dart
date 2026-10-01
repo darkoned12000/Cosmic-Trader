@@ -48,21 +48,42 @@ void main() {
       // A tick reads sectors from disk and writes them back. A collision that
       // mutates the tick's object graph without triggering the universe write is
       // resurrected on the next load — the player is told they lost two worlds
-      // and wakes up to find both. The save is gated on a flag, so the guard is
-      // that the flag reaches the condition.
+      // and wakes up to find both.
+      //
+      // This used to assert that the `collided` flag reached a save **condition**
+      // (`if (portsRegened > 0 || ... || collided > 0)`), and the condition
+      // carried the bug it was guarding: it was a hand-maintained list, so a
+      // second thing the tick mutated — a colonist shipment's countdown — was
+      // never listed, silently reset every tick, and could never land. So the
+      // gate is gone and the universe is written every tick.
+      //
+      // The claim is therefore strictly stronger than before and the scan checks
+      // the new shape: the roll happens, and **nothing gates the save**. This
+      // remains a source scan because "there is no gate" is a fact about the
+      // text; the behavioural half — that a mutation survives a reload — is
+      // covered in `colonist_transit_tick_test.dart`, which drives the real
+      // `GameTickService` and asserts an arrival lands on disk with nothing else
+      // changing. That test is what fails when this one would pass.
       final tick =
           File('lib/services/game_tick_service.dart').readAsStringSync();
       expect(tick, contains('runDueCollisions'),
           reason: 'the roll happens in the tick');
-      expect(tick, contains('collided'),
-          reason: 'the count of destroyed worlds must be captured, or the save '
-              'cannot know there is something to write');
-      // The condition that persists sectors.
-      final saveLine = RegExp(r'if \(portsRegened > 0[^)]*\)').firstMatch(tick);
-      expect(saveLine, isNotNull, reason: 'the sector save condition moved');
-      expect(saveLine!.group(0), contains('collided'),
-          reason: 'a destroyed world is not written back, so it comes back on '
-              'the next load');
+      // Matched on **shape**, not on a variable name. The first version of this
+      // check looked for the literal `if (portsRegened`, which is why it passed
+      // against a gate reading `if (processed > 0)` — a guard that names the
+      // counter rather than the structure cannot see a counter being renamed,
+      // and "cannot fail" looks exactly like "passes". The question is only ever
+      // "is an `if` in front of the save", so that is what is asked.
+      expect(
+        RegExp(r"if\s*\([^)]*\)\s*\{?\s*await[^;]*tick_save_sectors")
+            .hasMatch(tick),
+        isFalse,
+        reason: 'the sector save is gated again — a hand-maintained list of '
+            '"what might have changed" is what lost the countdown, and any '
+            'new mutation not added to it is silently discarded',
+      );
+      expect(tick, contains('saveUniverse(sectors)'),
+          reason: 'the tick still writes the universe at the end of the pass');
     });
 
     test('the cap the tick rolls against comes from the universe settings', () {

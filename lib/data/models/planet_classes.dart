@@ -547,71 +547,105 @@ const Map<String, PlanetClassSpec> planetClasses = {
       ),
     ],
   ),
-  'Gas Giant': PlanetClassSpec(
-    key: 'Gas Giant',
-    designation: 'U',
-    className: 'Class U - Vaporous / Gaseous',
+  // Class U is deliberately **absent**, and it is the one removal here that is a
+  // design decision rather than an omission. Its ratios are N-A on every product,
+  // so the world it described produced nothing at all — not at the optimum, not
+  // overstaffed, not at Citadel 6 — while still charging real resources for every
+  // build and occupying one of three worlds in a sector. It held 1 of 20 slots in
+  // the generator's type table, so roughly one generated world in twenty was
+  // inert, and a Genesis Torpedo rolled one in 11. **A dead world is a worse
+  // outcome than a bad one**: a player can look at a bad world and detonate it,
+  // and there is nothing to look at in a dead one.
+  //
+  // The two tables also disagreed about it, which is the part worth keeping.
+  // `TypeMultipliers` gave it 0.6 organics, so a test asserted it grew food, while
+  // this spec gave it N-A everywhere, so a different test asserted it produced
+  // nothing at all — one type, two answers, both suites green. The class spec is
+  // the live rule. `test/planet_class_test.dart` now holds two guards so the shape
+  // cannot come back: no class may be a total dead end, and no class may be
+  // missing from one of the tables the screens read.
+  //
+  // Class L — Highland. Sourced, and it completes the set: the six TradeWars
+  // classes (M/K/O/L/C/H) are all implemented, so the claim that every one
+  // reproduces its published fighter figure is true of six. L was previously
+  // authored into `planets.md`'s Production Triangle table with no corresponding
+  // spec, which is how a document can be right about a thing the code does not
+  // have.
+  //
+  // The triangle figures are the doc's, and they check out against each other
+  // the way the sourced classes do — peaks at the optimum (half of maxColonists)
+  // are 10,000 ore + 4,000 organics + 1,000 equipment = 15,000, and 15,000 / 12
+  // = **1,250 drones/day**, which is the published figure. That derivation is
+  // asserted in `test/planet_class_test.dart` rather than left as a comment.
+  //
+  // The *citadel costs below are authored, not sourced.* TW2002 gave no Class L
+  // table to transcribe, so these are modelled on Class K — same maxColonists,
+  // same ore ratio — with organics and equipment pulled down, because Mountain
+  // grows them an order of magnitude more efficiently (5 and 20 colonists per
+  // unit against K's 100 and 500) and a build should not demand imports the
+  // world can make for itself. `sourced: true` is accurate for the triangle
+  // and deliberately not claimed for these six rows.
+  'Mountain': PlanetClassSpec(
+    key: 'Mountain',
+    designation: 'L',
+    className: 'Class L - Highland',
     sourced: true,
-    colonistsPerDrone: 1,
-    lore: 'Very heavy to very thin atmospheres consisting of various elements, '
-        'mostly helium or hydrogen. Specific gravities can range from 0.2 to 8.0 '
-        'Earth normal. Climate patterns are usually extremely violent, with '
-        'temperatures from -200 to 400 Celsius. Full life support required at all '
-        'times. No production can sustain itself on a Class U planet. Some miners '
-        'have hinted at very valuable products extracted from Class U worlds, but '
-        'the Federation does not have them in its "Official Guide to Mining". '
-        'Class U planets are not recommended for colonisation, as the environment '
-        'is harsher than being in space itself.',
-    // No production at all. The caps are still stated, because the source table
-    // states them and because a cap of zero with a non-zero storage limit is what
-    // makes the world legible rather than merely broken.
-    ore:
-        ProductSpec(colonistsPerUnit: 0, maxColonists: 3000, storageCap: 10000),
-    organics:
-        ProductSpec(colonistsPerUnit: 0, maxColonists: 3000, storageCap: 10000),
-    equipment:
-        ProductSpec(colonistsPerUnit: 0, maxColonists: 3000, storageCap: 10000),
+    colonistsPerDrone: 12,
+    lore: 'Thin atmosphere over high broken country. Common chemical traces '
+        'make the exposed rock rich in fuel ore, and the sheltered valleys are '
+        'cold but genuinely farmable, which is what separates a highland world '
+        'from a wasteland: it is productive everywhere rather than excellent at '
+        'one thing. Equipment output is respectable rather than exceptional. '
+        'Class L worlds are poor for large-scale agriculture but excellent for '
+        'fuel and heavy industry, and the narrow valleys mean settlements are '
+        'scattered and mutually dependent rather than concentrated.',
+    ore: ProductSpec(
+        colonistsPerUnit: 2, maxColonists: 40000, storageCap: 200000),
+    organics: ProductSpec(
+        colonistsPerUnit: 5, maxColonists: 40000, storageCap: 200000),
+    equipment: ProductSpec(
+        colonistsPerUnit: 20, maxColonists: 40000, storageCap: 100000),
     citadels: [
       CitadelLevel(
-        hours: 8,
-        colonists: 3000,
-        ore: 1200,
-        organics: 400,
-        equipment: 2500,
-      ),
-      CitadelLevel(
-        hours: 4,
-        colonists: 3000,
-        ore: 300,
-        organics: 100,
-        equipment: 400,
+        hours: 6,
+        colonists: 1000,
+        ore: 400,
+        organics: 250,
+        equipment: 500,
       ),
       CitadelLevel(
         hours: 5,
+        colonists: 2500,
+        ore: 350,
+        organics: 200,
+        equipment: 450,
+      ),
+      CitadelLevel(
+        hours: 7,
+        colonists: 4500,
+        ore: 600,
+        organics: 350,
+        equipment: 600,
+      ),
+      CitadelLevel(
+        hours: 6,
         colonists: 8000,
-        ore: 500,
+        ore: 700,
         organics: 500,
-        equipment: 2000,
+        equipment: 750,
       ),
       CitadelLevel(
         hours: 5,
-        colonists: 6000,
-        ore: 500,
-        organics: 200,
-        equipment: 600,
+        colonists: 15000,
+        ore: 800,
+        organics: 600,
+        equipment: 900,
       ),
       CitadelLevel(
-        hours: 4,
-        colonists: 8000,
-        ore: 200,
-        organics: 200,
-        equipment: 600,
-      ),
-      CitadelLevel(
-        hours: 8,
-        colonists: 6000,
-        ore: 500,
-        organics: 200,
+        hours: 7,
+        colonists: 26000,
+        ore: 1000,
+        organics: 700,
         equipment: 1200,
       ),
     ],
@@ -907,7 +941,7 @@ class PlanetClock {
 /// build — it is a season, and construction only advances while the game is
 /// running, so level 2 would be a week of evenings. Reading the same numbers as
 /// hours preserves the shape of the authored table exactly (a Mountain level 2 is
-/// still four times faster than a Vaporous one) while making the thing
+/// still four times faster than the source table's Class U) while making it
 /// reachable. See *Revised order of work* in `planets.md`.
 ///
 /// The colonist figure is a **gate, not a cost**. It is a minimum population the

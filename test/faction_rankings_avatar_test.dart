@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -14,6 +15,7 @@ import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/faction_rankings_screen.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
+import 'support/storage_fakes.dart';
 
 /// Fakes so the screen can be driven without the filesystem — `path_provider` is
 /// unavailable in `flutter_test`. Mirrors `computer_screen_test.dart`.
@@ -29,18 +31,6 @@ class _FakeNpcStorage extends NpcStorage {
   final List<NpcShip> npcs;
   @override
   Future<List<NpcShip>> loadAll() async => npcs;
-}
-
-class _FakeUniverseStorage extends UniverseStorage {
-  @override
-  Future<void> ensureUniverse() async {}
-  @override
-  Future<List<Sector>> loadUniverse() async => [
-        Sector(id: 1, name: 'Alpha Prime', x: 0, y: 0, warpRoutes: [1, 2]),
-        Sector(id: 2, name: 'Beta Reach', x: 120, y: 60, warpRoutes: [1]),
-      ];
-  @override
-  void logSectorStats(List<Sector> _) {}
 }
 
 /// A deliberately long name. The phone-width regression below squashes the name
@@ -82,7 +72,6 @@ NpcShip _npc(int i, FactionClass f) => NpcShip.create(
     );
 
 Bounty _bounty(String id, String targetId, int amount) {
-  final now = DateTime.now();
   return Bounty(
     id: id,
     targetId: targetId,
@@ -93,8 +82,8 @@ Bounty _bounty(String id, String targetId, int amount) {
     posterName: 'Traders Guild',
     posterFaction: 'Independent Traders Guild',
     reason: 'Testing.',
-    createdAt: now,
-    expiresAt: now.add(const Duration(days: 5)),
+    createdAtTick: GameClock.tick,
+    expiresAtTick: GameClock.tick + Bounty.ttlTicks,
   );
 }
 
@@ -110,7 +99,10 @@ void main() {
       _player(2, f[2], 'Rurik Dane'),
     ]);
     NpcStorage.instanceForTest = _FakeNpcStorage(npcs);
-    UniverseStorage.instanceForTest = _FakeUniverseStorage();
+    UniverseStorage.instanceForTest = ReadOnlyUniverse([
+      Sector(id: 1, name: 'Alpha Prime', x: 0, y: 0, warpRoutes: [1, 2]),
+      Sector(id: 2, name: 'Beta Reach', x: 120, y: 60, warpRoutes: [1]),
+    ]);
 
     // `ensureLoaded` would otherwise await BountyStorage, which needs
     // path_provider and is left *pending* rather than throwing — the screen would

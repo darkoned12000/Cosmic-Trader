@@ -56,13 +56,71 @@ class _SectorViewState extends State<SectorView> {
     super.initState();
     ActionLogProvider.global.system('Sector View V2 initialized');
     _loadUniverse();
+    // Re-read whenever *anything* writes the universe, wherever it was written
+    // from. Without this the tab showed a snapshot taken at mount: firing a
+    // Genesis Torpedo from the Ship screen wrote to disk, the snackbar confirmed
+    // it, and the Sector Contents panel sitting right beside it went on showing
+    // the sector as it had been — a world you had just paid for, invisible
+    // until you left the tab and came back.
+    UniverseStorage.instance.revision.addListener(_onUniverseChanged);
+  }
+
+  /// Coalescing flags for the revision listener.
+  ///
+  /// A burst of writes (a tick that saved several sectors, or a scan plus a
+  /// claim) must not start a read per write, and — the part that matters —
+  /// two reads racing must not resolve out of order. If one is already in
+  /// flight, set [_refreshQueued] instead of starting another: the in-flight
+  /// read may have begun before the newest write landed, so the *next* one is
+  /// the one guaranteed to see it. Starting a second read unconditionally would
+  /// make the older of the two results win whenever it resolved second, which
+  /// is a staler view than doing nothing.
+  bool _refreshInFlight = false;
+  bool _refreshQueued = false;
+
+  void _onUniverseChanged() {
+    if (_refreshInFlight) {
+      _refreshQueued = true;
+      return;
+    }
+    _refreshFromDisk();
+  }
+
+  /// Re-reads the universe **without** the `ensureUniverse` side effect.
+  ///
+  /// [ensureUniverse] can *generate and write* a universe when the file is
+  /// missing, so calling it from a write listener would close a loop: write →
+  /// bump → refresh → ensure → write → bump. [initState] still calls it once,
+  /// which is the only place that is allowed to author a universe.
+  Future<void> _refreshFromDisk() async {
+    _refreshInFlight = true;
+    try {
+      final sectors = await UniverseStorage.instance.loadUniverse();
+      if (!mounted) return;
+      if (sectors.isNotEmpty) {
+        setState(() => _allSectors = sectors);
+        _updateCurrentSector();
+      }
+    } catch (e) {
+      // A failed read must not blank the tab; the snapshot already on screen
+      // is older but true, and the next write will try again.
+      debugPrint('SectorView universe refresh failed: $e');
+    } finally {
+      _refreshInFlight = false;
+      if (_refreshQueued) {
+        _refreshQueued = false;
+        _onUniverseChanged();
+      }
+    }
   }
 
   @override
   void didUpdateWidget(SectorView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.player.currentSectorId != widget.player.currentSectorId) {
-      _updateCurrentSector();
+      // A warp moves the player, and the destination may have been written by
+      // anything, so go to disk rather than trusting the mount-time list.
+      _refreshFromDisk();
       // NEW: Clear the selection when the player moves to a new sector
       setState(() {
         _selectedWarpTargetId = null;
@@ -149,6 +207,10 @@ class _SectorViewState extends State<SectorView> {
 
   @override
   void dispose() {
+    // A listener left attached outlives the State, so a disposed Sector tab
+    // would keep asking for reads and `setState` after dispose. The tab is
+    // rebuilt on every universe key change, so this is not hypothetical.
+    UniverseStorage.instance.revision.removeListener(_onUniverseChanged);
     super.dispose();
   }
 

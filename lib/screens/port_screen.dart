@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -13,6 +14,7 @@ import 'package:cosmic_trader/widgets/hacking_widget.dart';
 import 'package:cosmic_trader/widgets/port_combat_screen.dart';
 import 'package:cosmic_trader/widgets/buy_port_dialog.dart';
 import 'package:cosmic_trader/widgets/port_trade_view.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 
 class PortScreen extends StatefulWidget {
   final Player player;
@@ -126,27 +128,28 @@ class _PortScreenState extends State<PortScreen> {
 
     if (_pendingHackFailCount != null) {
       final pendingBanUntil = _pendingHackBanUntil;
-      if (pendingBanUntil != null &&
-          pendingBanUntil <= DateTime.now().millisecondsSinceEpoch) {
+      // A pending ban that has come due is not a ban. Compared in ticks, so
+      // it comes due after a day of *play* — see
+      // `Player.portHackBannedUntilTick`.
+      if (pendingBanUntil != null && GameClock.hasPassed(pendingBanUntil)) {
         return 0;
       }
       return _pendingHackFailCount!;
     }
 
-    final bannedUntil = widget.player.portHackBannedUntil[portName];
-    if (bannedUntil != null &&
-        bannedUntil <= DateTime.now().millisecondsSinceEpoch) {
+    final bannedUntil = widget.player.portHackBannedUntilTick[portName];
+    if (GameClock.hasPassed(bannedUntil)) {
       return 0;
     }
     return widget.player.portHackFailures[portName] ?? 0;
   }
 
-  int? get _hackBanUntilEpoch {
+  int? get _hackBanUntilTick {
     if (_pendingHackFailCount != null) return _pendingHackBanUntil;
     final portName = _port?.name;
     return portName == null
         ? null
-        : widget.player.portHackBannedUntil[portName];
+        : widget.player.portHackBannedUntilTick[portName];
   }
 
   void _applyHackPenalty(int failCount) {
@@ -156,14 +159,15 @@ class _PortScreenState extends State<PortScreen> {
     final actualPenalty = min(penalty, player.credits);
     final portName = _port?.name;
     final failures = Map<String, int>.from(player.portHackFailures);
-    final bannedUntil = Map<String, int>.from(player.portHackBannedUntil);
+    final bannedUntil = Map<String, int>.from(player.portHackBannedUntilTick);
 
     if (portName != null) {
       failures[portName] = failCount;
       if (failCount >= _maxHackAttempts) {
-        bannedUntil[portName] = DateTime.now()
-            .add(const Duration(hours: 24))
-            .millisecondsSinceEpoch;
+        // 2,880 ticks — a game day. Previously `now + 24h` in epoch ms, which
+        // is the difference between a ban and a suggestion: the player quit
+        // overnight and the ban had expired.
+        bannedUntil[portName] = GameClock.tick + GameClock.ticksPerDay;
       } else {
         bannedUntil.remove(portName);
       }
@@ -180,7 +184,7 @@ class _PortScreenState extends State<PortScreen> {
     final updated = player.copyWith(
       credits: player.credits - actualPenalty,
       portHackFailures: failures,
-      portHackBannedUntil: bannedUntil,
+      portHackBannedUntilTick: bannedUntil,
     );
     widget.onPlayerUpdate(updated);
 
@@ -311,13 +315,15 @@ class _PortScreenState extends State<PortScreen> {
             switch (outcome) {
               case 'captured':
                 _showSnackBar(
-                    'Port captured! You are now the owner. +10 notoriety.');
+                    'Port captured! You are now the owner. Reputation ${ReputationActions.capturePort >= 0 ? '+' : ''}${ReputationActions.capturePort.toInt()}.');
                 break;
               case 'destroyed':
-                _showSnackBar('Port destroyed! +20 notoriety.');
+                _showSnackBar(
+                    'Port destroyed! Reputation ${ReputationActions.destroyPort.toInt()}.');
                 break;
               case 'fled':
-                _showSnackBar('You fled from the port. +5 notoriety.');
+                _showSnackBar(
+                    'You fled from the port. Reputation ${ReputationActions.fleePort.toInt()}.');
                 break;
               case 'attackerDefeated':
                 _showSnackBar('You were defeated! Port restored shields.');
@@ -520,7 +526,7 @@ class _PortScreenState extends State<PortScreen> {
         failCount: _hackFailCount,
         maxAttempts: _maxHackSessionAttempts,
         maxFailures: _maxHackAttempts,
-        banUntilEpoch: _hackBanUntilEpoch,
+        banUntilTick: _hackBanUntilTick,
         onSuccess: (updated) {
           final hackedPorts = List<String>.from(updated.hackedPorts);
           final portName = _port?.name;
@@ -546,7 +552,10 @@ class _PortScreenState extends State<PortScreen> {
             hackedPorts: hackedPorts,
             lastHackAt: DateTime.now(),
             factionStandings: factionStandings,
-            notoriety: updated.notoriety + (isSabotage ? 5 : 1),
+            alignment: updated.alignment +
+                (isSabotage
+                    ? ReputationActions.sabotagePort
+                    : ReputationActions.hackPort),
           ));
           if (ownerFaction != null) {
             _showSnackBar(
@@ -606,7 +615,7 @@ class _PortScreenState extends State<PortScreen> {
       onOpenHackCodex: _showHackCodex,
       hackFailCount: _hackFailCount,
       maxHackAttempts: _maxHackAttempts,
-      hackBannedUntilEpoch: _hackBanUntilEpoch,
+      hackBannedUntilTick: _hackBanUntilTick,
       onBanExpired: () => setState(() {}),
     );
   }

@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/planet_classes.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/data/models/port_defense_config.dart';
 
 /// Represents a space port within a sector.
@@ -33,10 +35,24 @@ class Port {
   /// self-correct (discounts when low, premiums when high).
   final double desiredCredits;
 
-  /// Milliseconds since epoch when supply/demand were last touched
-  /// (either modified by trade or regenerated). Used to calculate
-  /// timed regeneration back to maxSupply/maxDemand.
-  final int lastRegenTime;
+  /// Sub-unit **numerator** carried between ticks, per commodity.
+  ///
+  /// A full store refills over [PlanetClock.ticksPerDay] ticks, so one tick is
+  /// `max / 2880` units — and for a 1,000-unit commodity that is 0.347 of a
+  /// unit, which truncates to nothing. Regenerating per tick without a carry
+  /// loses ~38% of a small port's stock a day and it would effectively never
+  /// restock.
+  ///
+  /// Held as an integer count of `1 / ticksPerDay` of a unit rather than a
+  /// `double` fraction, because a `double` carry accumulated over 2,880 ticks
+  /// landed a 50,000-unit port on 49,999. That shortfall is permanent once the
+  /// port clamps at its cap, so it is drift rather than a rounding curiosity.
+  /// Integers make the computation exact at any horizon.
+  ///
+  /// Persisted, because a port that reloaded its carry from zero every time the
+  /// game was opened would lose a unit per commodity per *load* — a
+  /// save-scumming hole rather than a rounding artefact.
+  final Map<String, int> regenRemainder;
 
   // ── Ownership & Upgrades ──────────────────────────────────────
 
@@ -90,7 +106,12 @@ class Port {
 
   /// Timestamp until which a successful sabotage has weakened this port's
   /// combat defenses. Null means no active sabotage.
-  final int? securityCompromisedUntil;
+  /// Game tick at which the sabotage expires.
+  ///
+  /// **Ticks, not milliseconds** — see `GameClock` and the note on
+  /// `Player.portHackBannedUntilTick`. A 30-minute debuff that expires while
+  /// the game is closed is a debuff with no cost to the player.
+  final int? securityCompromisedUntilTick;
 
   const Port({
     required this.name,
@@ -108,7 +129,7 @@ class Port {
     this.owner,
     this.ownerId,
     this.ownerFaction,
-    this.lastRegenTime = 0,
+    this.regenRemainder = const {},
     this.storageLevel = 0,
     this.accumulatedRevenue = 0.0,
     this.ownerTaxRate = 0.05,
@@ -121,7 +142,7 @@ class Port {
     this.isDestroyed = false,
     this.attackerId,
     this.attackMode,
-    this.securityCompromisedUntil,
+    this.securityCompromisedUntilTick,
   });
 
   bool buys(String commodity) => buyPrices.containsKey(commodity);
@@ -139,9 +160,12 @@ class Port {
 
   bool get isHardwareEmporium => portClass == PortClass.hardwareEmporium;
 
+  /// True while a sabotage is in effect.
+  ///
+  /// Compared against `GameClock`, so it expires after 180 ticks of **play**
+  /// rather than 30 minutes of the player's evening.
   bool get isSecurityCompromised =>
-      securityCompromisedUntil != null &&
-      securityCompromisedUntil! > DateTime.now().millisecondsSinceEpoch;
+      GameClock.isActive(securityCompromisedUntilTick);
 
   // ── Port Combat Derived Getters ───────────────────────────────
 
@@ -342,51 +366,82 @@ class Port {
     return base * mult;
   }
 
-  /// Regenerate supply/demand toward maxSupply/maxDemand over a 24-hour
-  /// cycle. Each call restores a fraction proportional to the time elapsed
-  /// since [lastRegenTime] (up to 24h = full restoration).
+  /// Advance supply/demand by [ticks] game ticks, toward [effectiveMaxSupply]
+  /// and [effectiveMaxDemand].
   ///
-  /// [now] defaults to [DateTime.now().millisecondsSinceEpoch].
-  Port regen({int? now}) {
-    final nowMs = now ?? DateTime.now().millisecondsSinceEpoch;
-    if (lastRegenTime <= 0) return copyWith(lastRegenTime: nowMs);
-    final elapsedMs = nowMs - lastRegenTime;
-    if (elapsedMs <= 0) return this;
-
-    const regenPeriodMs = 24 * 60 * 60 * 1000; // 24 hours
-    final fraction = (elapsedMs / regenPeriodMs).clamp(0.0, 1.0);
+  /// A store refills over [PlanetClock.ticksPerDay] ticks, driven by the
+  /// **tick** and by nothing else. There is no wall-clock input anywhere in this
+  /// path, deliberately: the game can be shut off, so a port that sold out
+  /// while the app was closed is still sold out when it reopens. Refilling on
+  /// `DateTime.now()` would quietly hand the player a full market every time
+  /// they closed the game, which is the same shape of bug as a colony that
+  /// produced while nobody was playing.
+  ///
+  /// The per-commodity fraction in [regenRemainder] is what makes a per-tick
+  /// rate exact; see that field for why truncating each tick is not good enough.
+  ///
+  /// Returns the identical instance when no stored integer moved, so the tick's
+  /// `regenerated != sector.port` dirty-check does not flag an unchanged sector
+  /// for a save.
+  Port regenTick({int ticks = 1}) {
+    if (ticks <= 0) return this;
 
     Map<String, int> newSupply = {...supply};
     Map<String, int> newDemand = {...demand};
+    Map<String, int> newRemainder = {...regenRemainder};
     bool changed = false;
 
-    for (final commodity in maxSupply.keys) {
-      final currentQty = newSupply[commodity] ?? 0;
-      final effectiveMax = effectiveMaxSupply(commodity);
-      if (currentQty < effectiveMax) {
-        final added = (effectiveMax * fraction).round();
-        newSupply[commodity] = (currentQty + added).clamp(0, effectiveMax);
-        changed = true;
-      }
-    }
-    for (final commodity in maxDemand.keys) {
-      final currentQty = newDemand[commodity] ?? 0;
-      final effectiveMax = effectiveMaxDemand(commodity);
-      if (currentQty < effectiveMax) {
-        final added = (effectiveMax * fraction).round();
-        newDemand[commodity] = (currentQty + added).clamp(0, effectiveMax);
+    /// Fills [bucket] by [ticks] of [maxFor]'s cap, carrying the sub-unit
+    /// remainder.
+    ///
+    /// Shared by supply and demand so the two cannot drift — they were two
+    /// near-identical loops, and a fix to one was not automatically a fix to the
+    /// other.
+    void fill(Map<String, int> bucket, int Function(String) maxFor) {
+      for (final commodity in bucket.keys) {
+        final currentQty = bucket[commodity] ?? 0;
+        final effectiveMax = maxFor(commodity);
+        // Already full: stop accruing entirely rather than banking the
+        // remainder, so a port sitting at its cap all day does not bank a
+        // surprise restock for the first tick after it is drained.
+        if (currentQty >= effectiveMax) continue;
+        // Exact integer arithmetic — see [regenRemainder].
+        final numerator = ticks * effectiveMax + (newRemainder[commodity] ?? 0);
+        final whole = numerator ~/ PlanetClock.ticksPerDay;
+        final carry = numerator % PlanetClock.ticksPerDay;
+        if (whole <= 0) {
+          newRemainder[commodity] = carry;
+          continue;
+        }
+        final next = (currentQty + whole).clamp(0, effectiveMax);
+        newRemainder[commodity] = carry;
+        if (next == currentQty) continue;
+        bucket[commodity] = next;
         changed = true;
       }
     }
 
-    // No-op regen returns the identical instance so the tick dirty-check
-    // (regenerated != sector.port) doesn't flag unchanged sectors for save.
-    if (!changed) return this;
+    fill(newSupply, effectiveMaxSupply);
+    fill(newDemand, effectiveMaxDemand);
 
+    if (!changed) {
+      // No stored integer moved, but the carry still advanced. Return a copy in
+      // that case, or a port sitting just under a whole unit would hold the same
+      // remainder forever and never cross it.
+      var remainderMoved = false;
+      for (final e in newRemainder.entries) {
+        if ((regenRemainder[e.key] ?? 0) != e.value) {
+          remainderMoved = true;
+          break;
+        }
+      }
+      if (!remainderMoved) return this;
+      return copyWith(regenRemainder: newRemainder);
+    }
     return copyWith(
       supply: newSupply,
       demand: newDemand,
-      lastRegenTime: nowMs,
+      regenRemainder: newRemainder,
     );
   }
 
@@ -406,7 +461,7 @@ class Port {
     String? owner,
     String? ownerId,
     FactionClass? ownerFaction,
-    int? lastRegenTime,
+    Map<String, int>? regenRemainder,
     bool clearOwnerFaction = false,
     int? storageLevel,
     double? accumulatedRevenue,
@@ -422,7 +477,7 @@ class Port {
     bool? isDestroyed,
     String? attackerId,
     String? attackMode,
-    int? securityCompromisedUntil,
+    int? securityCompromisedUntilTick,
     bool clearSecurityCompromised = false,
   }) {
     return Port(
@@ -442,7 +497,7 @@ class Port {
       ownerId: clearOwner ? null : (ownerId ?? this.ownerId),
       ownerFaction:
           clearOwnerFaction ? null : (ownerFaction ?? this.ownerFaction),
-      lastRegenTime: lastRegenTime ?? this.lastRegenTime,
+      regenRemainder: regenRemainder ?? this.regenRemainder,
       storageLevel: storageLevel ?? this.storageLevel,
       accumulatedRevenue: accumulatedRevenue ?? this.accumulatedRevenue,
       ownerTaxRate: ownerTaxRate ?? this.ownerTaxRate,
@@ -457,9 +512,9 @@ class Port {
       isDestroyed: isDestroyed ?? this.isDestroyed,
       attackerId: attackerId ?? this.attackerId,
       attackMode: attackMode ?? this.attackMode,
-      securityCompromisedUntil: clearSecurityCompromised
+      securityCompromisedUntilTick: clearSecurityCompromised
           ? null
-          : (securityCompromisedUntil ?? this.securityCompromisedUntil),
+          : (securityCompromisedUntilTick ?? this.securityCompromisedUntilTick),
     );
   }
 
@@ -477,7 +532,7 @@ class Port {
       'defenseLevel': defenseLevel,
       'portCredits': portCredits,
       'desiredCredits': desiredCredits,
-      'lastRegenTime': lastRegenTime,
+      'regenRemainder': regenRemainder,
       'owner': owner,
       'ownerId': ownerId,
       'ownerFaction': ownerFaction?.name,
@@ -493,7 +548,7 @@ class Port {
       'isDestroyed': isDestroyed,
       'attackerId': attackerId,
       'attackMode': attackMode,
-      'securityCompromisedUntil': securityCompromisedUntil,
+      'securityCompromisedUntilTick': securityCompromisedUntilTick,
     };
   }
 
@@ -521,7 +576,16 @@ class Port {
       desiredCredits: (json['desiredCredits'] as num?)?.toDouble() ??
           (json['portCredits'] as num?)?.toDouble() ??
           0.0,
-      lastRegenTime: (json['lastRegenTime'] as int?) ?? 0,
+      // A legacy save carries the old wall-clock key. It is read as nothing
+      // on purpose: the whole point of the change is that no port refills on
+      // elapsed real time, so there is no correct way to convert those
+      // milliseconds into ticks. A port resumes from whatever quantity it had
+      // and carries on from there — which is the behaviour that was asked
+      // for, not a migration gap.
+      regenRemainder: (json['regenRemainder'] as Map?)?.map(
+            (k, v) => MapEntry(k as String, (v as num).toInt()),
+          ) ??
+          const {},
       owner: json['owner'] as String?,
       ownerId: json['ownerId'] as String?,
       ownerFaction: _parseFactionClass(json['ownerFaction'] as String?),
@@ -545,8 +609,11 @@ class Port {
       isDestroyed: (json['isDestroyed'] as bool?) ?? false,
       attackerId: json['attackerId'] as String?,
       attackMode: json['attackMode'] as String?,
-      securityCompromisedUntil:
-          (json['securityCompromisedUntil'] as num?)?.toInt(),
+      // A pre-tick save holds epoch milliseconds. Dropped, as for the hack
+      // ban: not comparable, and clearing a debuff on migration costs the
+      // player nothing they earned.
+      securityCompromisedUntilTick:
+          (json['securityCompromisedUntilTick'] as num?)?.toInt(),
     );
   }
 }

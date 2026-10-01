@@ -6,6 +6,7 @@ import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/port_defense_config.dart';
 import 'package:cosmic_trader/services/npc_ai/port_combat_service.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 
 class PortCombatScreen extends StatefulWidget {
   final Player player;
@@ -341,13 +342,13 @@ class _PortCombatScreenState extends State<PortCombatScreen>
 
   void _doCapture() {
     _combatLog.add('>>> Port captured! You are now the owner. <<<');
-    _combatLog.add('+10 notoriety');
+    _combatLog.add('${_signed(ReputationActions.capturePort)} reputation');
     _endCombat(outcome: 'captured');
   }
 
   void _doDestroy() {
     _combatLog.add('>>> Port destroyed! <<<');
-    _combatLog.add('+20 notoriety');
+    _combatLog.add('${_signed(ReputationActions.destroyPort)} reputation');
     _endCombat(outcome: 'destroyed');
   }
 
@@ -371,19 +372,19 @@ class _PortCombatScreenState extends State<PortCombatScreen>
           ownerId: _player.id,
         );
         finalPlayer = _player.copyWith(
-          notoriety: (_player.notoriety + 10).clamp(0, 100),
+          alignment: _player.alignment + ReputationActions.capturePort,
         );
         break;
       case 'destroyed':
         finalPort = PortCombatService.destroyPort(_port);
         finalPlayer = _player.copyWith(
-          notoriety: (_player.notoriety + 20).clamp(0, 100),
+          alignment: _player.alignment + ReputationActions.destroyPort,
         );
         break;
       case 'fled':
         finalPort = PortCombatService.endCombatRetreat(_port);
         finalPlayer = _player.copyWith(
-          notoriety: (_player.notoriety + 5).clamp(0, 100),
+          alignment: _player.alignment + ReputationActions.fleePort,
         );
         break;
       case 'attackerDefeated':
@@ -1204,3 +1205,10 @@ enum WeaponType {
     }
   }
 }
+
+/// Formats a signed reputation change for a log line.
+///
+/// The sign is the point: on a scale where bad deeds move you *down*, an
+/// unqualified number reads as a reward. `+` for good, `-` for bad.
+String _signed(double value) =>
+    value >= 0 ? '+${value.toInt()}' : '${value.toInt()}';

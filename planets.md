@@ -8,7 +8,7 @@ magnitude. Corrected below, with the audit that produced it in the next section.
 
 ### What is built and working
 
-- **Model** (`lib/data/models/planet.dart`): 10 planet types with atmosphere,
+- **Model** (`lib/data/models/planet.dart`): 11 planet types with atmosphere,
   production multipliers, colonist caps, and image pools. Ownership, homeworld
   status, colonists per track, storage, Citadel level 1-6, defense
   (level/shield/hull), NPC spawn timers, and a `scanned` flag.
@@ -30,7 +30,9 @@ magnitude. Corrected below, with the audit that produced it in the next section.
   (`planet_screen.dart:58`); the sector panel costs 1 energy and grants nothing
   (`sector_interaction_panel.dart:203`).
 - **UI**: planet tab, header + image, resources/defense cards, production
-  readout, credits-based transfers in both directions, claim, and level-up.
+  readout, **cargo** transfers in both directions (`Unload`/`Load` — free, and
+  bounded by free hold space; they used to be a credits-to-goods purchase that
+  never touched `player.cargo`), claim, and level-up.
 - **Maps**: planet markers on the galaxy map and tactical map, with
   type/homeworld/owner status; a land/scan action in the sector panel.
 
@@ -41,10 +43,13 @@ magnitude. Corrected below, with the audit that produced it in the next section.
   `PlanetProductionService.process` once per tick. The formula now lives on the
   model in one place; the screen and the tick both read it, so they cannot
   disagree.
-- **Organics upkeep** — `ceil(population / 10)` per tick, charged *after*
-  production so a colony that farms its own food stands still.
-- **Starvation** — a colony that cannot feed itself bleeds at 2% of population
-  per tick, with a floor of one colonist so it always finishes dying.
+- ~~**Organics upkeep**~~ — **REMOVED.** A per-capita tax is the wrong sink; it
+  makes harsh worlds *worse Terran worlds*. See *DECISION — harsh types cannot
+  produce a commodity at all*.
+- ~~**Starvation**~~ — **REMOVED** along with it, and replaced by **colony
+  supply**: a bill every 2,880 ticks for 8% of the colony's own daily output,
+  drawn at random from the three consumables. An unpaid bill is *reported* and
+  nothing else happens. No population is ever lost.
 - **Workforce assignment UI** — steppers on all four tracks plus an implicit
   reserve, owner-only. This was a hard prerequisite: without it a claimed planet
   has no colonists on any track and produces nothing, because only the generator
@@ -52,8 +57,11 @@ magnitude. Corrected below, with the audit that produced it in the next section.
 - **A development multiplier by level** (1.00-2.00x), deliberately shallow.
 - **Per-commodity, per-type storage with nothing wasted** — see the Storage
   section. A full store spills into a shipment pool rather than being discarded.
-- **A live planet screen** — a 1s fingerprint poll repaints the colony when the
-  tick changes it, so production is visible without leaving the tab.
+- **A live planet screen** — a 1s poll **re-reads from disk** and repaints when
+  the tick has changed the colony, so production is visible without leaving the
+  tab. It deliberately does *not* fingerprint its own objects: every screen holds
+  its own copy of the universe, so fingerprinting would report "unchanged" for a
+  colony the tick had already altered.
 - **Distance-priced, per-faction colonist supply** — see Colonists & Production.
 - **A Planet Guide** at Computer -> Planet Guide, with its storage, type, level
   and transport tables generated from the model so a balance change cannot leave
@@ -76,9 +84,6 @@ magnitude. Corrected below, with the audit that produced it in the next section.
   `Wdr` button and the `Collect` pool currently pay **two different invented
   prices for the same goods** (5 cr vs 42.5 cr per mineral), which is the defect
   that makes a real market necessary rather than merely nice.
-- **One planet per sector**: `Sector.planet` is `Planet?`, strictly 1:1. Multiple
-  planets per sector is the top-priority change; see *Multiple planets per
-  sector*.
 - **NPC colonisation / backup claiming by AI**: not started (the control-gating
   rules it would need already exist).
 
@@ -115,11 +120,29 @@ All taken against a default generated universe (`seed 7`, 24 ports).
 | Total treasury, every port in the galaxy | 455,372,804 cr |
 | Daily output of **one** 1M-population Citadel | **4,658,305,000 cr** |
 | One colony-day as a multiple of the whole galaxy's treasury | **10.2x** |
-| Galaxy-wide daily mineral demand (the absorption budget) | 462,749 units |
+| Galaxy-wide daily mineral demand (the absorption budget) | 462,749 units — **superseded, see below** |
 | Daily mineral output of a **50,000** level-4 colony | **780,000 units** |
 | Daily mineral output of a 1M level-6 colony | **27,600,000 units** (60x) |
 | Everything purchasable in the game (270 hardware items + 12 hulls + port storage ladder) | **65.0B cr** |
-| Citadel-days to buy the entire game | **72** |
+| Citadel-days to buy the entire game | **72** — **superseded, see below** |
+
+**These figures were measured before two changes that moved them**, and this
+document quoted all three numbers in three different sections without saying so,
+which is worse than having one stale number. Reconciled:
+
+| quantity | the figure | what it is |
+|---|---|---|
+| Galaxy-wide daily mineral demand | **462,749 units** | measured at the *old flat colonist caps*, before the cap was derived from Citadel level |
+| — the same quantity, universe-sized | **~1.24M units/day** | 25 buying ports in a 100-sector universe |
+| — the same quantity, galaxy-wide, all commodities | **~22.97M units/day** | 260 sampled ports; a median port absorbs ~83,700 units/day |
+| Everything purchasable in the game | **65.0B cr** | 270 hardware items + 12 hulls + the port storage ladder |
+
+The spread is not a contradiction, it is three universes and three scopes. What
+matters for any balance argument is the **ratio**: a single 1M-citadel world
+produces 27.6M minerals/day, so it is ~60x the whole galaxy's appetite even at the
+larger figure. The market brake is therefore undersized whichever scope you
+measure, and the "~60% of ports are unowned and never grow" note below is the
+real reason it cannot grow on its own.
 
 Three conclusions, and they drove everything after:
 
@@ -136,13 +159,12 @@ Three conclusions, and they drove everything after:
 
 ### A second, quieter defect: the port treasury ratchets
 
-`portCredits` is debited by every player sale (`port_trade_view.dart`, clamped at
-0), but `Port.regen()` restores **only supply and demand, never credits**
-(`port.dart:359-380`). The only inflow is an NPC happening to buy there.
-
-The self-correcting valve exists — `cashRatio` drives `priceMultiplier` across
-0.55x-2.0x — but it depends on a reservoir that cannot refill. A port that sells
-into a colony ratchets toward zero and pins at the 0.55x floor permanently.
+**STILL OPEN.** `portCredits` is debited by every player sale (`port_trade_view`,
+clamped at 0), but nothing restores it except an NPC happening to buy there.
+`Port.regenTick` moves supply and demand only. So a port that sells into a
+colony trends toward zero and stays there. The self-correcting valve exists —
+`cashRatio` drives `priceMultiplier` across 0.55x-2.0x — but it depends on a
+reservoir that cannot refill, so the port pins at the floor permanently.
 
 ### A third: the Transfers buttons are not transfers
 
@@ -221,6 +243,31 @@ reduces volume.
 | Toxic | 1.6 | **0** | 1.0 | 1.2 |
 | Ice | 0.8 | **0** | 0.6 | 0.8 |
 | Moon | 1.0 | **0** | 0.6 | 0.8 |
+
+**Gas Giant is removed from the game.** It is not in this table because it was
+never a harsh world — it was a *dead* one, which is a different and worse thing.
+Its ratios are N-A on **all three** products, so it produced nothing at any
+staffing and at any Citadel level, while still charging real resources for each
+build (`ore: 1200, organics: 400, equipment: 2500` for level 2) and holding one
+of three `planetsPerSector` slots. It had 10,000 of storage per commodity, so you
+could unload into it and watch the goods sit there.
+
+It was **1 of 20 slots** in the generator's weighted type table — roughly one
+generated world in twenty — and **1 in 11** of a Genesis Torpedo roll. So it was
+not an exotic edge case to be met once; it was a standing tax on every universe,
+paid in a slot you could not use.
+
+**A dead world is worse than a bad one.** The whole detonate-and-retry loop rests
+on a player being able to *look* at a world and judge it. There is nothing to
+look at in an inert one, so the item built to clear a mistake had nothing to
+clear. Removal, rather than a yield, because the argument for keeping it was
+authentic source lore and the cost was a feature nobody asked for.
+
+Note the two tables disagreed about it, and **both suites were green**:
+`TypeMultipliers` gave it 0.6 organics (so one test asserted it grew food) while
+the class spec gave it N-A everywhere (so another asserted it produced nothing).
+Same type, two answers. That is now impossible to reintroduce — see the
+"no class is a zero-output dead end" guard in `test/planet_class_test.dart`.
 
 Verified safe: every output is `colonists x mult x scale` and **nothing in the
 model divides by a type multiplier**, so a 0 multiplier yields 0 output rather than
@@ -344,7 +391,8 @@ three worlds in a sector, `(sectorId)` is no longer an identity.
 
 Exceeding the cap does **not** hard-block, because players used exactly this as an
 attack. Creating a 4th world in a 3-planet sector raises a **gravity warning** and
-then a **collision roll every 24 hours**: if it comes up bad, planets collide and
+then a **collision roll every game day (2,880 ticks)**: if it comes up bad,
+planets collide and
 are destroyed.
 
 This is the strongest form the mechanic takes. It converts a construction choice
@@ -420,30 +468,44 @@ be made after playtesting rather than before.
   an action on the **orbit**, not a button on a world.
 
 **Over-stacking is allowed, and is a weapon.** A fourth world in a three-world
-sector raises an unmissable warning and then a **24-hour gravity check**; a bad
+sector raises an unmissable warning and then a **game-day gravity check** (2,880
+ticks); a bad
 roll destroys a **pair** — two bodies meeting is the fiction, and losing a pair
 makes over-stacking a real gamble rather than a slow tax. Hard-blocking it would
 remove the torpedo's only offensive use and make the detonator pointless: a
 capacity limit can be waited out, a hazard has to be answered. It is also how
 players attacked a target's *economy* rather than their hulls.
 
-**The collision roll is wall-clock, not game ticks, and deliberately so.**
-Construction counts ticks because a build is the player's own progress and must
-not complete while they sleep. A collision is the opposite — a background hazard,
-meant to bite an abandoned sector, and the only thing that makes over-stacking a
-decision. Odds worsen with each world past the cap: at a cap of 3, one extra world
-is a 1-in-8 daily loss and three extras is 1-in-2, a sector that eats itself
-within a week of being abandoned.
+**The collision roll now counts ticks too — this reverses an earlier decision in
+this document, and the reversal is worth recording rather than quietly editing.**
+
+The argument for wall-clock was: construction counts ticks because a build is the
+player's own progress and must not complete while they sleep, but a collision is
+the opposite — a background hazard *meant* to bite an abandoned sector.
+
+**That argument does not survive this game's clock.** The game is single-player
+with local saves, so "abandoned" has no meaning: closing the app stops time
+everywhere at once. There is no period during which a sector ages without the
+player, so a wall-clock stamp made the hazard the *only* thing in the economy that
+advanced while nobody was playing — the same two-clocks defect that was just fixed
+on the port side, and it was the last one standing.
+
+So `Sector.destabilisedAtTick` replaces `destabilisedAtMs`, and
+`WorldForging.collisionIntervalTicks` is `GameClock.ticksPerDay`. The consequence
+is real and worth stating plainly: **an over-stacked sector no longer eats itself
+overnight.** It has to be left over-stacked for a game day *of play*, which means
+the hazard is answered by returning to the game rather than by sleeping through
+it. The 1-in-8 and 1-in-2 odds per world past the cap are unchanged.
 
 **The clock starts the moment the sector goes over the cap, and the player is not
 warned.** Two decisions, both corrected after the first implementation:
 
-- *Per sector, not per galaxy.* `Sector.destabilisedAtMs` is stamped by
-  `reconcileStability(cap, nowMs)` at the moment of the crossing, and
-  `WorldForging.runDueCollisions` asks only whether that stamp is 24 hours old.
-  A global wall-clock hour would destroy worlds in a system that had been
-  unstable for three minutes. The stamp is set by **every** path that can change
-  the world count, including the sweep itself, so it is self-healing: a stamp
+- *Per sector, not per galaxy.* `Sector.destabilisedAtTick` is stamped by
+  `reconcileStability(cap, tick)` at the moment of the crossing, and
+  `WorldForging.runDueCollisions` asks only whether that stamp is a game day old.
+  A global hour would destroy worlds in a system that had been unstable for three
+  minutes. The stamp is set by **every** path that can change the world count,
+  including the sweep itself, so it is self-healing: a stamp
   maintained by hand at each call site is a stamp that will eventually disagree
   with the thing it describes, and a wrong stamp is either a sector that never
   rolls or one that rolls when it should not. A surviving check **re-arms** from
@@ -469,9 +531,29 @@ first is the pre-launch question, the second is the state the collision roll act
 on. Conflating them described a sector holding exactly its cap as gravitationally
 unstable, which is both wrong and the reason a guard passed against a fault.
 
-**`worldSlotsUsed` counts living worlds, not total.** A destroyed world stays in
-the list so it can still be drawn and argued about, but it holds no orbital slot —
-that is exactly what makes the detonate-then-re-roll loop work.
+**`worldSlotsUsed` counts the worlds in the list, and a destroyed world leaves
+the list.** This reverses an earlier decision to keep it as a corpse "so it can
+still be drawn and argued about". That reasoning did not survive contact with the
+game: the corpse stayed in Sector Contents, could be landed on, and could be
+**claimed again** — so a detonator freed the slot without destroying anything,
+which is the opposite of what the item is for. A destroyed world is now removed
+from `sector.planets` outright.
+
+Two consequences worth stating, because both were bugs first:
+
+- `Planet.destroy()` is still called **before** the removal, not instead of it.
+  Every screen holds its own copy of the universe, so the instance the detonation
+  was fired from is a *different instance* from the one in the list. Removing
+  without neutralising would leave that detached copy with its colony intact,
+  still producing into a world that no longer exists.
+- `isDestroyed` on a world *in the list* is now an invariant violation rather than
+  a normal state. It still means something on a detached instance and in legacy
+  saves, so `Sector._planetsFromJson` purges corpses on load — otherwise a world
+  vaporised before this change would come back from disk as landable.
+
+The detonate-then-re-roll loop is unaffected, and in fact improved: because the
+world is gone rather than flagged, its **name** is free again, so the naming
+dialog will keep offering the name the player just used.
 
 ### DECISION — Genesis Torpedo and Atomic Detonator
 
@@ -492,9 +574,13 @@ cost, and the sector you roll in is the actual bet.**
 **Open question — profiles.** Ten types means an expected **10 rolls** to get one
 specific world, which reads as bad luck rather than a decision. A proposed
 mitigation, not yet agreed: pick a *profile* and roll within it — **Fertile**
-(Terran/Jungle/Ocean), **Industrial** (Terran/Desert/Lava/Barren/Toxic), **Barren-
-Cold** (Ice/Moon/Gas Giant). Three rolls instead of ten, and "I need an ocean
+(Terran/Jungle/Ocean/Mountain), **Industrial** (Terran/Desert/Lava/Barren/Toxic),
+**Barren-Cold** (Ice/Moon). Three rolls instead of ten, and "I need an ocean
 world" becomes a request rather than a numeric grind.
+
+(The profiles were the only place the removed type still had a role, which is a
+fair argument that removing it was overdue: a torpedo lottery whose one unusable
+outcome was in the recommended profile list.)
 
 The Atomic Detonator also makes `Planet.destroy()` reachable years before
 invasion ships, and forces `destroy()` to be correct against a **list** (remove
@@ -562,6 +648,25 @@ below), a drone-heavy world becomes a pure industrial drain with no cash return.
 That is defensible — drones are worth their combat value — but the player has to be
 able to see it, or it reads as a trap.
 
+### OPEN — Mountain is implemented but not generated
+
+`_pickPlanetType`'s `weightedTypes` list **does not include Mountain**, so a
+fresh universe never places one. The only way to get a Class L world is a
+Genesis Torpedo roll, which draws from `Planet.allTypes`. That makes the seventh
+sourced class — the one the Production Triangle table is written around —
+effectively a torpedo-only world, and "ten rolls to get one specific type"
+becomes many more for anyone chasing it.
+
+**Undecided, and deliberately not changed here:** adding it perturbs
+`weightedTypes`, which shifts every downstream random draw and therefore every
+seed. Per the lesson in `AGENTS.md`, expect seed-sensitive breakage whenever draw
+counts change upstream of a random placement, and re-run the generator tests
+rather than assuming a green suite means the distribution still looks sane. The
+open question is only *where in the distribution* it belongs — a highland world
+productive in all three commodities is arguably a common sight, and giving it a
+mid-table slot would also rebalance the `planetDensity` change the multi-planet
+work made.
+
 ### OPEN — the only remaining recurring sink
 
 With upkeep removed, the level-up import is a one-time-per-tier cost and
@@ -594,35 +699,110 @@ is a perfectly good discovery-risk score. Our generator **does** produce 1-warp
 dead-ends, but only as a side effect of the orphan-repair phase. If the strategy
 depends on them, that should be intentional.
 
-### The game clock
+### The game clock — **one clock, and it is the tick**
 
-One unit of game time is one **tick**, and a tick is the 30-second loop. So:
+One unit of game time is one **tick**: one pass of the 30-second loop. So:
 
-| unit | ticks | real time |
+| unit | ticks | real time at the default tick |
 |---|---|---|
+| game minute | 2 | 30 s |
 | game hour | 120 | 30 min |
 | game day | **2,880** | 24 h |
+| game week | 20,160 | 7 d |
 
-Nothing invents its own day. A per-day figure from the source tables is divided
-by 2,880 to get a per-tick figure, and that is the whole conversion.
+**One tick is 30 seconds, so 30 minutes is 60 ticks.** That is the whole
+conversion, and it is the only one the game ever performs: nothing invents its own
+day, and a per-day figure is divided by 2,880 to get a per-tick figure.
 
-**A game day is a real day, deliberately.** An earlier draft proposed shortening
-it so build times felt brisk; that was wrong, and instructively so — a compressed
-day would have desynchronised the planet economy from the port market, which
-already refills on a real 24 hours. With a game day being a real day the two agree
-by construction. Switching to real time for persistent multiplayer is a change to
-`PlanetClock` alone.
+### Why ticks and not wall-clock
 
-Two consequences that were *not* obvious:
+The rule is not stylistic. It is that **the game can be shut off.**
+
+- **Time stops when the game is closed.** A month of real time between sessions is
+  not game time and nothing may accrue against it. A 2,880-tick interest period is
+  a day *of play*, which at an hour a session is two months of sessions — which is
+  exactly what the player is buying when they sit down.
+- **Otherwise every cooldown is escapable.** A 2,880-tick hack ban expressed in
+  milliseconds is a ban the player clears by quitting and reopening, because the
+  stored deadline is compared against a clock that kept running. That is not a
+  balance question; it is a missing guard.
+
+Four mechanics were quietly on the wall clock, and each had the same shape of bug:
+
+| mechanic | was | now | what it cost |
+|---|---|---|---|
+| Port supply/demand refill | `DateTime.now() - lastRegenTime` | `Port.regenTick(ticks)` | a sold-out market **restocked itself overnight** |
+| Bank interest | `DateTime.now().difference(lastInterestTime)` | tick deadline | a player who slept a week got a week of interest; one who played seven hours got almost nothing |
+| Hack ban (1 day) | epoch ms, persisted | tick deadline, persisted | **quitting cleared the ban** |
+| Sabotage (30 min) | epoch ms, persisted | tick deadline, persisted | the debuff expired during dinner |
+| Lottery limit (3/day) | `State` local, not persisted | two fields on `Player` | **the limit reset every time you left the tab** — unlimited plays by dipping in and out |
+| Gravity collision (1 day) | epoch ms, persisted | tick deadline | the only hazard that fired while nobody was playing |
+| Bounty TTL (7 days) | `DateTime` + `Duration(days: 7)` | `ttlTicks` | a bounty lapsed during a week the game was shut |
+
+### The counter is persisted
+
+`GameClock` keeps the tick count on `GameSettings.worldTick`, and
+`GameTickService` advances it — **one caller, in one place**, before anything in
+the tick reads a deadline.
+
+Persistence is not an optimisation, it is load-bearing. A counter that reset to
+zero on launch would make every stored "expires at tick N" meaningless, because N
+came from the previous session and `N - 0` is enormous: **nothing would ever
+expire.** The obvious repair — clamping a negative elapsed to zero — then makes
+every cooldown *vacuous* instead, and the ban is gone. Persisting is the only option
+that keeps a long cooldown long.
+
+It is saved on a **60-tick throttle** (30 minutes of play) and on clean exit, so a
+crash rewinds cooldowns by at most half an hour. That is the deliberate trade: a
+disk write every 30 seconds for the life of the app buys nothing, and rewinding is
+generous to the player and **not farmable**, because restarting does not reset the
+counter.
+
+### Per-tick rates need a carried remainder
+
+2,880 ticks to refill a store means one tick is `max / 2,880` units — and for a
+1,000-unit commodity that is **0.347 of a unit**, which truncates to nothing. A
+small port would lose ~38% of its stock a day and effectively never restock. The
+sub-unit remainder is carried per commodity, as an **integer numerator** rather
+than a `double` fraction: a `double` accumulated over 2,880 ticks landed a
+50,000-unit port on 49,999, and since the port clamps at its cap that shortfall
+would have been permanent.
+
+Interest does **not** need this, and the difference is instructive: it is computed
+lazily from the elapsed tick count rather than accumulated a tick at a time, so
+there is nothing to carry. It pays for **whole days only** and advances its stamp
+by exactly those days — paying for the fractional part while advancing by the whole
+part was a version of this rule that leaked, paying 2,500 for two days where the
+rate says 2,000.
+
+### The tick interval is a diagnostic, not a clock
+
+The Automation console can change the loop's *interval*, and that deliberately
+does **not** redefine how long a tick is worth. If it did, every cooldown in the
+game would silently shorten the moment somebody opened the dev console, which is
+the opposite of what a diagnostic tool should do.
+
+### What a tick buys the player
+
+The rate is quotable without a conversion table, which is the practical point of
+getting the unit right:
+
+- **30 minutes** of a hack ban is **60 ticks**.
+- **1.1% daily interest on 100,000 cr** is 1,100 cr over 2,880 ticks — **0.38194 cr
+  per tick**.
+- A full **1 → 6** Citadel is 385 ticks, about **3.2 hours of actual play** and
+  nothing at all while the game is closed.
+
+### Two consequences that were *not* obvious
 
 - **The old economy was ~29x the new one.** A Volcanic colony at optimum made
   1,440,000 ore/day under the linear formula and 50,000 under the class caps. The
   "72 days to buy the game" figure in this document was measured against the old
   one and no longer holds.
-- **The colony supply bill had to move to the same unit.** It was 8% of one
-  tick's output charged every 10 ticks. Generous while per-tick figures were
-  inflated, but at the class caps 288 bills a day came to 23× what a colony
-  earned. It is now 8% of a **day's** output, charged once a day.
+- **The colony supply bill had to move to the same unit.** It was 8% of one tick's
+  output charged every 10 ticks — generous while per-tick figures were inflated, but
+  at the class caps 288 bills a day came to 23x what a colony earned. It is now 8%
+  of a **day's** output, charged once a day: one bill every 2,880 ticks.
 
 ### Citadel tiers
 
@@ -633,7 +813,8 @@ translation decisions:
   a day that is 4–18 *real* days of play, and construction only advances while the
   game runs, so level 2 would be a week of evenings. Reading the same numbers as
   hours preserves the shape of the authored table exactly — a Mountain level 2 is
-  still four times faster than a Vaporous one — while making it reachable.
+  still four times faster than the source table's Class U — while making it
+  reachable.
 - **Colonists are a gate, not a cost**, as everywhere else in this model.
 
 Level abilities follow the source: treasury at 1, fighter defence at 2, quasar
@@ -689,14 +870,18 @@ against each other without a single transcribed output:
 | L Mountain | 2 / 5 / 20 | 40,000 | 15,000 / 12 = **1,250** |
 | C Glacial | 50 / 100 / 500 | 100,000 | 1,600 / 25 = **64** |
 | H Volcanic | 1 / N-A / 500 | 100,000 | 50,100 / 50 = **1,002** |
-| U Vaporous | N-A / N-A / N-A | 3,000 | 0 = **0** |
 
-All seven reproduce their published figure exactly, with a per-class
-`colonistsPerDrone` of 10 / 15 / 15 / 12 / 25 / 50 / n-a. That is not a
+All six reproduce their published figure exactly, with a per-class
+`colonistsPerDrone` of 10 / 15 / 15 / 12 / 25 / 50. That is not a
 coincidence of transcription — it is why the divisor can be a per-class constant
 rather than a hardcoded fighter cap, and it is what makes the four **derived**
 world types (Jungle, Moon, Barren, Toxic — no TW equivalent) checkable by the
-same relationships as the seven sourced ones. `test/planet_class_test.dart` holds
+same relationships as the six sourced ones.
+
+**Class U is the seventh source class and is deliberately not implemented.** It
+is the only one whose ratios are N-A on every product, so it cannot be given a
+non-zero yield without inventing one — see the removal note under *Colony supply*
+above for the full reasoning and why removal beat a rescue. `test/planet_class_test.dart` holds
 it: changing one mistyped digit in the Volcanic table breaks four independent
 assertions, because a wrong input surfaces as a broken *relationship* rather than
 as a plausible number.
@@ -709,7 +894,7 @@ sequence.
 | # | Change | Size | Why here |
 |---|---|---|---|
 | 1 | ~~**`Sector.planets` list + per-planet id + save migration**~~ | **DONE** | Eight files read `sector.planet`. Every other step touches the same files — doing them on the 1:1 model means doing them twice. |
-| 2 | Harsh types -> organics 0; remove upkeep/starvation | Small | Creates the gaps that make step 3 meaningful |
+| 2 | ~~Harsh types -> organics 0; remove upkeep/starvation~~ | **DONE** | Small. Created the gaps that made step 3 meaningful |
 | 3 | ~~`Dep`/`Wdr` -> cargo; delete `_transferPrices`~~ | **DONE** | The hauler. **Built before step 2, reversing the documented order** — see below. |
 | 4 | ~~Genesis Torpedo + Atomic Detonator + collision rolls~~ | **DONE** | Needs 2 and 3: planting a complement is worthless if goods cannot move |
 | 5 | ~~Per-type production caps~~ | **DONE** | Stops a large colony printing without limit. `planet_classes.dart` — see *The Production Triangle* below |
@@ -796,7 +981,6 @@ Reachability of level 6 (needs 1,000,000 colonists) by type:
 | Lava | 200,000 | no | no |
 | Moon | 200,000 | no | no |
 | Barren | 150,000 | no | no |
-| Gas Giant | 100,000 | no | no |
 | Toxic | 100,000 | no | no |
 
 **8 of 10 types can never reach Citadel.** And because Duran homeworlds are
@@ -815,22 +999,39 @@ existed to stop anyone changing a cap silently, which was a real risk — but a 
 that forbids fixing the defect outlives its reason, and the replacement guard
 protects the same tables from a different direction.
 
-### 3. The two scan paths make one strictly dominated — MEDIUM
+### 3. The two scan paths made one strictly dominated — MEDIUM, **FIXED**
 
 The sector panel's 1-energy quick scan and the planet tab's 4-energy scan set the
-same `scanned` flag and reveal the same detail dialog. The only difference is
-that the expensive path grants +1 faction standing. Every player will quick-scan,
-so the 4-energy path is dead weight and the standing reward is the sole reason to
-use it. Either fold them into one scan, or make the quick scan reveal strictly
-less and leave the full reveal worth paying for.
+same `scanned` flag and reveal the same detail dialog. The only difference was
+that the expensive path granted +1 faction standing. Every player will quick-scan,
+so the 4-energy path was dead weight and the standing reward was the sole reason
+to use it.
 
-### 4. Colonists are bought, not transported — MEDIUM
+**Now one verb.** `lib/services/scan_service.dart` owns it: `EnergyService.scanCost`
+(1 energy), set the flag, +1 standing with the owner, persist, log. Both screens
+call it, so the two cannot drift apart again — and the standing is granted on
+*both* paths, because leaving it on one would have inverted the dominance rather
+than removed it.
 
-`_transferPrices['colonists'] = 20` credits per colonist, with no cargo hold
-consumed. Design Goal 2 and the Inspiration table both specify colonists
-travelling from Terra (sector 1) in cargo holds. This is Phase D, unimplemented,
-and it means the colonist economy is currently a pure credits sink with no
-physical constraint.
+**Scanning is deliberately simple.** It costs one energy and tells you what a world
+is. An in-depth scan — production figures, fleet strength — is a **separate verb
+that does not exist yet**, and when it lands it should be a second cost constant
+on this service rather than a third price on this one.
+
+The one thing that changed shape is the ban countdown: a tick deadline has
+30-second resolution, so the widget counts ticks and renders `23h 58m` rather than
+`23:58:31`. A seconds-resolution display would be inventing precision the deadline
+does not have.
+
+### 4. Colonists are bought, not transported — MEDIUM, **PARTIALLY FIXED**
+
+Was `_transferPrices['colonists'] = 20` credits per colonist with no cargo hold
+consumed. That table is **deleted**; colonists now come from your own faction's
+homeworld priced by distance (`15 x hops^1.5`) plus a per-shipment energy cost.
+
+Still true: colonists are an **abstract count with no cargo-hold constraint**, so
+the economy remains a pure credit-and-fuel cost rather than a hauling problem.
+That half is Phase D and remains open.
 
 ### 5. A removed faction name crashes the whole universe load — HIGH, FIXED
 
@@ -853,7 +1054,10 @@ until the drones rename forced the question.
 
 ### 6. Dead and vestigial model surface — LOW
 
-- `dominantCommodity` (`planet.dart:139`) has no caller anywhere in `lib/`.
+- `dominantCommodity` (`planet.dart:139`) has **no caller in `lib/`** — it is
+  read by a test and by nothing else. Kept because the test pins a real property
+  (that the world type's own table is what decides it), but it is not on a live
+  path.
 - **Terminology: fighters -> drones.** The model carried `storedFighters` /
   `colonistsFighters` / `TypeMultipliers.fighters` while the planet screen
   already labelled the row "Drones" and the rest of the game uses drones
@@ -866,7 +1070,14 @@ until the drones rename forced the question.
 - `requiredColonists` defaults disagree — 1000 in the constructor
   (`planet.dart:95`) vs 100 in `fromJson` (`planet.dart:217`).
 
-### 7. The starvation cap could strand a colony forever — HIGH, FIXED
+### 7. The starvation cap could strand a colony forever — HIGH, **FIXED, THEN REMOVED**
+
+> **This entire finding describes a mechanic that no longer exists.** It is kept
+> only because the bug it found was real and the reasoning generalises: a
+> *capped* loss that floors to zero for small inputs is a permanent state, not a
+> slow one. Starvation was fixed and then removed outright in favour of colony
+> supply (which reports an unpaid bill and never kills anyone), so nothing here
+> describes current behaviour.
 
 Found by the first test written against `produce()`.
 
@@ -889,7 +1100,8 @@ bug.
 The instinct on seeing a colony produce ~14,400 minerals/tick (roughly 36M
 credits/hour at mid-range) was to nerf production. Measuring first showed the
 market brake was already built and correctly sized: every port has a finite
-`maxDemand` per commodity that refills over a 24-hour cycle, and port storage
+`maxDemand` per commodity that refills over a 24-hour cycle (2,880 ticks), and
+port storage
 upgrades multiply it by 1.5x per level (max 10, from 100,000 credits doubling
 each time). Across a 100-sector universe that is **~1.24M minerals of demand per
 day** across 25 buying ports, worth ~52M credits.
@@ -955,7 +1167,6 @@ of these ideas are decisions and which are still open.
   minus upkeep, so a bigger colony is powerful *and* expensive to run" is exactly
   the tax that turned out to be wrong. The only survivor is drone maintenance as a
   per-colonist rate, and that is still `OPEN`.
-  section.
 - **Progressive scanning** (quick reveals type/owner/danger, detailed reveals
   population and production, scanner module reveals exact figures). This makes
   the unwired scanner module worth buying and gives the two existing scan paths a
@@ -972,9 +1183,11 @@ of these ideas are decisions and which are still open.
   levels*. The dilemma it was meant to create (attack a world mid-upgrade) is
   still latent: it only becomes reachable when invasion lands.
 - **Make level unlocks capabilities, not just bigger numbers.**
-- **Gas Giant identity.** At 0.6/0.6/0.4 it has no reason to exist, and "why
-  would I colonise this" is the right question. Fuel ties neatly into the energy
-  system that already exists.
+- ~~**Gas Giant identity.**~~ **The review was right and the answer was removal.**
+  It suggested fuel as an identity, at 0.6/0.6/0.4 the world had no reason to
+  exist. It turned out to have no reason to exist at *any* value: the class spec
+  gave it N-A on all three products, so it produced nothing regardless of the
+  multipliers the review was looking at. Deleting it answered the question.
 - **Planets affecting port prices**, and **port supply chains with distance /
   piracy / cargo constraints** — the strongest ideas in the review, because they
   make a planet's existence change the galaxy rather than fill a private box.
@@ -1082,9 +1295,10 @@ but not as described; **NOT BUILT** = designed only.
    costs were re-derived and the cap now scales with the tier. Builds are timed in
    game ticks. *Superseded entry: the earlier PARTIAL wording said defence did not
    scale and the cap was contradictory; both are fixed.*
-4. **PARTIAL — Scan before landing.** Scanning works and gates the screen. The
-   scanner-module auto-scan is unwired, and the two manual paths are
-   inconsistent (Code Audit #3).
+4. **PARTIAL — Scan before landing.** Scanning works and gates the screen, and
+   there is now **one** scan verb (`ScanService`, 1 energy, +1 standing with the
+   owner) shared by both entry points — the two prices and two copies are gone
+   (Code Audit #3, resolved). Still unwired: the scanner-module auto-scan.
 5. **DONE — Claiming & ownership.** Unclaimed planets can be claimed; owner and
    homeworld state drive map markers, repopulation control, and the screen.
 6. **DONE — Resource abundance.** Extraction rate scales with colonists, type,
@@ -1112,11 +1326,11 @@ Classic BBS-era planet system core mechanics:
 
 | Mechanic | Classic BBS | Our adaptation |
 |----------|--------|----------------|
-| Planet creation | Genesis Torpedo, random type, up to 3-5 per sector; Atomic Detonator to retry | Random gen at universe creation; Genesis Torpedo + Atomic Detonator are steps 4 of the Economy Redesign, with a 24h collision roll for over-stacking |
-| Planet types | 7 types (M/K/O/L/C/H/U) with different production multipliers | 10 types, each with production rate multipliers; **harsh types produce zero organics** rather than a small amount (Economy Redesign) |
-| Colonists | Brought from Terra (sector 1) in cargo holds | Per-faction from the faction's own homeworld, priced by distance; **the physical cargo-hold half is still not built** |
-| Production assignment | Assign colonists to Fuel Ore / Organics / Equipment tracks; per-type daily caps, past which nothing accumulates | Assign colonists to Minerals / Organics / Industrial tracks; per-type daily caps (step 5, not built) |
-| Citadel levels | 6 levels, each requires resources + colonists, takes real days (34-52) | 6 levels, each requires resources + colonists; a build takes 15-160 **game ticks** |
+| Planet creation | Genesis Torpedo, random type, up to 3-5 per sector; Atomic Detonator to retry | **Done.** Random gen at universe creation; Genesis Torpedo + Atomic Detonator shipped, with a **game-day** collision roll for over-stacking |
+| Planet types | 7 types (M/K/O/L/C/H/U) with different production multipliers | **6 of the 7 sourced classes implemented** + 4 derived = **10 types**. Class U is deliberately absent: its ratios are N-A on every product, so the world it described produced nothing at all (Economy Redesign). **Harsh types produce zero organics** rather than a small amount |
+| Colonists | Brought from Terra (sector 1) in cargo holds | Per-faction from the faction's own homeworld, priced by distance, plus a per-shipment energy cost; **the physical cargo-hold half is still not built** |
+| Production assignment | Assign colonists to Fuel Ore / Organics / Equipment tracks; per-type daily caps, past which nothing accumulates | **Done.** Minerals / Organics / Industrial tracks with steppers, plus per-type daily caps from the Production Triangle. Drones are *derived* from the three outputs, never staffed |
+| Citadel levels | 6 levels, each requires resources + colonists, takes real days (34-52) | 6 levels, each requires resources + colonists; a build takes 15-160 **game ticks** (~7.5 min to ~80 min of play) |
 | Defense | Fighter squadrons + Quasar Cannons per level (the classic term; this game calls them drones) | Shield/hull per level + special abilities (matching port defense model) |
 | Drone production | Colonists produce drones per day as passive output | Passive drone production per tick (stored on planet) |
 
@@ -1125,7 +1339,7 @@ Classic BBS-era planet system core mechanics:
 ```dart
 class Planet {
   final String name;
-  final String planetType;            // Terran, Jungle, Desert, Ocean, Ice, Lava, Gas Giant, Moon, Barren, Toxic
+  final String planetType;            // Terran, Jungle, Mountain, Desert, Ocean, Ice, Lava, Moon, Barren, Toxic
   final String atmosphere;            // N2-O2, CO2, Methane, Ammonia, Acid, Thin, None, Dense
 
   // Ownership
@@ -1134,6 +1348,18 @@ class Planet {
   FactionClass? homeworldOf;         // which faction's homeworld
   bool isBackupHomeworld;            // cold-standby capital (C4b)
   bool isDestroyed;                  // planet-killer path; permanently out of play
+
+  // Provenance — **who made it**, as distinct from who holds it.
+  //
+  // These are `final` and separate from `owner` because ownership moves
+  // constantly and none of those transfers create anything: you can fight a Guild
+  // world, win, and claim it, at which point `owner` is you and the world is still
+  // not yours. A reputation charge keyed on `owner` would then be **laundered by
+  // capturing first** — take the world, and the hit for blowing it up disappears.
+  // `final` is the guarantee rather than a convention: no screen or NPC can
+  // rewrite provenance.
+  final String? creator;             // who launched it, if anyone did
+  final FactionClass? creatorFaction;// whose faction to charge for its loss
 
   // Colony
   int population;                    // total colonists on planet
@@ -1164,9 +1390,18 @@ class Planet {
   int constructionTarget;            // the level the running build will produce
 
   // Resources needed for next level
-  // NOTE: these four fields are written by the generator but all gating reads
-  // levelUpCost.* from the static table instead — they are currently vestigial,
-  // and requiredColonists defaults inconsistently (1000 ctor vs 100 fromJson).
+  //
+  // **VESTIGIAL — do not read these.** Every gate goes through
+  // `levelUpCost.*` from the static table. The generator writes them and nothing
+  // reads them back, which means a retune of `levelUpCosts` silently leaves four
+  // stale numbers lying in every save.
+  //
+  // The defaults now agree (1,000 in both the constructor and `fromJson`); an
+  // earlier version had 1,000 vs 100, which is the kind of drift that makes a
+  // field look meaningful when it is not. The clean fix is deletion, and it has
+  // not been done because the generator still assigns them — see the note on
+  // `Sector.homeworld` for why a "first match wins" lookup is dangerous for the
+  // same reason.
   int requiredMinerals;
   int requiredOrganics;
   int requiredIndustrial;
@@ -1189,10 +1424,10 @@ class Planet {
   // Scanning
   bool scanned;                      // has this planet been scanned?
 
-  String id;                         // REQUIRED once a sector holds more than
-                                     // one world. (sectorId) stops being an
-                                     // identity the moment Sector.planet
-                                     // becomes a list.
+  String id;                         // Stable per-world identity. (sectorId) stopped
+                                     // being an identity the moment Sector.planet
+                                     // became a list — a name may duplicate, an
+                                     // id may not, so every surface keys on this.
 }
 ```
 
@@ -1224,12 +1459,37 @@ Colonist output per tick = `baseOutput * multiplier * productionEfficiency`.
 | **Ocean**   | Water world           | N2-O2   | 0.4      | 2.0      | 0.6        | 0.6      |
 | **Ice**     | Frozen wasteland      | Thin    | 0.8      | 0.4      | 0.6        | 0.8      |
 | **Lava**    | Volcanic, molten      | CO2     | 2.0      | 0.2      | 1.4        | 1.4      |
-| **Gas Giant**| Massive, gaseous     | Dense   | 0.6      | 0.6      | 0.4        | 1.0      |
+| **Mountain**| Highland, cold valleys| Thin    | 1.5      | 1.2      | 1.0        | 1.2      |
 | **Moon**    | Small rocky body      | None    | 1.0      | 0.4      | 0.6        | 0.8      |
 | **Barren**  | Rocky, lifeless       | None    | 1.2      | 0.2      | 0.8        | 1.0      |
 | **Toxic**   | Corrosive atmosphere  | Acid    | 1.6      | 0.3      | 1.0        | 1.2      |
 
-**Classic equivalents:** Terran→Class M, Jungle→Class M variant, Desert→Class K, Ocean→Class O, Ice→Class C, Lava→Class H, Gas Giant→Class U, Moon→new, Barren→new, Toxic→new.
+**Classic equivalents:** Terran→Class M, Jungle→Class M variant, Desert→Class K, Ocean→Class O, Mountain→**Class L**, Ice→Class C, Lava→Class H, Moon→new, Barren→new, Toxic→new.
+
+**There are ten types, and Mountain is the sixth *sourced* class.** It was
+missing for a while in a way worth recording: the Production Triangle table below
+listed **L Mountain** (ratios 2/5/20, max 40,000, 1,250 fighters/day) as one of
+the seven TradeWars classes, while `planet_classes.dart` had no entry for it —
+so the document was right about a thing the code did not have, and the claim
+"all seven reproduce their published figure exactly" was true of six. Adding the
+spec made that true of all seven the game had; removing Class U took it back to
+six. Its three images are the old `Unknown_World_*.gif`
+files, renamed to `Mountain_World_*.gif`; they had been **orphaned**, since
+`imagePool` had no `Unknown` key and the `Unknown` class spec is a private
+fallback rather than a real type.
+
+**Mountain is not a harsh world.** Its organics ratio is 5, which is productive
+(the harsh set is Lava / Barren / Toxic / Ice / Moon, all at 0), so all three
+workforce steppers stay live. What distinguishes it is that it is *balanced* —
+its biggest peak is ore at 10,000/day, against organics 4,000 and equipment
+1,000 — and productive everywhere rather than excellent at one thing.
+
+**Its citadel costs are authored, not sourced.** TW2002 published no Class L
+build table, so the six tiers are modelled on Class K (same `maxColonists`, same
+ore ratio) with organics and equipment pulled down, because Mountain grows them
+an order of magnitude more efficiently and a build should not demand imports the
+world can make for itself. `sourced: true` is accurate for the triangle and
+deliberately not claimed for those six rows — retune them freely.
 
 **SUPERSEDED — the Organics column.** The values above are the *shipped* table.
 Per the Economy Redesign, Lava / Barren / Toxic / Ice / Moon go to **0.0**
@@ -1263,8 +1523,11 @@ This is a design decision, not a limitation. The classic game's 34-52 *day* buil
 were acceptable in a persistent online world where every other colony was decaying
 while you slept. This is single-player, and a wall-clock deadline would mean
 quitting for a week silently finishing every build and nothing else: the player
-would come back advanced past a galaxy that had stood still. Counting ticks keeps
-the player and the NPCs on one clock.
+would come back advanced past a galaxy that had stood still.
+
+This is the same rule as everything else in the game — see *The game clock*. It is
+worth stating as the *original* case, though: builds were the first thing that had
+to be expressed in ticks, and every other clock was ported afterwards.
 
 | Transition | Base ticks | At the 30s tick |
 |------------|-----------|-----------------|
@@ -1404,7 +1667,7 @@ Planet type stays a strategic identity rather than an early-game mistake.
 
 **RESOLVED: both, not either.** The costs were cut *and* `colonistMax` now scales
 with the level. Either alone would have left the other as a wall — cutting costs
-to fit a fixed 100,000 cap makes a Gas Giant a Citadel, and raising caps to fit
+to fit a fixed 100,000 cap makes an Ice world a Citadel, and raising caps to fit
 1,000,000 colonists makes the top two steps unaffordable for everyone. The
 reasoning that settled it:
 
@@ -1467,12 +1730,41 @@ the two systems cannot disagree. Per-shipment rather than per-unit means batchin
 pays: a thousand colonists in one shipment costs the same fuel as ten shipments of
 a hundred, and energy is the throughput limiter on how far an empire can spread.
 
-**There is deliberately no transit timer.** The obvious alternative is "pay, then
-wait for the colonists to land". That worked in the game this is drawn from
-because it was online and every other colony was decaying while you slept. This
-game is single-player with local saves, so a transit bar is not a strategic cost
-— it is the player watching a bar for no reason, which is exactly the tedium the
-design is trying to remove. A price rises whether or not you are looking.
+**There IS a transit timer — this reverses an earlier decision.** It used to read
+"there is deliberately no transit timer", on the reasoning that a transit bar is not a
+strategic cost in a single-player game and is therefore tedium. That reasoning was about
+the *cost* argument and it still holds, but it missed what the player actually sees.
+Buying 2,000 colonists used to edit the population figure under the cursor and nothing
+else, and on a large colony that edit was not even legible — see the note on formatting
+below. The purchase read as nothing happening. Two ticks (`Planet.colonistTransitDelayTicks`,
+one real minute at 30s a tick) is long enough to be a departure you watch and short
+enough that nobody comes back later wondering whether it went through. It is not a
+logistics puzzle and it is not a risk: credits are charged at the moment of ordering,
+because a purchase the player is unsure they can cancel is worse than a purchase that
+already happened.
+
+The colony card shows a **determinate progress panel** while one is in the air — the same
+treatment as the citadel-build bar, because a shipment is the same kind of thing: work
+already paid for that advances one step per game tick. Amber, bordered, with the headcount,
+a bar that fills, and `Arriving in 30s (~1 min)` rendered through `GameClock.format` so it
+is honest about tick resolution rather than inventing a seconds-precise countdown.
+
+It was a plain text row first, and a player who had just spent credits on 100 colonists
+reported "**nothing happens on the planet screen**". Three things made that literally true
+on screen: a one-line row among the stat figures does not read as an event; sitting
+*between* `Reserve` and `Supply draw` made it look like one more figure; and the recruit
+also wrote an action-log line, so the only acknowledgement the game offered was in a panel
+the player was not looking at. **The recruit now writes no log line at all** — a local
+transaction with a local progress bar does not also need narrating into the galaxy-wide
+feed. The panel is its own bordered block below the stats, appears on purchase and
+disappears on arrival, which is the signal.
+
+**Two things had to be true for the arrival to work at all, and both are guards now.**
+Transit is advanced *before* the `population <= 0` skip in the tick — the one world
+guaranteed to be buying its first colonists is a world with no colonists, so behind that
+check the first shipment would never land. And `advanceColonistTransit` lands a shipment
+whose countdown is already spent rather than trusting the invariant, because a
+paid-for shipment stranded forever is the exact failure the row exists to end.
 
 **Bulk goods are not priced by distance.** A raw ore run is not worth taxing per
 tonne, and levelling a planet should not be a second grind on top of populating
@@ -1489,21 +1781,53 @@ at any distance was worth the same to build.
   organics and must import or plant a complement. `organicsUpkeep` and the
   starvation path are deleted, not retuned.
 
-### Assigning Colonists
-When viewing a claimed planet, player can assign colonists to tracks:
-- **Minerals** — `colonistsMinerals * mineralMultiplier * efficiency * levelMult`
-- **Organics** — `colonistsOrganics * organicMultiplier * efficiency * levelMult`
-- **Industrial** — `colonistsIndustrial * industrialMultiplier * efficiency * levelMult`
-- **Drones** — `colonistsDrones * droneMultiplier * efficiency * levelMult`
+### Assigning Colonists — **the UI exists**
 
-Total assigned colonists cannot exceed `population`. *(The model carries the four
-track counts and the screen displays them, but there is no assignment UI — the
-tracks are only ever set by the generator for homeworlds.)*
+**The colony card is not gated on having colonists.** It used to be hidden entirely at
+`population == 0`, on the reasonable-sounding assumption that a world with no colony has
+nothing to say. The cost is that "no colonists" and "the panel is broken" render
+identically — as *nothing* — and the world most likely to be buying its first shipment is
+the world with no panel to show it arriving in. An empty state is not an absent state.
 
-`levelMult` is the per-level extraction multiplier from the table above; it does
-not exist yet.
+Three tracks with steppers, plus an implicit reserve:
 
-### Production Formula
+- **Minerals**, **Organics**, **Industrial** — staffed, and the only place a
+  colony's workforce decision is made.
+- **Drones** — **not staffed.** Drones are *derived*: a day's output is
+  `(ore + organics + equipment) / colonistsPerDrone`. There is no drone track to
+  assign anyone to, and that is the point — see *The Production Triangle*.
+
+Total assigned colonists cannot exceed `population`; whatever is not on a track is
+the reserve. Each stepper names its source or destination in a tooltip, because a
+bare `+`/`−` pair on a row of numbers does not communicate that it moves people
+*between the reserve and the track*.
+
+**OPEN: the population readout can hide a purchase.** `planet_screen`'s `_formatNumber`
+compacts to one decimal (`1.2M`, `10.0K`), which is right for a store readout and wrong
+for a figure the player has just paid to change. Measured: at 1,200,000 or 4,200,000 a
++2,000 purchase renders **byte-identical** before and after — the credits leave, the
+transaction commits, and the screen shows nothing at all. This was reported as "the
+credits were deducted and I don't see them anywhere", and it is not a data bug: the
+colonists land, they are simply invisible. The fix is to show exact figures on the
+population and reserve rows, keeping the compacted form for stores. Not done here
+because it changes how every existing colony reads.
+
+**A dead track locks itself.** On a harsh world the organics stepper is disabled
+and the rate column reads "cannot produce" — a stepper that accepts colonists onto
+a track yielding nothing looks like a bug. Remove stays enabled even there, so a
+colony generated before its world became incapable is not stuck holding colonists
+who will never work again.
+
+### Production Formula — **superseded by the Production Triangle**
+
+> The linear formula below was the original design and it is **no longer what the
+> code does**. It is kept because the storage work below was built against it and
+> the reason it was replaced is load-bearing. The live rule is the triangle in
+> *The Production Triangle*: output **rises to a peak at half the track maximum and
+> then falls to zero at the maximum**, so overstaffing a track destroys output you
+> already had. This formula only ever rose, which is why a colony could be scaled
+> without limit.
+
 ```
 outputPerTick = colonistsOnTrack * typeMultiplier * efficiency * development
                  * Planet.baseOutputPerColonist
@@ -1513,25 +1837,55 @@ outputPerTick = colonistsOnTrack * typeMultiplier * efficiency * development
 lever. It exists because the original per-tick figures were orders of magnitude
 larger than any storage number could be sane against: a full Terran colony turned
 out 1,600,000 minerals a tick against a 200,000 store and filled it in 0.6 ticks.
-Upkeep is divided by the same constant, so output and upkeep move together and
-every ratio in this design is unchanged — a colony still breaks even with one
-tenth of its population on organics.
-
-Example: 100 colonists on Minerals on a Lava planet (2.0x) at 1.0 efficiency,
-level 1: `100 * 2.0 * 1.0 * 1.0 * 0.01 = 2 minerals per tick`. At level 6
-(2.0x development): 4.
 
 > When the scale was first corrected, upkeep was **divided** by the new constant
-> instead of multiplied, which inflated food costs a thousandfold and made a
-> colony unable to feed itself at any workforce size. Both are now expressed
-> against the same constant.
+> instead of multiplied, which inflated food costs a thousandfold and made a colony
+> unable to feed itself at any workforce size. Both are now expressed against the
+> same constant — though upkeep itself has since been removed, so that pairing no
+> longer exists.
+
+### FIXED — the production carry was not persisted
+
+**`productionRemainder` is the sub-unit fraction of each tick's output**, and it is
+load-bearing: a Volcanic ore track peaks at 17.36 units/tick and a Glacial organics
+track at 0.17, so without a carry **any track under 2,880 units/day banks nothing at
+all, ever**.
+
+It was a bare `= {}` with no `toJson`/`fromJson` entry, and the tick re-parses the
+universe every pass — so every planet arrived with an empty remainder and
+`floor(0 + perTick)` was computed forever. Measured across all 26 producible tracks:
+
+| | before | after |
+|---|---|---|
+| tracks banking exactly zero per day | **13 of 26** | 0 |
+| worst loss vs the displayed figure | **−100%** | 0% |
+| tracks able to self-supply a level 1→2 | **none** | all |
+
+The 8% residual between displayed and banked is the colony supply bill, which is
+the intended drain.
+
+Two consequences worth naming, because both were invisible:
+
+- **The harsh-type design was erased.** Lava / Barren / Toxic / Ice / Moon produce
+  zero organics *on purpose* — a considered decision so those worlds are *incapable*
+  rather than expensive. With Terran also banking zero there was no longer a
+  distinction to make.
+- **The colony card lied.** It displays `outputPerDayFor`, which by design does not
+  consume the remainder, so it read as though the colony were earning the full
+  figure while the store never moved.
+
+**Why 965 tests missed it:** every production test held **one long-lived `Planet`**
+across its 2,880 ticks, which is exactly the condition under which the bug cannot
+appear. Guarded now by `test/planet_production_reload_test.dart`, which drives the
+real path — mutate, save, reload, repeat — for every producible track.
 
 ### Storage — implemented, and nothing is wasted
 
 Storage is **per commodity** and **differentiated by type**, replacing the single
 `maxStorage` every world shared. Modelled on the classic game's per-product
 limits, which are wildly uneven (Volcanic 1,000,000 ore / 10,000 organics;
-Oceanic 1,000,000 organics / 50,000 equipment; Vaporous 10,000 of everything).
+Oceanic 1,000,000 organics / 50,000 equipment; source Class U 10,000 of
+  everything — a citation of the table's shape, not a type in this game).
 Drones are not a classic product, so their store is derived from the mineral
 store rather than given a hand-picked row that could drift.
 
@@ -1557,10 +1911,11 @@ multiplied, which inflated food costs a thousandfold. Both are now expressed
 against `Planet.baseOutputPerColonist`, and every ratio in the design is
 unchanged because output and upkeep move together.
 
-Upkeep also draws from the shipment pool as well as the working store. Food
-already produced and awaiting collection is still food; without that, a poor-
-organics world could starve on an empty store while tens of thousands of organics
-sat unclaimed beside it.
+**The supply bill draws from the shipment pool as well as the working store.**
+Goods already produced and awaiting collection are still goods; without that, a
+poor-organics world would be told it could not feed itself while tens of thousands
+of organics sat unclaimed beside it. (This paragraph said "starve" — written while
+starvation existed, and now describing the supply bill instead.)
 
 ### Upkeep and starvation — REMOVED
 
@@ -1621,9 +1976,12 @@ population 10,000-15,000 split across the four tracks (3k/3k/2k/2k), starting
 stores 5,000/3,000/2,000/500, `spawnInterval` 10 ticks, `productionTimer` seeded
 to 8 so the first ship arrives promptly, `scanned: true`.
 
-Note: the seeded `requiredColonists` of 500,000 is unreachable for every Duran
-homeworld type (see Code Audit #3). Harmless while NPC planets never level, but
-it should be corrected when levelling grants are implemented.
+Note: the generator seeds `requiredColonists` at 500,000, which is unreachable
+for every Duran homeworld type. **This is now moot and the field is vestigial**
+(see the model sketch above): all gating reads `levelUpCost.requiredColonists`
+from the static table, and the per-tier cost figures were re-derived. It was
+written when levelling grants did not exist; the fix it asked for has been made
+somewhere else, and the note outlived the problem.
 
 ### NPC Ship Spawning — implemented
 Two independent paths, both in `GameTickService`:
@@ -1655,9 +2013,9 @@ homeworld status, ownership, and spawn timers, and sets `isDestroyed` so nothing
 re-attaches regeneration to it. Stale timers are zeroed deliberately, so a future
 reader who forgets the `isDestroyed` check cannot schedule ghost spawns.
 
-**The trigger is not built yet** — this is the planet-killer path with nothing
-pointed at it, since invasion combat (Phase H) does not exist. `destroy()` is
-currently only reachable from code and tests.
+**The trigger now exists** — the Atomic Detonator calls it, and the gravity
+collision roll is a second path. Invasion (Phase H) remains the only way to take a
+world *without* destroying it.
 
 ### Backup Homeworld Claiming — not implemented
 The model flag, generator seeding, and control-gating logic all exist; what is
@@ -1670,32 +2028,35 @@ See Proposed Mechanics.
 
 ### Navigation
 - **Planets** is its own tab button on the left nav bar/rail, directly below Ports.
-- Tab index in `GameShell`: 6 (after Settings) or re-sequenced.
-- Shows planet in current sector, or "No planet in this sector."
+- Tab index in `GameShell`: **5**. Settings is 6 and is deliberately *not* in the
+  nav bar — it is reached from the AppBar gear or the rail's last button.
+- Shows the selected world in the current sector, or a prompt when the sector has
+  none. With three worlds per sector there is a **selection**, keyed on `Planet.id`.
 
 ### Entry Point
-- "Land on Planet" button on tactical map / sector interaction panel.
-- Only visible when `sector.planet != null` — **becomes `sector.planets.isNotEmpty`**
-  once sectors hold more than one world.
+- "Land on Planet" button on the tactical map / sector interaction panel.
+- Visible when `sector.hasPlanet` — which is derived from `planets.isNotEmpty`.
 - If the planet is not scanned, the button scans it; once scanned it opens the
   planet screen.
 - **Scanning costs energy, not turns** — this document predates the B1
-  turn -> energy migration. Two paths exist and they are not equivalent: the
-  sector panel's quick scan costs 1 energy, the planet tab's full scan costs 4
-  and additionally grants +1 standing with the owner. Both set the same `scanned`
-  flag and reveal the same detail, which makes the expensive path strictly
-  dominated — see Code Audit #4.
+  turn -> energy migration. There is now **one** scan, not two: `ScanService`,
+  1 energy, +1 standing with the owner, shared by the planet tab and the sector
+  panel. See Code Audit #3.
 
 ### Planet Screen Layout
 
 **Unscanned:**
 ```
 ┌─────────────────────────────────────┐
-│  [Scan Planet] (4 energy)             │
+│  [Scan Planet] (1 energy)             │
 │  Planet detected in this sector.    │
 │  Requires scan to identify.         │
 └─────────────────────────────────────┘
 ```
+
+(The wireframe said 4 energy. There is now **one** scan and it costs 1 —
+see Code Audit #3. The wireframes below are illustrative and have drifted
+from the current layout; the *facts* in them are what this document is for.)
 
 **Scanned, unowned:**
 ```
@@ -1744,19 +2105,19 @@ See Proposed Mechanics.
 └─────────────────────────────────────┘
 ```
 
-### The Transfers Panel — BOTH BUTTONS NEED REWRITING
+### The Transfers Panel — **DONE**
 
-**The `Dep` and `Wdr` buttons are not transfers and do not behave as described
-anywhere in this document.** `Dep` debits credits and energy and then credits the
-goods into the planet's store without ever touching `player.cargo`; `Wdr` does the
-reverse and does not charge energy at all. Neither is bounded by `maxCargo`. They
-are credit<->goods converters wearing the label of a haul, and they are why
-`_transferPrices` exists at all.
+> **This section described a defect that has been fixed.** The `Dep`/`Wdr` buttons
+> really were credit<->goods converters that never touched `player.cargo` and were
+> unbounded by `maxCargo`, and `_transferPrices` really did exist to price them.
+> All of that is gone. The rewrite is kept because the reasoning behind it — what
+> the buttons must do instead — is the part worth carrying forward.
 
-Per the Economy Redesign, the panel becomes three distinct verbs:
+The panel is three distinct verbs:
 
-1. **`Dep`** — cargo -> planet store. No cost. Bounded by what is in the hold.
-2. **`Wdr`** — planet store -> cargo. No cost, **bounded by `maxCargo`**. This is
+1. **`Unload`** — cargo -> planet store. No cost. Bounded by what is in the hold
+   **and** by the world's remaining store capacity.
+2. **`Load`** — planet store -> cargo. No cost, **bounded by `maxCargo`**. This is
    the number that makes a hauler worth flying.
 3. **Market** — buy at a port into cargo, or sell from cargo for credits. A third
    verb, with its own panel, and the only one that moves credits.
@@ -1771,9 +2132,9 @@ and no cash value.
 Only the colonists row is unusual, and deliberately so:
 
 - Its price is **not** a flat rate. It is a function of distance from the
-  faction's homeworld, and the row used to display the whole explanation
-  inline — `5.4K / 200.0K  405cr · 9 hops from Vionis`. That is a sentence in a
-  number cell, and at phone width the meaningful half ellipsised away.
+  faction's homeworld, and the row used to display the whole explanation inline —
+  `5.4K / 200.0K  405cr · 9 hops from Vionis`. That is a sentence in a number cell,
+  and at phone width the meaningful half ellipsised away.
 - So the row now shows **just the price**, and an amber info bubble beside the
   "Colonists" label carries the explanation: the source world, the hop count,
   and the per-shipment energy cost. Hover on desktop, tap on mobile.
@@ -1817,13 +2178,21 @@ Assets in `assets/images/planets/`. Each type has 3 images, picked randomly at u
 | Ocean       | `Ocean_World_1.gif`, `Ocean_World_2.gif`, `Ocean_World_3.gif` |
 | Ice         | `Ice_World_1.gif`, `Ice_World_2.gif`, `Ice_world_3.gif` |
 | Lava        | `Lava_World_1.gif`, `Lava_World_2.gif`, `Lava_World_3.gif` |
-| Gas Giant   | `Gas_Giant_1.gif`, `Gas_Giant_2.gif`, `Gas_Giant_3.gif` |
+| Mountain    | `Mountain_World_1.gif`, `Mountain_World_2.gif`, `Mountain_World_3.gif` |
 | Moon        | `Moon_1.gif`, `Moon_2.gif`, `Moon_3.gif` |
 | Barren      | `Moon_1.gif`, `Moon_2.gif`, `Moon_3.gif` (reuses Moon pool) |
 | Toxic       | `Toxic_World_1.gif`, `Toxic_World_2.gif`, `Toxic_World_3.gif` |
-| Unknown     | `Unknown_World_1.gif`, `Unknown_World_2.gif`, `Unknown_World_3.gif` |
 
 > **Case note:** `Ice_world_3.gif` has lowercase `w`. Account for this in asset loading.
+
+> **There is no `Unknown` pool**, and there never was. The
+> `Unknown_World_*.gif` files sat in the folder unreferenced until they were
+> renamed for Mountain. The `Unknown` *class* spec in `planet_classes.dart` is a
+> private fallback for a type with no entry — it produces nothing at all, on
+> purpose — not a world anyone can generate. A world whose type has no image
+> pool now gets `imagePath: null` and renders nothing, which both planet views
+> already handle; the generator used to return a bare `'Unknown_World_1.gif'`
+> with no directory prefix, so it named a file that could not resolve.
 
 Planet names drawn from 100-name pool (user-provided list) instead of current `_planetName()`.
 
@@ -1836,17 +2205,17 @@ Planet names drawn from 100-name pool (user-provided list) instead of current `_
 Ranked by value against effort. The first two are what stand between the planet
 screen and being truthful.
 
-### 1. Make production real, and pay upkeep — DONE
+### 1. Make production real, and pay upkeep — DONE, **then the upkeep was removed**
 
 Shipped. The formula moved onto `Planet.produce` as the single source, read by
-both the tick and the screen, and upkeep is charged after production so a
-self-sufficient colony is stable. Zero measured waste across all ten types over
-1,000 ticks.
+both the tick and the screen. Zero measured waste across all ten types over 1,000
+ticks.
 
-The failure mode chosen was **starvation** over a clamp to zero: an un-fed
-colony bleeds and eventually dies out. A clamp would have made overpopulation
-consequence-free, and revolt was judged too much for the first slice. Revolt
-remains the better long-term design and is listed as item 9 below.
+The upkeep half of this item **was subsequently removed**, along with the
+starvation failure mode it introduced — both described here are gone. A per-capita
+tax turned out to make harsh worlds worse Terran worlds, and the fix was to make
+those worlds *incapable* of producing one commodity rather than taxed on all three.
+See *DECISION — harsh types cannot produce a commodity at all*.
 
 ### 2. Give levels something to grant — DONE
 
@@ -1863,7 +2232,7 @@ of the ten types can reach every tier.
 
 **The market brake is already built and correctly sized, and the UI was hiding
 it.** Each port has a finite `maxDemand` per commodity that refills over a
-24-hour cycle, and port storage upgrades multiply it by 1.5x per level up to
+game-day cycle, and port storage upgrades multiply it by 1.5x per level up to
 level 10, costing 100,000 credits and doubling each time. Measured across a
 100-sector universe: **~1.24M minerals of demand per day** across 25 buying
 ports, worth ~52M credits at mid-range.
@@ -1922,21 +2291,29 @@ faster than anything can absorb them.
 
 Requires the Atomic Detonator to be worth anything — with a random type, the
 detonate-and-retry loop is the mechanic, and it is what makes the torpedo a
-*sink* rather than a *purchase*. Also carries a 24h collision roll when a sector
+*sink* rather than a *purchase*. Also carries a game-day collision roll when a
+sector
 is over-stacked past its cap. See the Economy Redesign.
 
 ### 6. Invasion combat — LARGE
 
 `PortCombatScreen` is the pattern and the model already carries shield/hull/
-defenseLevel. Needed for ownership to have stakes, and it is the only thing that
-can call `Planet.destroy()`, which is currently unreachable from gameplay.
+defenseLevel. Needed for ownership to have stakes.
+
+It is **no longer the only path** to `Planet.destroy()` — the Atomic Detonator
+reaches it from gameplay, years earlier. That changes what invasion is for: it
+becomes the path that takes a world *without* destroying it, which is the only
+remaining thing a player cannot do.
 
 ### 7. Scanner-module auto-scan — SMALL
 
 The module already exists in `hardware_data.dart` and is unwired. Wiring it makes
-it a real purchase instead of a stat line, and it interacts with Code Audit #4:
-if the module scans for free on entry, the paid 4-energy full scan has a purpose
-again.
+it a real purchase instead of a stat line.
+
+It also interacts with the scan decision: there is now a single 1-energy scan
+(Code Audit #3, fixed), so the module's value has to come from removing the
+*cost*, or from the deeper reveal that does not exist yet — not from
+out-scanning a second, more expensive version of the same verb.
 
 ### 8. NPC colonisation — MEDIUM
 
@@ -1965,16 +2342,17 @@ grants (F) are what make the existing screen honest, and neither is large.
 
 ### DONE
 - **Phase E: Planet Production (Tick-Based)** — production tick, storage ceiling,
-  organic upkeep, starvation with a real failure state, and the workforce
-  rebalance. `PlanetProductionService` runs it once per tick.
+  and the workforce rebalance. `PlanetProductionService` runs it once per tick.
+  The organic upkeep and starvation half of this phase was **removed** after
+  landing; see the Economy Redesign. Colony supply replaced them.
   `test/planet_production_test.dart` (28 tests) and `test/planet_colony_ui_test.dart`
   (13 tests) guard it, including a displayed-rate-equals-applied-rate check so the
   original defect cannot return.
 - **Phase E-adjacent: Workforce assignment** — steppers on all four tracks plus
-  an implicit reserve, owner-only, with a starvation warning on the colony card.
-  Shipped *with* production rather than after it: without it a claimed planet has
-  nobody on any track and produces nothing, so production alone was unreachable
-  for a player.
+  an implicit reserve, owner-only, each with a tooltip naming its source or
+  destination. Shipped *with* production rather than after it: without it a claimed
+  planet has nobody on any track and produces nothing, so production alone was
+  unreachable for a player.
 - **Phase A: Model Replacement** — `planetType` String replaced `PlanetClass`;
   enhanced model, `toJson`/`fromJson`, type config maps, `Sector.planetType`
   removed.
@@ -2002,14 +2380,15 @@ grants (F) are what make the existing screen honest, and neither is large.
   real `constructionTicksRemaining` countdown.
 - **Phase H: Planet Combat** — not started. One of **two** paths to
   `Planet.destroy()`; the Atomic Detonator lands long before it.
-- **Multi-planet sectors** — not started, and now the **top priority**.
-  `Sector.planet` is `Planet?`; three worlds per sector requires a list, a
-  per-planet stable id, and a save migration. See the Economy Redesign.
-- **Per-type daily production caps** — not started. The classic mechanic, and the
-  missing half of the storage work: storage bounds what a colony can *hold*, a cap
-  bounds what it can *extract*.
-- **Genesis Torpedo + Atomic Detonator** — not started, plus the 24h collision
-  roll for over-stacking a sector past its cap.
+- ~~**Multi-planet sectors**~~ — **DONE.** `Sector.planets` is a list with a
+  per-planet id and a save migration; see *DECISION — multiple planets per
+  sector*. (This list said "not started" while the Economy Redesign section
+  200 lines above said DONE. A reader who trusted the shorter list would have
+  planned work that already shipped.)
+- ~~**Per-type daily production caps**~~ — **DONE.** `planet_classes.dart`; see
+  *The Production Triangle*.
+- ~~**Genesis Torpedo + Atomic Detonator**~~ — **DONE**, plus the collision roll
+  for over-stacking a sector past its cap.
 - **Resource market** — not started. Per-commodity port counterparties with `(i)`
   bubbles, then the exchange as an unlimited pressure valve at a spread that keeps
   ports strictly better in both directions.
@@ -2029,7 +2408,7 @@ grants (F) are what make the existing screen honest, and neither is large.
 7. Scanner auto-scan, NPC colonisation.
 8. **H** — invasion, which makes homeworld capture a real growth denial and gives
    ownership stakes. Note that `destroy()` no longer waits for it: the Atomic
-   Detonator reaches it years earlier.
+   Detonator reaches it years earlier, and the gravity roll with it.
 
 ---
 
@@ -2038,9 +2417,10 @@ grants (F) are what make the existing screen honest, and neither is large.
 - `lib/data/models/planet.dart` — the model (phase A landed; no longer
   pending replacement)
 - `lib/data/models/faction.dart` — FactionClass enum, faction lore with homeworld planet names
-- `lib/data/models/sector.dart` — Sector with a structured `Planet?`; `planetType`
-  string already removed. **The 1:1 `Planet?` is the blocker for the top-priority
-  change**; eight files read it and a per-planet id becomes mandatory with it.
+- `lib/data/models/sector.dart` — Sector with `List<Planet> planets` (up to
+  `planetsPerSector`, default 3) and a stable `Planet.id` per world; the
+  `planetType` string is long gone. **The 1:1 `Planet?` that used to block this
+  file is resolved** — see *DECISION — multiple planets per sector*.
 - `lib/data/models/universe_generator.dart` — phase 8 planet creation;
   `_createPlanet` (~1280) and `_setupHomeworld` (~1219)
 - `lib/services/repopulation_service.dart` — homeworld floors, production caps,
@@ -2053,12 +2433,24 @@ grants (F) are what make the existing screen honest, and neither is large.
 - `lib/screens/port_management_screen.dart` — pattern for planet management screen
 - `lib/widgets/sector_view_widgets/sector_interaction_panel.dart` — where "Land on Planet" / "Scan Planet" buttons go
 - `lib/data/models/ship_equipment_types.dart` — for scanner module
-- `lib/services/energy_service.dart` — `planetScanCost` (4) vs `quickScanCost` (1)
-- `lib/screens/planet_screen.dart` — colony card + workforce steppers, transfer-in
-  write, level-up UI, starvation warning, attack stub
-- `lib/services/planet_production_service.dart` — the per-tick colony pass
-  (production, upkeep and starvation; the upkeep and starvation parts are being
-  removed per the Economy Redesign)
+- `lib/services/game_clock.dart` — **the** clock. `GameClock.tick` is the only
+  notion of game time in the codebase; `ticksPerDay` (2,880) and
+  `ticksPerHour` (120) are the only period constants. Persisted on
+  `GameSettings.worldTick` on a 60-tick throttle, advanced by exactly one
+  caller (`GameTickService`). See *The game clock*.
+- `lib/services/scan_service.dart` — **one** scan verb: `EnergyService.scanCost`
+- `lib/data/models/port.dart` — `Port.regenTick(ticks)`, the tick-driven refill,
+  with a carried sub-unit remainder (`regenRemainder`) so a per-tick rate is
+  exact at any horizon. Driven by `GameTickService` and nothing else.
+  (1), shared by the planet tab and the sector panel. It replaces two prices for
+  one action (4 and 1), which made the expensive path strictly dominated
+- `lib/screens/planet_screen.dart` — colony card + workforce steppers, the
+  `Unload`/`Load` transfers, level-up UI, the **supply-unpaid** warning (not
+  starvation — nothing starves), attack stub
+- `lib/services/planet_production_service.dart` — the per-tick colony pass:
+  production, the storage floor, construction advance, the **supply bill**, and the
+  unpaid-supply tally. Upkeep and starvation are gone (removed per the Economy
+  Redesign, not "being" removed)
 - `lib/services/colonist_supply.dart` — per-faction colonist source, distance
   pricing, per-shipment energy; delegates source resolution to
   `RepopulationService.homeworldSectors` so the two cannot disagree
@@ -2077,8 +2469,7 @@ grants (F) are what make the existing screen honest, and neither is large.
   screen, and its progress is visible without leaving
 - `test/multi_planet_sector_test.dart` — three worlds per sector, the per-planet
   id, and that every service reads past slot 0
-- `lib/widgets/port_trade_view.dart` — the **correct** cargo pattern to copy for
-  planet `Dep`/`Wdr`: it moves units into `player.cargo` and respects `maxCargo`,
-  which is exactly what the planet screen does not do
-- `lib/widgets/sector_view_widgets/sector_interaction_panel.dart` — second scan
-  path (~203) and the planet detail dialog
+- `lib/widgets/port_trade_view.dart` — the cargo pattern the planet screen
+  **copied**: both move units into `player.cargo` and respect `maxCargo`
+- `lib/widgets/sector_view_widgets/sector_interaction_panel.dart` — one of the two
+  **call sites** of `ScanService`, plus the planet detail dialog

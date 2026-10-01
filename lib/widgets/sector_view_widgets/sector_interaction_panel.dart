@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart' hide Hero;
 import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/core/ui_scale.dart';
@@ -12,15 +10,16 @@ import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
-import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/avatar/npc_portrait.dart';
 import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/services/npc_ai/npc_chatter.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/npc_trade_dialog.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/scan_service.dart';
 
 const _factionIcons = {
   FactionClass.trader: Icons.shopping_cart_rounded,
@@ -39,14 +38,11 @@ class SectorInteractionPanel extends StatefulWidget {
   final VoidCallback? onLandOnPlanet;
 
   /// Universe settings, for post-death clone reissue in player combat and for
-  /// `planetsPerSector` when firing a Genesis Torpedo.
   final GameSettings settings;
 
   /// Worlds a sector may hold before a torpedo would over-stack it. Fixed at
   /// universe creation, so every sector in a given galaxy obeys the same
   /// physics.
-  int get worldCap => settings.planetsPerSector;
-
   const SectorInteractionPanel({
     super.key,
     required this.currentSector,
@@ -137,30 +133,6 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       ));
     }
 
-    // A torpedo is fired at an **orbit**, not at a world, so it gets its own
-    // entry rather than a button on some existing world. Shown whenever there
-    // is room, and kept when over-stacked: firing past the cap is allowed, it
-    // is just a warning (see `WorldForging`).
-    if (widget.player.genesisTorpedoes > 0) {
-      final used = s.worldSlotsUsed;
-      // Factual, not alarmed. This row used to turn red and read
-      // "LAUNCH (UNSTABLE)" past the cap, and a confirmation dialog stood
-      // between the player and the shot. The rules of over-stacking are fixed
-      // and known; repeating them at every launch trains the player to dismiss
-      // the warning without reading it. The slot count is still shown, because
-      // that is information rather than a caution.
-      entries.add(_SectorEntry(
-        id: 'genesis_${s.id}',
-        type: _EntryType.genesis,
-        label: 'LAUNCH TORPEDO',
-        detail:
-            'Creates a random world · ${widget.player.genesisTorpedoes} held '
-            '· $used/${widget.worldCap} slots used',
-        color: Colors.deepPurple.shade300,
-        icon: Icons.blur_circular_rounded,
-      ));
-    }
-
     return entries;
   }
 
@@ -233,11 +205,6 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       return;
     }
 
-    if (entry.type == _EntryType.genesis) {
-      _launchTorpedo();
-      return;
-    }
-
     if (entry.type == _EntryType.planet) {
       // Resolve by the entry's id, not by position. A tap on the third world in
       // the list has to open the third world, and "first match" would open the
@@ -246,7 +213,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
       if (planet == null) return;
 
       if (!planet.scanned) {
-        if (!EnergyService.canQuickScan(widget.player)) {
+        if (!EnergyService.canScan(widget.player)) {
           if (!mounted) return;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -255,7 +222,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
               builder: (ctx) => AlertDialog(
                 title: const Text('Scan Failed'),
                 content: Text(
-                  'Not enough energy remaining (${EnergyService.quickScanCost} required).',
+                  'Not enough energy remaining (${EnergyService.scanCost} required).',
                 ),
                 actions: [
                   TextButton(
@@ -268,14 +235,16 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
           });
           return;
         }
-        widget.onPlayerUpdate(
-          widget.player.spendEnergy(EnergyService.quickScanCost),
+        // The same verb the planet tab uses — same price, same standing, same
+        // log line. It used to skip the standing, which is not a defensible
+        // difference between two routes to the same action.
+        final result = await ScanService.scanPlanet(
+          player: widget.player,
+          planet: planet,
+          onPersist: () =>
+              UniverseStorage.instance.saveSectors([widget.currentSector]),
         );
-        planet.scanned = true;
-        await UniverseStorage.instance.saveSectors([widget.currentSector]);
-        ActionLogProvider.global.info(
-          'Scan complete: ${planet.name} — ${planet.planetType}',
-        );
+        if (result.performed) widget.onPlayerUpdate(result.player);
       }
 
       if (!mounted) return;
@@ -369,6 +338,13 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
         }
       }
       if (!mounted) return;
+      // What the pilot says, then who they are. Hailing is the one
+      // interaction available with *every* ship in the sector, so it is the
+      // cheapest place to make the galaxy feel inhabited — and the register
+      // is derived from the same hostility and standing rules the AI and the
+      // ports use, so a greeting can never contradict the simulation.
+      final disposition = NpcChatter.dispositionFor(npc, widget.player);
+      final greeting = NpcChatter.greeting(npc, disposition);
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -380,6 +356,14 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
+                Text(
+                  '"$greeting"',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+                const SizedBox(height: 12),
                 _detailRow('Ship', npc.shipName),
                 _detailRow('Faction', factionData.name),
                 if (hero != null) ...[
@@ -787,80 +771,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
     );
   }
 
-  /// Fires a Genesis Torpedo into this sector.
-  ///
-  /// The over-stack case asks first, and the dialog is unmissable on purpose: a
-  /// silent destabilisation that destroys a million-colonist colony overnight
-  /// reads as a bug, not as a risk the player chose to take.
-  Future<void> _launchTorpedo() async {
-    final sector = widget.currentSector;
-
-    final (result, world) = WorldForging.launch(
-      player: widget.player,
-      sector: sector,
-      cap: widget.worldCap,
-      rng: Random(),
-      nowMs: DateTime.now().millisecondsSinceEpoch,
-    );
-
-    if (result == LaunchResult.noTorpedoes) {
-      _toast('No Genesis Torpedoes. Hardware emporiums stock them.');
-      return;
-    }
-    if (world == null) return;
-
-    // The torpedo is consumed even when the launch over-stacks: the item was
-    // fired, and owning the risk is the whole point.
-    // No cargo accounting: a torpedo is equipment, not cargo, so a full hold is
-    // no reason to be short of one.
-    final spent = widget.player
-        .copyWith(genesisTorpedoes: widget.player.genesisTorpedoes - 1);
-    widget.onPlayerUpdate(spent);
-    await UniverseStorage.instance.saveSectors([sector]);
-    ActionLogProvider.global.trade(
-      'Genesis Torpedo fired in ${sector.name}: a new ${world.planetType} '
-      'world, ${world.name}',
-    );
-    widget.onRefreshNpcs?.call();
-    if (!mounted) return;
-    setState(() {});
-    _toast('${world.planetType} world created: ${world.name}');
-  }
-
-  void _toast(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(message, style: const TextStyle(fontSize: 12)),
-        duration: const Duration(seconds: 3),
-      ));
-  }
-
   Widget _interactionButtons(_SectorEntry entry) {
-    if (entry.type == _EntryType.genesis) {
-      // One button, because the action applies to the **orbit** rather than to
-      // any world in it — there is nothing to attach it to and nothing to choose
-      // between.
-      //
-      // This returning an empty box was a dead control. The row still went
-      // through the same select-then-act flow as every other entry, so selecting
-      // it revealed *no* way to fire: the torpedo was bought at an emporium,
-      // carried on the ship, and then unreachable. Nothing failed and no test
-      // failed, because the model, the service and the sector row were all
-      // correct — the gap was one missing widget in the middle.
-      return FilledButton.icon(
-        onPressed: _launchTorpedo,
-        icon: const Icon(Icons.blur_circular_rounded, size: 14),
-        label: const Text('Launch', style: TextStyle(fontSize: 11)),
-        style: FilledButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          backgroundColor: Colors.deepPurple.shade600,
-          foregroundColor: Colors.white,
-        ),
-      );
-    }
-
     if (entry.type == _EntryType.planet) {
       return Wrap(
         spacing: 6,
@@ -961,7 +872,7 @@ class _SectorInteractionPanelState extends State<SectorInteractionPanel> {
   }
 }
 
-enum _EntryType { hazard, anomaly, npc, planet, genesis }
+enum _EntryType { hazard, anomaly, npc, planet }
 
 class _SectorEntry {
   final String id;

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:crypto/crypto.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 import 'package:cosmic_trader/data/models/avatar_selection.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
@@ -69,7 +70,15 @@ class Player {
 
   // ── Banking ─────────────────────────────────────────────────
   final int bankBalance;
-  final DateTime? lastInterestTime;
+
+  /// Game tick at which interest was last paid out. Null = never.
+  ///
+  /// **Ticks, not a timestamp.** See `GameClock`. A DateTime here meant a
+  /// player who closed the game for a week came back to seven days of
+  /// interest for a week they never played, while a player who played seven
+  /// hours earned almost nothing — the rate depended on how the session was
+  /// cut up, which is not what a daily rate means.
+  final int? lastInterestTick;
 
   // ── Port Ownership ──────────────────────────────────────────
   final List<String> ownedPorts;
@@ -107,7 +116,24 @@ class Player {
   final Map<String, int> portHackFailures;
 
   /// Epoch timestamps for active port hack bans.
-  final Map<String, int> portHackBannedUntil;
+  /// Port name -> game tick at which its hack ban expires.
+  ///
+  /// **Ticks, not milliseconds.** These were epoch timestamps, which meant a
+  /// 24-hour ban was a ban the player cleared by quitting and reopening: the
+  /// stored deadline kept being compared against a clock that ran while the
+  /// game was closed, and the comparison was the only thing enforcing it.
+  final Map<String, int> portHackBannedUntilTick;
+
+  /// Game tick at which the current lottery day began, and how many of the
+  /// three allowed plays have been used.
+  ///
+  /// **Persisted**, which is the whole point and was the bug. Both of these
+  /// lived in the lottery widget's `State`, so the daily limit reset every
+  /// time the player left the tab — an unlimited number of plays by dipping
+  /// in and out. A rate limit that resets when you look away is not a rate
+  /// limit. See `GameClock` for why the deadline is ticks.
+  final int lotteryPeriodStartTick;
+  final int lotteryPlaysThisPeriod;
 
   /// Security profile of the most recent successful hack.
   final String? lastHackProfile;
@@ -115,10 +141,17 @@ class Player {
   /// Human-readable reward from the most recent successful hack.
   final String? lastHackReward;
 
-  // ── Notoriety ───────────────────────────────────────────────
-  /// Global reputation score (0.0 to 100.0).
-  /// Higher values make NPCs more aggressive and hostile.
-  final double notoriety;
+  // ── Reputation ───────────────────────────────────────────────
+  /// Global reputation, **signed**. Positive means the galaxy is inclined to
+  /// trust you; negative means it has a file on you.
+  ///
+  /// This replaces a `notoriety` field that started at zero and only ever rose
+  /// as a "how noticed are you" counter, clamped 0-100. That scale could not
+  /// express being well thought of at all — the best act and the worst pushed
+  /// the same direction — and "higher makes NPCs more aggressive" was true of a
+  /// threat scalar, not of a reputation. Ranged ±[Reputation.absMax] to match the
+  /// TradeWars ladder; see `alignment.dart`.
+  final double alignment;
 
   // ── Bounty kills ────────────────────────────────────────────
   /// Victim ids this player has destroyed (capped). The Bounty Board pays
@@ -165,7 +198,7 @@ class Player {
     required this.credits,
     required this.researchPoints,
     this.bankBalance = 0,
-    this.lastInterestTime,
+    this.lastInterestTick,
     this.ownedPorts = const [],
     this.scrapMetal = 0,
     this.genesisTorpedoes = 0,
@@ -178,10 +211,12 @@ class Player {
     this.hackedPorts = const [],
     this.lastHackAt,
     this.portHackFailures = const {},
-    this.portHackBannedUntil = const {},
+    this.portHackBannedUntilTick = const {},
+    this.lotteryPeriodStartTick = 0,
+    this.lotteryPlaysThisPeriod = 0,
     this.lastHackProfile,
     this.lastHackReward,
-    this.notoriety = 0.0,
+    this.alignment = 0.0,
     this.recentKills = const [],
     this.avatar,
   });
@@ -258,6 +293,17 @@ class Player {
         0;
   }
 
+  /// Moves reputation by [delta] and returns the new player.
+  ///
+  /// The single way alignment changes. Two reasons it is not left to a bare
+  /// `copyWith(alignment: x + n)` at each call site: the clamp has to apply
+  /// everywhere, or a long enough career walks off the end of its own ladder and
+  /// the display has to invent an answer past the last rung; and the *sign* is
+  /// the thing most likely to be got wrong by hand, so [ReputationActions] holds
+  /// the signed values and callers pass one of those rather than a literal.
+  Player withAlignmentDelta(double delta) =>
+      copyWith(alignment: alignment + delta);
+
   Player withFactionStandingChange(FactionClass target, int delta) {
     final updated = Map<String, int>.from(factionStandings);
     updated[target.name] =
@@ -308,7 +354,7 @@ class Player {
     int? credits,
     double? researchPoints,
     int? bankBalance,
-    DateTime? lastInterestTime,
+    int? lastInterestTick,
     List<String>? ownedPorts,
     int? scrapMetal,
     int? genesisTorpedoes,
@@ -321,10 +367,12 @@ class Player {
     List<String>? hackedPorts,
     DateTime? lastHackAt,
     Map<String, int>? portHackFailures,
-    Map<String, int>? portHackBannedUntil,
+    Map<String, int>? portHackBannedUntilTick,
+    int? lotteryPeriodStartTick,
+    int? lotteryPlaysThisPeriod,
     String? lastHackProfile,
     String? lastHackReward,
-    double? notoriety,
+    double? alignment,
     List<String>? recentKills,
     AvatarSelection? avatar,
   }) {
@@ -361,7 +409,7 @@ class Player {
       credits: credits ?? this.credits,
       researchPoints: researchPoints ?? this.researchPoints,
       bankBalance: bankBalance ?? this.bankBalance,
-      lastInterestTime: lastInterestTime ?? this.lastInterestTime,
+      lastInterestTick: lastInterestTick ?? this.lastInterestTick,
       ownedPorts: ownedPorts ?? this.ownedPorts,
       scrapMetal: scrapMetal ?? this.scrapMetal,
       genesisTorpedoes: genesisTorpedoes ?? this.genesisTorpedoes,
@@ -374,10 +422,15 @@ class Player {
       hackedPorts: hackedPorts ?? this.hackedPorts,
       lastHackAt: lastHackAt ?? this.lastHackAt,
       portHackFailures: portHackFailures ?? this.portHackFailures,
-      portHackBannedUntil: portHackBannedUntil ?? this.portHackBannedUntil,
+      portHackBannedUntilTick:
+          portHackBannedUntilTick ?? this.portHackBannedUntilTick,
+      lotteryPeriodStartTick:
+          lotteryPeriodStartTick ?? this.lotteryPeriodStartTick,
+      lotteryPlaysThisPeriod:
+          lotteryPlaysThisPeriod ?? this.lotteryPlaysThisPeriod,
       lastHackProfile: lastHackProfile ?? this.lastHackProfile,
       lastHackReward: lastHackReward ?? this.lastHackReward,
-      notoriety: notoriety ?? this.notoriety,
+      alignment: Reputation.clamp(alignment ?? this.alignment),
       recentKills: recentKills ?? this.recentKills,
       // Mirrors every other field's `?? this.x` semantics. Note this means a
       // selection can never be set back to null through copyWith — which is
@@ -421,7 +474,7 @@ class Player {
       'credits': credits,
       'researchPoints': researchPoints,
       'bankBalance': bankBalance,
-      'lastInterestTime': lastInterestTime?.toIso8601String(),
+      'lastInterestTick': lastInterestTick,
       'ownedPorts': ownedPorts,
       'scrapMetal': scrapMetal,
       'scrapTech': scrapTech,
@@ -434,10 +487,12 @@ class Player {
       'hackedPorts': hackedPorts,
       'lastHackAt': lastHackAt?.toIso8601String(),
       'portHackFailures': portHackFailures,
-      'portHackBannedUntil': portHackBannedUntil,
+      'portHackBannedUntilTick': portHackBannedUntilTick,
+      'lotteryPeriodStartTick': lotteryPeriodStartTick,
+      'lotteryPlaysThisPeriod': lotteryPlaysThisPeriod,
       'lastHackProfile': lastHackProfile,
       'lastHackReward': lastHackReward,
-      'notoriety': notoriety,
+      'alignment': alignment,
       'recentKills': recentKills,
       'avatar': avatar?.toJson(),
     };
@@ -496,9 +551,11 @@ class Player {
       credits: json['credits'] as int? ?? 1000,
       researchPoints: (json['researchPoints'] as num?)?.toDouble() ?? 0.0,
       bankBalance: json['bankBalance'] as int? ?? 0,
-      lastInterestTime: json['lastInterestTime'] != null
-          ? DateTime.parse(json['lastInterestTime'] as String)
-          : null,
+      // A pre-clock save holds a wall-clock timestamp here. Read as nothing:
+      // there is no correct conversion to ticks, and guessing would either
+      // pay a year of interest on load or none at all. Starting unpaid is
+      // the safe reading and costs the player nothing they had.
+      lastInterestTick: (json['lastInterestTick'] as num?)?.toInt(),
       ownedPorts: (json['ownedPorts'] as List?)?.cast<String>() ?? [],
       scrapMetal: json['scrapMetal'] as int? ?? 0,
       genesisTorpedoes: json['genesisTorpedoes'] as int? ?? 0,
@@ -517,12 +574,32 @@ class Player {
           : null,
       portHackFailures:
           (json['portHackFailures'] as Map?)?.cast<String, int>() ?? const {},
-      portHackBannedUntil:
-          (json['portHackBannedUntil'] as Map?)?.cast<String, int>() ??
+      // A pre-tick save holds epoch milliseconds here. Dropped rather than
+      // converted: the units are not comparable, and guessing would either
+      // ban the player for years or free them instantly. Losing a ban on
+      // migration is the right direction — it costs a cooldown, where the
+      // alternative costs a fight they did not start.
+      portHackBannedUntilTick:
+          (json['portHackBannedUntilTick'] as Map?)?.cast<String, int>() ??
               const {},
+      // Absent in every pre-clock save. 0 means "period not started", which
+      // the widget reads as a fresh allowance — the same three plays a player
+      // would have had anyway, so migration cannot be used to buy extra ones.
+      lotteryPeriodStartTick:
+          (json['lotteryPeriodStartTick'] as num?)?.toInt() ?? 0,
+      lotteryPlaysThisPeriod:
+          (json['lotteryPlaysThisPeriod'] as num?)?.toInt() ?? 0,
       lastHackProfile: json['lastHackProfile'] as String?,
       lastHackReward: json['lastHackReward'] as String?,
-      notoriety: (json['notoriety'] as num?)?.toDouble() ?? 0.0,
+      // Migrated by **negating**. The old scale counted upwards for bad deeds;
+      // this one counts downwards for them, so a save written when the worst a
+      // pilot could be was "50" becomes −50 rather than being read as a good
+      // reputation. A player at exactly 0 is unaffected either way, which is
+      // most of them.
+      alignment: Reputation.clamp(
+        (json['alignment'] as num?)?.toDouble() ??
+            -((json['notoriety'] as num?)?.toDouble() ?? 0.0),
+      ),
       recentKills: (json['recentKills'] as List?)?.cast<String>() ?? const [],
       // Pre-avatar saves have no key at all. Staying null (rather than
       // backfilling) keeps the migration inert; `effectiveAvatar` resolves a
@@ -573,24 +650,48 @@ class Player {
   }
 }
 
-/// Extension on [Player] providing notoriety level helpers.
-extension NotorietyX on Player {
-  bool get isLowNotoriety => notoriety < 25.0;
-  bool get isMediumNotoriety => notoriety >= 25.0 && notoriety < 50.0;
-  bool get isHighNotoriety => notoriety >= 50.0 && notoriety < 75.0;
-  bool get isExtremeNotoriety => notoriety >= 75.0;
+/// Display helpers for a signed [Player.alignment].
+///
+/// The colour and the sign have to agree or the bar lies: a well-liked pilot
+/// whose reputation reads as alarming is worse than no readout at all.
+extension AlignmentX on Player {
+  ReputationSide get alignmentSide => Reputation.sideOf(alignment);
 
-  Color get notorietyColor {
-    if (isLowNotoriety) return Colors.green;
-    if (isMediumNotoriety) return Colors.yellow.shade700;
-    if (isHighNotoriety) return Colors.orange;
-    return Colors.red;
-  }
+  ReputationRank get alignmentRank => Reputation.rankFor(alignment);
 
-  String get notorietyLabel {
-    if (isLowNotoriety) return 'Low';
-    if (isMediumNotoriety) return 'Medium';
-    if (isHighNotoriety) return 'High';
-    return 'Extreme';
-  }
+  String get alignmentTitle => alignmentRank.titleFor(alignmentSide);
+
+  /// Next rank up in this direction, or null at the top of the ladder.
+  ReputationRank? get nextAlignmentRank => Reputation.nextRank(alignment);
+
+  int? get alignmentPointsToNext => Reputation.pointsToNext(alignment);
+
+  /// 0..1 through the current band.
+  double get alignmentProgress => Reputation.progressToNext(alignment);
+
+  /// Signed magnitude, because a bar drawn from zero has to grow either way.
+  double get alignmentMagnitude => alignment.abs();
+
+  /// How dangerous the galaxy finds this pilot: zero for the best-liked, rising
+  /// as alignment falls.
+  ///
+  /// Deliberately **one-sided**. Every consumer of the old `notoriety` was
+  /// asking "should I be afraid of this person", and under a signed scale the
+  /// honest answer for a well-liked pilot is not "equally not" but *less*: being
+  /// regarded is supposed to make you safer. Folding that into one number keeps
+  /// the three AI call sites from each re-deciding it.
+  double get threatRating => alignment <= 0 ? -alignment : 0.0;
+
+  Color get alignmentColor => switch (alignmentSide) {
+        ReputationSide.good => Colors.green.shade400,
+        ReputationSide.neutral => Colors.blueGrey,
+        ReputationSide.evil => Colors.red.shade400,
+      };
+
+  /// Plain-language reading of the sign, for the reputation card.
+  String get alignmentDescriptor => switch (alignmentSide) {
+        ReputationSide.good => 'Law-abiding',
+        ReputationSide.neutral => 'Unknown to the galaxy',
+        ReputationSide.evil => 'Notorious',
+      };
 }

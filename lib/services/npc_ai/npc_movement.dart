@@ -61,46 +61,51 @@ List<int>? nearestEmporiumPath(
   final enemies = _findLocalEnemies(npc, players, allNpcs);
   if (enemies.isEmpty) return null;
 
-  final myPower = _calculatePower(npc);
+  final myPower = CombatService.calculateFirepower(npc);
   for (final enemy in enemies) {
-    var theirPower = _calculatePower(enemy);
     // Fear: notoriety inflates perceived power. Infamous pilots clear
     // sectors by reputation — weaker ships leave rather than provoke.
-    theirPower = (theirPower * (1 + _notorietyOf(enemy) / 200)).round();
+    final theirPower = (enemy.power * (1 + enemy.notoriety / 200)).round();
     if (theirPower > myPower * 1.3) {
-      int? heading;
-      if (enemy is NpcShip) {
-        final goal = enemy.currentGoal;
-        if (goal != null &&
-            goal.status == NpcGoalStatus.travelling &&
-            goal.targetSectorId != null &&
-            goal.targetSectorId != enemy.currentSectorId) {
-          heading = goal.targetSectorId;
-        }
-      }
-      return (sector: enemy.currentSectorId as int, heading: heading);
+      return (sector: enemy.sector, heading: enemy.heading);
     }
   }
   return null;
 }
 
-double _notorietyOf(dynamic entity) {
-  if (entity is NpcShip) return entity.notoriety;
-  if (entity is Player) return entity.notoriety;
-  return 0;
-}
+/// A local hostile reduced to exactly the four facts threat-avoidance
+/// reads. A record rather than `dynamic` (review batch 4): the old
+/// `_calculatePower`/`_notorietyOf` pair type-tested the same object on
+/// every call, once per enemy per turn, and a type slip there would
+/// have silently scored power 0 — i.e. "nothing here is scary".
+///
+/// [heading] is the sector the enemy is *travelling* towards, resolved
+/// here while the object is in hand, so the flee decision never needs to
+/// re-acquire (or re-type-test) the ship. Null for players, who hold no
+/// NpcGoal.
+typedef _LocalEnemy = ({
+  int sector,
+  int? heading,
+  double notoriety,
+  int power,
+});
 
-List<dynamic> _findLocalEnemies(
+List<_LocalEnemy> _findLocalEnemies(
   NpcShip npc,
   List<Player> players,
   List<NpcShip> allNpcs,
 ) {
-  final enemies = <dynamic>[];
+  final enemies = <_LocalEnemy>[];
 
   for (final player in players) {
     if (player.currentSectorId == npc.currentSectorId &&
         NpcAiService._isHostileFaction(npc.faction, player.faction)) {
-      enemies.add(player);
+      enemies.add((
+        sector: player.currentSectorId,
+        heading: null,
+        notoriety: player.threatRating,
+        power: CombatService.calculatePlayerFirepower(player),
+      ));
     }
   }
   // Co-located candidates from the tick index when present (P2).
@@ -110,21 +115,21 @@ List<dynamic> _findLocalEnemies(
         other.currentSectorId == npc.currentSectorId &&
         !other.isDestroyed &&
         NpcAiService._isHostileFaction(npc.faction, other.faction)) {
-      enemies.add(other);
+      final goal = other.currentGoal;
+      final enRoute = goal != null &&
+          goal.status == NpcGoalStatus.travelling &&
+          goal.targetSectorId != null &&
+          goal.targetSectorId != other.currentSectorId;
+      enemies.add((
+        sector: other.currentSectorId,
+        heading: enRoute ? goal.targetSectorId : null,
+        notoriety: other.notoriety,
+        power: CombatService.calculateFirepower(other),
+      ));
     }
   }
 
   return enemies;
-}
-
-int _calculatePower(dynamic entity) {
-  if (entity is NpcShip) {
-    return CombatService.calculateFirepower(entity);
-  }
-  if (entity is Player) {
-    return CombatService.calculatePlayerFirepower(entity);
-  }
-  return 0;
 }
 
 NpcShip _setFleeGoal(
@@ -254,9 +259,10 @@ NpcShip _move(
     }
     if (path != null && path.length > 1) {
       final next = path[1];
-      GameEventLog.global
-          .movement('[${npc.pilotName}] ${steering.type.name}: Sector '
-              '${npc.currentSectorId} → Sector $next');
+      _logHop(
+          npc,
+          '${steering.type.name}: Sector '
+          '${npc.currentSectorId} → Sector $next');
       return npc.spendEnergy(cost).copyWith(
             currentSectorId: next,
           );
@@ -269,9 +275,31 @@ NpcShip _move(
 
   final next =
       current.warpRoutes[NpcAiService._rng.nextInt(current.warpRoutes.length)];
-  GameEventLog.global.movement(
-      '[${npc.pilotName}] Wander: Sector ${npc.currentSectorId} → Sector $next');
+  _logHop(npc, 'Wander: Sector ${npc.currentSectorId} → Sector $next');
   return npc.spendEnergy(cost).copyWith(
         currentSectorId: next,
       );
+}
+
+/// One line of per-ship movement, for the world feed.
+///
+/// **Every NPC moves every tick**, so writing these unconditionally is two
+/// string interpolations plus two ring inserts per ship per tick — 200 NPCs is
+/// 400 lines a tick, and the 2,000-entry ring turns over completely every few
+/// ticks, so the interesting entries (a kill, a port capture, a legend) are
+/// evicted by pilots changing lanes. It also means the string is built whether
+/// or not anyone is looking.
+///
+/// So a hop is written only when it is **newsworthy**, and "newsworthy" is
+/// decided by distance rather than by a flag: inside a player's earshot (the
+/// same 2-hop proximity the action log uses) a pilot visibly crosses the
+/// sector, and anywhere else the position is already implied by the ship
+/// being in that sector on the map. The interpolation only happens once the
+/// ship is known to be near somebody.
+///
+/// Trade, combat, banking, goal and distress lines are untouched — those are
+/// rare, and they are the content of the feed.
+void _logHop(NpcShip npc, String detail) {
+  if (!NpcAiService.isNearPlayer(npc.currentSectorId)) return;
+  GameEventLog.global.movement('[${npc.pilotName}] $detail');
 }

@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 
-const Duration _interestPeriod = Duration(hours: 24);
+// Interest accrues per **game day**, which is 2,880 ticks — a real day at the
+// default 30-second tick, and nothing at all while the game is closed.
+const int _interestPeriodTicks = GameClock.ticksPerDay;
 
 enum _BankStage { menu, deposit, withdraw }
 
@@ -83,18 +86,42 @@ class _BankingWidgetState extends State<BankingWidget> {
   // Interest
   // ---------------------------------------------------------------------------
 
+  /// Credits owed for the whole days elapsed since the last payout.
+  ///
+  /// Computed lazily from the elapsed tick count rather than accumulated a tick
+  /// at a time, so there is no rounding drift to carry. The port refill needs a
+  /// carried remainder precisely because it adds a fraction every tick; this
+  /// adds the whole elapsed amount in one go, so it is exact by construction.
   int _calculateInterest() {
-    final lastTime = widget.player.lastInterestTime;
-    if (lastTime == null) return 0;
+    final lastTick = widget.player.lastInterestTick;
+    if (lastTick == null) return 0;
 
-    final elapsed = DateTime.now().difference(lastTime);
-    if (elapsed < _interestPeriod) return 0;
+    final elapsed = GameClock.tick - lastTick;
+    if (elapsed < _interestPeriodTicks) return 0;
 
-    final days = elapsed.inMicroseconds / _interestPeriod.inMicroseconds;
+    // Whole days only — see `BankingAi.accrueInterest` for why paying for the
+    // fractional part while advancing the stamp by the whole part leaks.
+    final wholeDays = elapsed ~/ _interestPeriodTicks;
     return (widget.player.bankBalance *
             BankingWidget.rateFor(widget.player) *
-            days)
+            wholeDays)
         .floor();
+  }
+
+  /// Ticks the last payout consumed: **whole days only**, so the partial day
+  /// carries forward.
+  ///
+  /// The old code set the stamp to "now" and so threw the partial day away. A
+  /// player who visited every twelve hours got `floor(half) x 2` instead of
+  /// `floor(whole)` — quietly less than the advertised daily rate, and worse the
+  /// *more* often they checked in, which is backwards. Advancing by whole days
+  /// makes the total exact over any visit pattern.
+  int _ticksConsumed() {
+    final lastTick = widget.player.lastInterestTick;
+    if (lastTick == null) return 0;
+    final elapsed = GameClock.tick - lastTick;
+    if (elapsed < _interestPeriodTicks) return 0;
+    return (elapsed ~/ _interestPeriodTicks) * _interestPeriodTicks;
   }
 
   void _applyInterest() {
@@ -102,7 +129,7 @@ class _BankingWidgetState extends State<BankingWidget> {
     if (interest > 0) {
       widget.onPlayerUpdate(widget.player.copyWith(
         bankBalance: widget.player.bankBalance + interest,
-        lastInterestTime: DateTime.now(),
+        lastInterestTick: widget.player.lastInterestTick! + _ticksConsumed(),
       ));
       GameEventLog.global.banking(
         'Interest +$interest cr @ '
@@ -275,13 +302,13 @@ class _BankingWidgetState extends State<BankingWidget> {
       widget.onPlayerUpdate(widget.player.copyWith(
         credits: widget.player.credits - clamped,
         bankBalance: widget.player.bankBalance + clamped,
-        lastInterestTime: widget.player.lastInterestTime ?? DateTime.now(),
+        lastInterestTick: widget.player.lastInterestTick ?? GameClock.tick,
       ));
     } else {
       widget.onPlayerUpdate(widget.player.copyWith(
         credits: widget.player.credits + clamped,
         bankBalance: widget.player.bankBalance - clamped,
-        lastInterestTime: widget.player.lastInterestTime ?? DateTime.now(),
+        lastInterestTick: widget.player.lastInterestTick ?? GameClock.tick,
       ));
     }
 

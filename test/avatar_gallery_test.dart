@@ -15,6 +15,7 @@ import 'package:cosmic_trader/screens/ship_status.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_canvas.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_catalog.dart';
 import 'package:cosmic_trader/widgets/avatar/avatar_gallery.dart';
+import 'support/storage_fakes.dart';
 
 Player _pilot(
     {FactionClass faction = FactionClass.trader, AvatarSelection? avatar}) {
@@ -75,20 +76,6 @@ class _GalleryHostState extends State<_GalleryHost> {
 
 /// Fake universe storage so ShipStatusView finishes its loading state without
 /// touching the filesystem.
-class _FakeUniverseStorage extends UniverseStorage {
-  _FakeUniverseStorage(this.sectors);
-
-  final List<Sector> sectors;
-
-  @override
-  Future<void> ensureUniverse() async {}
-
-  @override
-  Future<List<Sector>> loadUniverse() async => sectors;
-
-  @override
-  void logSectorStats(List<Sector> _) {}
-}
 
 Sector _sector(int id, String name) =>
     Sector(id: id, name: name, x: id * 10.0, y: 0, warpRoutes: const []);
@@ -108,7 +95,7 @@ void main() {
       pathProviderChannel,
       (call) async => documentsDir.path,
     );
-    UniverseStorage.instanceForTest = _FakeUniverseStorage([
+    UniverseStorage.instanceForTest = ReadOnlyUniverse([
       _sector(1, 'Alpha Prime'),
       _sector(2, 'Beta Reach'),
     ]);

@@ -99,16 +99,30 @@ class ColonistSupply {
       );
     }
 
-    // The capital is whichever world in the sector is flagged as the homeworld,
-    // not simply the first one. A capital in slot 2 of a three-world sector is
-    // still the capital, and taking slot 0 would price colonists off a random
-    // frontier world — or find nothing at all.
+    // The capital is *this faction's* world in that sector, not the sector's
+    // first world flagged `isHomeworld`. A sector can hold more than one, and
+    // it can hold a backup for one faction beside a primary for another — so
+    // `s.homeworld`, which takes the first hit with no faction filter, returns
+    // the *Vinari* capital for a Duran query: right sector, wrong name, and
+    // `isBackup` false on a world that is precisely the reserve. The sector id
+    // came from `homeworldSectors`, which is per-faction, so the detail has to
+    // be resolved per-faction too or the two halves disagree.
+    //
+    // Primary before reserve, matching `homeworldSectors`' own preference.
     Planet? home;
-    for (final s in sectors) {
-      if (s.id == homeId) {
-        home = s.homeworld ?? s.primaryPlanet;
-        break;
+    for (final p in sectors) {
+      if (p.id != homeId) continue;
+      for (final candidate in p.planets) {
+        if (candidate.isDestroyed) continue;
+        if (candidate.homeworldOf != faction) continue;
+        if (!candidate.isHomeworld) continue;
+        if (!candidate.isBackupHomeworld) {
+          home = candidate;
+          break;
+        }
+        home ??= candidate;
       }
+      break;
     }
     return ColonistSource(
       sectorId: homeId,

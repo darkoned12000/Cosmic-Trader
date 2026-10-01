@@ -48,6 +48,40 @@ class UniverseStorage {
   /// data. Cleared by every successful or absent load.
   bool _lastLoadFailed = false;
 
+  /// Bumped once per **successful write**, so a screen holding the universe in
+  /// memory can learn that someone else changed it.
+  ///
+  /// Every screen keeps a private object graph, because [loadUniverse] re-parses
+  /// the file on each call, so two widgets reading "the same" sector are
+  /// mutating different `Planet` objects and only disk is shared. That is fine
+  /// for writes and wrong for reads: the Sector tab loaded the universe once in
+  /// `initState` and never re-read, so a Genesis Torpedo fired from the Ship
+  /// screen wrote to disk and the Sector Contents panel went on showing the
+  /// sector as it had been — a freshly paid-for world that did not appear until
+  /// you left the tab and came back. Each screen patched this locally where it
+  /// burned (the planet screen polls with `_syncFromDisk`), which cannot work
+  /// for a write made from a screen that knows nothing about the Sector tab.
+  ///
+  /// A revision counter rather than a shared in-memory universe because that is
+  /// the architectural fix and this is the cheap 90% of it: it costs one int
+  /// and it makes every *existing* write path announce itself, including writes
+  /// added later. Readers still re-parse, so this buys freshness, not shared
+  /// identity — two callers can still hold different `Planet` objects.
+  ///
+  /// Only successful writes bump it. A refused or failed write leaves the file
+  /// as it was, and telling readers to re-read would be a lie they cannot
+  /// check. Both write paths raise it — [saveUniverse] for direct callers, and
+  /// [saveSectors] as well — so a patched write is still announced by a test
+  /// double that replaces [saveUniverse].
+  final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  /// Announces a completed write. Separate from the notifier so the bump is
+  /// impossible to forget at a new call site: add a write, get a refresh.
+  void _markWritten() {
+    if (revision.value == 0x3fffffff) revision.value = 0;
+    revision.value = revision.value + 1;
+  }
+
   /// Clears a sticky load failure: generation authors brand-new truth.
   /// Called by [generateWithSettings].
   void clearLoadFailure() {
@@ -90,6 +124,10 @@ class UniverseStorage {
       final file = File(path);
       final content = jsonEncode(sectors.map((s) => s.toJson()).toList());
       await FileSafe.writeString(file, content);
+      // Only after the write resolves — a failed write leaves the file as it
+      // was, and a refresh signal would send readers looking for a change that
+      // does not exist.
+      _markWritten();
     } catch (e) {
       debugPrint('Error saving universe: $e');
     }
@@ -207,7 +245,7 @@ class UniverseStorage {
   /// Refuses when the preceding load failed or the base is empty
   /// (storage review C1/H1): patching onto a failed read would cement
   /// the emptiness over the good file.
-  Future<void> saveSectors(List<Sector> updatedSectors) async {
+  Future<bool> saveSectors(List<Sector> updatedSectors) async {
     try {
       final existing = await loadUniverse();
       if (_lastLoadFailed || existing.isEmpty) {
@@ -216,17 +254,41 @@ class UniverseStorage {
             'not overwriting the file');
         GameEventLog.global
             .system('[UniverseStorage] saveSectors refused ($reason)');
-        return;
+        // No bump: nothing was written, and the merge it refused to perform is
+        // exactly the case where a reader must keep believing what it has.
+        return false;
       }
       for (final updated in updatedSectors) {
         final idx = existing.indexWhere((s) => s.id == updated.id);
         if (idx >= 0) {
           existing[idx] = updated;
+        } else {
+          // **Never silent.** This used to be an `if` with no else, so a sector
+          // whose id was not in the freshly-read file was dropped and the write
+          // reported success — the caller had no way to know its change had not
+          // landed. Reported as "credits deducted, nothing happened".
+          debugPrint('[UniverseStorage] saveSectors: sector #${updated.id} is '
+              'not in the stored universe — dropped');
+          GameEventLog.global.system(
+            '[UniverseStorage] saveSectors: sector #${updated.id} not found — '
+            'change not written',
+          );
+          return false;
         }
       }
       await saveUniverse(existing);
+      // Also bumped here, not only inside `saveUniverse`, because that is where
+      // the signal logically belongs but it is also the seam test doubles
+      // replace. A fake that overrides `saveUniverse` and inherits the real
+      // `saveSectors` would otherwise silently stop announcing writes, and the
+      // guard for "does a write reach other screens" would go quiet without
+      // failing — a fake that disables the thing it is testing. Double-bumping
+      // the patched path costs one extra re-read attempt, and readers coalesce.
+      _markWritten();
+      return true;
     } catch (e) {
       debugPrint('Error patching sectors in universe: $e');
+      return false;
     }
   }
 

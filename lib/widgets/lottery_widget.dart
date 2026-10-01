@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -7,7 +8,9 @@ enum _LotteryStage { menu, picking, drawing, results }
 
 const int _ticketCost = 2500;
 const int _maxPlaysPerPeriod = 3;
-const Duration _periodDuration = Duration(hours: 24);
+
+/// One lottery day — **2,880 ticks**. See `GameClock`.
+const int _periodTicks = GameClock.ticksPerDay;
 const Map<int, int> _prizeTiers = {
   0: 0,
   1: 0,
@@ -39,8 +42,22 @@ class _LotteryWidgetState extends State<LotteryWidget> {
   List<String?> _revealedDigits = [];
   int _matches = 0;
   int _winnings = 0;
-  int _playsThisPeriod = 0;
-  DateTime _lastPlayTime = DateTime.now();
+
+  /// Plays used in the current lottery day, and the tick that day began.
+  ///
+  /// These used to be a local int and a `DateTime` **in this widget's `State`**,
+  /// so the daily limit reset every time the player left the tab: an unlimited
+  /// number of plays by dipping in and out. Both now live on `Player`, in ticks.
+  int get _playsThisPeriod => widget.player.lotteryPlaysThisPeriod;
+  int get _periodStartTick => widget.player.lotteryPeriodStartTick;
+
+  /// Ticks since the period began. A start of 0 means "never played" and reads
+  /// as 0 elapsed rather than as 2,880, so a player's first ever lottery opens
+  /// with a full allowance rather than being treated as already expired.
+  int get _ticksSincePeriodStart =>
+      _periodStartTick == 0 ? 0 : GameClock.tick - _periodStartTick;
+
+  bool get _periodElapsed => _ticksSincePeriodStart >= _periodTicks;
   Timer? _drawTimer;
   bool _exactOrder = false;
 
@@ -50,19 +67,23 @@ class _LotteryWidgetState extends State<LotteryWidget> {
     super.dispose();
   }
 
-  int get _playsLeft => _maxPlaysPerPeriod - _playsThisPeriod;
-
-  bool get _periodElapsed =>
-      DateTime.now().difference(_lastPlayTime) > _periodDuration;
+  int get _playsLeft =>
+      (_maxPlaysPerPeriod - _playsThisPeriod).clamp(0, _maxPlaysPerPeriod);
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    if (_periodElapsed) {
-      _playsThisPeriod = 0;
-      _lastPlayTime = DateTime.now();
+    // A new day resets the allowance. Written through to the player rather than
+    // to a local, which is the entire fix — the old line reset a field that only
+    // existed until this widget was rebuilt. Guarded on a non-zero start so the
+    // "never played" state does not write on every single build.
+    if (_periodElapsed && _periodStartTick != 0) {
+      widget.onPlayerUpdate(widget.player.copyWith(
+        lotteryPeriodStartTick: GameClock.tick,
+        lotteryPlaysThisPeriod: 0,
+      ));
     }
 
     switch (_stage) {
@@ -261,9 +282,13 @@ class _LotteryWidgetState extends State<LotteryWidget> {
   void _startDraw() {
     widget.onPlayerUpdate(widget.player.copyWith(
       credits: widget.player.credits - _ticketCost,
+      // Stamped on the *first* play of a period, not on every play. Stamping on
+      // every play would make the limit a rolling window that never closes —
+      // play every 20 minutes and the day never comes round.
+      lotteryPeriodStartTick:
+          _periodStartTick == 0 ? GameClock.tick : _periodStartTick,
+      lotteryPlaysThisPeriod: _playsThisPeriod + 1,
     ));
-    _playsThisPeriod++;
-    _lastPlayTime = DateTime.now();
 
     final available = List<String>.generate(10, (i) => i.toString());
     available.shuffle();

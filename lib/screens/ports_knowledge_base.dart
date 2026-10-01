@@ -98,7 +98,7 @@ class PortsKnowledgeBaseScreen extends StatelessWidget {
               '• Each prior successful hack adds a replay bonus, capped at 500 credits',
               '',
               'Consequences:',
-              '• Successful hacks and sabotage modify faction standing and notoriety',
+              '• Successful hacks and sabotage lower faction standing and your\n                reputation \u2014 reputation is signed, and bad deeds move it\n                down. Being well thought of makes NPCs less likely to\n                shoot at you.',
               '• The Hack Codex records successful ports, rewards, profiles, and timestamps',
               '',
               'Failure penalties:',

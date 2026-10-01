@@ -1,12 +1,10 @@
-import 'dart:convert';
-
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
-import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/ship_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/storage_fakes.dart';
 
 /// The Ship screen's cargo/equipment card.
 ///
@@ -23,28 +21,14 @@ import 'package:flutter_test/flutter_test.dart';
 /// inside the fake-async zone. The screen never leaves its spinner, and every
 /// content assertion then reports the text as missing while the test is plainly
 /// looking at a loading state. Nothing throws and nothing warns.
-class _FaithfulUniverse extends UniverseStorage {
-  _FaithfulUniverse() : _blob = '[]';
-  String _blob;
-
-  @override
-  Future<List<Sector>> loadUniverse() async =>
-      (jsonDecode(_blob) as List<dynamic>)
-          .cast<Map<String, dynamic>>()
-          .map(Sector.fromJson)
-          .toList();
-
-  @override
-  Future<void> saveSectors(List<Sector> updated) async {
-    _blob = jsonEncode(updated.map((e) => e.toJson()).toList(growable: false));
-  }
-}
 
 void main() {
-  late _FaithfulUniverse store;
+  late FaithfulUniverse store;
 
   setUp(() {
-    store = _FaithfulUniverse();
+    // The old local fake started from an empty universe (`'[]'`), and this
+    // test only needs *a* storage so nothing reaches path_provider.
+    store = FaithfulUniverse(const []);
     UniverseStorage.instanceForTest = store;
   });
 

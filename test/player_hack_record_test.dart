@@ -20,7 +20,9 @@ void main() {
       hackedPorts: const ['Alpha Port'],
       lastHackAt: DateTime(2026, 1, 2),
       portHackFailures: const {'Alpha Port': 3},
-      portHackBannedUntil: const {'Alpha Port': 9999999999999},
+      // A tick deadline now — the old field held epoch milliseconds, which
+      // meant a 24-hour ban the player cleared by quitting and reopening.
+      portHackBannedUntilTick: const {'Alpha Port': 2880},
       factionStandings: const {'pirate': -42},
       lastHackProfile: 'HIGH SECURITY',
       lastHackReward: 'AGGRESSIVE CREDITS +2500 CR',
@@ -32,7 +34,7 @@ void main() {
     expect(restored.hackedPorts, ['Alpha Port']);
     expect(restored.lastHackAt, DateTime(2026, 1, 2));
     expect(restored.portHackFailures['Alpha Port'], 3);
-    expect(restored.portHackBannedUntil['Alpha Port'], 9999999999999);
+    expect(restored.portHackBannedUntilTick['Alpha Port'], 2880);
     expect(restored.factionStandings['pirate'], -42);
     expect(restored.lastHackProfile, 'HIGH SECURITY');
     expect(restored.lastHackReward, 'AGGRESSIVE CREDITS +2500 CR');

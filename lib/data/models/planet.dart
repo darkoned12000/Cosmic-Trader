@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:uuid/uuid.dart';
@@ -46,6 +47,41 @@ class Planet {
   bool isHomeworld;
   FactionClass? homeworldOf;
 
+  /// Whoever brought this world into existence, by name.
+  ///
+  /// **Null means nobody did** — a world the universe generator placed has no
+  /// maker, and that is the normal case for almost every world in the galaxy.
+  /// Set when a Genesis Torpedo resolves, to the launching pilot's name.
+  ///
+  /// `final`, and therefore **not editable by anyone** — not the player, not an
+  /// NPC, not a screen. That is the whole point: it is provenance, not
+  /// possession. `owner` changes hands constantly (you fight for a world, you
+  /// capture it, someone retakes it) and none of those transfers create it. The
+  /// distinction is load-bearing, because destroying a world you did not make is
+  /// an act of aggression against whoever did, *even if you own it now* — so
+  /// [WorldForging.detonate] reads this field and not `owner` when deciding
+  /// whether to charge for the act.
+  ///
+  /// It is a **name**, not an id, which is the weakest form of provenance: a
+  /// pilot who renames after creating a world would be charged for detonating
+  /// it. That is accepted for now — see the note in `AGENTS.md` — because the
+  /// alternative is a second identity field that nothing else in the game keys
+  /// on, and the alternative failure (charging the wrong pilot) needs two pilots
+  /// with the same name in one galaxy to be reachable.
+  final String? creator;
+
+  /// The faction [creator] belonged to when the world was made.
+  ///
+  /// Separate from `owner` because of the capture case: fight a Guild world, win,
+  /// claim it, and `owner` is now you — so a rule that asks "who should be
+  /// offended?" through `owner` finds nobody and lets the destroyer walk clean.
+  /// The *maker's* faction is the one with a grievance, and it does not change
+  /// hands when you take the planet.
+  ///
+  /// Null wherever [creator] is, and on legacy saves: a world the generator
+  /// placed has no maker and therefore no maker's faction.
+  final FactionClass? creatorFaction;
+
   /// Cold-standby capital (C4b): produces only while no live primary
   /// homeworld of the same faction exists. Recapture of the primary
   /// idles the backup again — capitals move back, they don't duplicate.
@@ -62,10 +98,36 @@ class Planet {
   int colonistsOrganics;
   int colonistsIndustrial;
 
+  /// Colonists bought from a capital and travelling to this world.
+  ///
+  /// Credits are debited the moment the shipment is ordered, so the headcount
+  /// has to live somewhere until it lands or the player pays for people who are
+  /// not on the planet and not visibly coming either. [colonistTransitTicks] is
+  /// the countdown; both are zero when nothing is in transit.
+  int colonistsInTransit;
+
+  /// Ticks left before [colonistsInTransit] joins [population].
+  int colonistTransitTicks;
+
   /// Drones, not fighters: ships field drones throughout the game
   /// (`Player.drones`). The old `colonistsFighters` name survived the
   /// planet screen already being labelled "Drones", which made the model
   /// the odd one out.
+  /// **LEGACY — do not read this.** Drones are *derived* from the three
+  /// production tracks, not staffed: `droneOutput` is computed from what the
+  /// others actually make, `PlanetClassSpec.tracks` has no drone entry, and the
+  /// colony card renders three rows with no stepper for a fourth.
+  ///
+  /// This is the corpse of the track that stopped existing. It is kept only so
+  /// that old saves round-trip, and it is deliberately **excluded from
+  /// [assignedColonists]** — any colonists sitting here are free and available
+  /// for real work, which is why the reserve counts them. Nothing in `lib/`
+  /// reads it, and the generator no longer seeds it.
+  ///
+  /// A field that means nothing but looks live is how a rule ends up
+  /// transcribed twice and disagreeing: the removed Gas Giant was read from
+  /// `TypeMultipliers` by one test and from the class spec by another, and both
+  /// suites were green.
   int colonistsDrones;
   double productionEfficiency;
 
@@ -116,6 +178,21 @@ class Planet {
   /// [supplyInterval] ticks.
   int supplyTimer;
 
+  /// How many supply bills this world has been charged. **Not persisted.**
+  ///
+  /// Exists purely to salt [supplyDrawCommodity], and it has to be its own
+  /// counter rather than a reuse of [supplyTimer]: the timer is reset to 0 at the
+  /// exact moment the draw happens, so `supplyTimer * 17` in the salt was
+  /// **always zero**. The remaining entropy was `population * 31` plus
+  /// `name.hashCode`, and population moves slowly — so a colony of a steady size
+  /// was locked onto one commodity and every supply bill for the rest of the game
+  /// was drawn from the same three options.
+  ///
+  /// Deliberately a counter and not a `Random()`: the draw has to stay
+  /// reproducible for a given tick sequence, which is what lets the colony tests
+  /// assert a specific outcome.
+  int _supplyDrawCount = 0;
+
   /// The level this build will produce when it finishes. 0 when idle.
   int constructionTarget;
   int requiredMinerals;
@@ -149,11 +226,14 @@ class Planet {
     this.isHomeworld = false,
     this.homeworldOf,
     this.population = 0,
+    this.colonistsInTransit = 0,
+    this.colonistTransitTicks = 0,
     this.colonistsMinerals = 0,
     this.colonistsOrganics = 0,
     this.colonistsIndustrial = 0,
     this.colonistsDrones = 0,
     this.productionEfficiency = 1.0,
+    Map<String, double>? productionRemainder,
     this.storedMinerals = 0,
     this.storedOrganics = 0,
     this.storedIndustrial = 0,
@@ -181,7 +261,16 @@ class Planet {
     this.isDestroyed = false,
     this.imagePath,
     this.scanned = false,
-  }) : id = id ?? const Uuid().v4();
+    this.creator,
+    this.creatorFaction,
+  })  : id = id ?? const Uuid().v4(),
+        // A **mutable** map, and deliberately not a `const {}` default:
+        // `_drawProduction` writes to it on every tick, so an unmodifiable one
+        // throws `Cannot modify unmodifiable map` the first time any colony
+        // produces anything. It also cannot be a mutable default *parameter*,
+        // because Dart requires a default parameter value to be constant — hence
+        // the initializer list, where a non-constant expression is legal.
+        productionRemainder = productionRemainder ?? <String, double>{};
 
   /// Builds a world from a Genesis Torpedo: empty, unowned, unpopulated.
   ///
@@ -190,11 +279,31 @@ class Planet {
   /// *differences between worlds*; a torpedoed one has no history to differ by,
   /// so it starts at the honest baseline — 1.0 efficiency, no defence, nothing
   /// stored, not yet scanned. Everything it becomes, the player does.
+  /// Builds a world out of nothing: the Genesis Torpedo's payload.
+  ///
+  /// It arrives **scanned and owned by [owner]** rather than as an anonymous
+  /// rock. This reverses the original rule, which made a torpedoed world an
+  /// unscanned orbit the player then had to survey and claim — and that rule
+  /// fought the rest of the feature. The player *made* this world, they paid a
+  /// torpedo for it, and the loop it exists to serve (launch, over-stack,
+  /// detonate the one you regret) only means something if launching is an act
+  /// you perform on a world you own. Handing them an unclaimed rock also made
+  /// the launch feel broken: the sector contents listed a new world exactly
+  /// like any other, with `NOT SCANNED` where a freshly claimed one reads
+  /// `OWNED`, so the thing you had just paid for looked like someone else's.
+  ///
+  /// [owner] is nullable so a caller with no faction in hand (a generator
+  /// seeding a neutral world, a test) can still get the unscanned behaviour by
+  /// passing null — it is not a way to opt out silently, and every real call
+  /// site passes the launching pilot's faction.
   factory Planet.fromGenesis({
     required String name,
     required String planetType,
     String? id,
     String? imagePath,
+    FactionClass? owner,
+    String? creator,
+    FactionClass? creatorFaction,
   }) =>
       Planet(
         id: id,
@@ -208,7 +317,13 @@ class Planet {
         shield: 0,
         maxShield: 0,
         imagePath: imagePath,
-        scanned: false,
+        scanned: owner != null,
+        owner: owner,
+        // Provenance, recorded once at creation and never touched again. Set
+        // from the launching pilot so the world has a maker from the moment it
+        // exists rather than becoming the player's property by a later claim.
+        creator: creator,
+        creatorFaction: creatorFaction,
       );
 
   /// Renders the world permanently uninhabitable (C4b planet-killer
@@ -222,6 +337,11 @@ class Planet {
     isBackupHomeworld = false;
     owner = null;
     population = 0;
+    // A shipment in transit dies with the world. Leaving it queued would let a
+    // destroyed world still be owed colonists, and the arrival path would put
+    // them into a population this method just zeroed.
+    colonistsInTransit = 0;
+    colonistTransitTicks = 0;
     colonistsMinerals = 0;
     colonistsOrganics = 0;
     colonistsIndustrial = 0;
@@ -269,11 +389,21 @@ class Planet {
       'isHomeworld': isHomeworld,
       'homeworldOf': homeworldOf?.name,
       'population': population,
+      'colonistsInTransit': colonistsInTransit,
+      'colonistTransitTicks': colonistTransitTicks,
       'colonistsMinerals': colonistsMinerals,
       'colonistsOrganics': colonistsOrganics,
       'colonistsIndustrial': colonistsIndustrial,
       'colonistsDrones': colonistsDrones,
       'productionEfficiency': productionEfficiency,
+      // Rounded to 6dp: a raw double in [0,1) is ~17 characters of float noise
+      // per track per save and drifts as it is recomputed, while 6dp bounds the
+      // loss at 5e-7 units against a 1-unit quantum. Omitted when empty, so the
+      // overwhelming majority of worlds pay nothing for it.
+      'productionRemainder': productionRemainder.isEmpty
+          ? null
+          : productionRemainder
+              .map((k, v) => MapEntry(k, double.parse(v.toStringAsFixed(6)))),
       'storedMinerals': storedMinerals,
       'storedOrganics': storedOrganics,
       'storedIndustrial': storedIndustrial,
@@ -301,6 +431,11 @@ class Planet {
       'isDestroyed': isDestroyed,
       'imagePath': imagePath,
       'scanned': scanned,
+      // Omitted when absent, matching the house style: a generated world
+      // carrying `"creator": null` on every one of a thousand planets is noise
+      // in a file the player never opens.
+      if (creator != null) 'creator': creator,
+      if (creatorFaction != null) 'creatorFaction': creatorFaction!.name,
     };
   }
 
@@ -317,6 +452,8 @@ class Planet {
       isHomeworld: json['isHomeworld'] as bool? ?? false,
       homeworldOf: _parseFactionClass(json['homeworldOf'] as String?),
       population: json['population'] as int? ?? 0,
+      colonistsInTransit: json['colonistsInTransit'] as int? ?? 0,
+      colonistTransitTicks: json['colonistTransitTicks'] as int? ?? 0,
       colonistsMinerals: json['colonistsMinerals'] as int? ?? 0,
       colonistsOrganics: json['colonistsOrganics'] as int? ?? 0,
       colonistsIndustrial: json['colonistsIndustrial'] as int? ?? 0,
@@ -326,6 +463,13 @@ class Planet {
           (json['colonistsDrones'] ?? json['colonistsFighters']) as int? ?? 0,
       productionEfficiency:
           (json['productionEfficiency'] as num?)?.toDouble() ?? 1.0,
+      // Absent in every pre-fix save, and an empty map is the correct reading:
+      // the colony simply starts accruing from zero, which costs it at most one
+      // tick's fraction. Inventing a value here would be worse — a remainder
+      // restored from nothing is a colony that skips a tick of work it did not do.
+      productionRemainder: (json['productionRemainder'] as Map?)?.map(
+        (k, v) => MapEntry(k as String, (v as num).toDouble()),
+      ),
       storedMinerals: json['storedMinerals'] as int? ?? 0,
       storedOrganics: json['storedOrganics'] as int? ?? 0,
       storedIndustrial: json['storedIndustrial'] as int? ?? 0,
@@ -360,6 +504,13 @@ class Planet {
       isDestroyed: json['isDestroyed'] as bool? ?? false,
       imagePath: json['imagePath'] as String?,
       scanned: json['scanned'] as bool? ?? false,
+      // Absent on every pre-existing save, and absent is the correct reading:
+      // those worlds were placed by the generator, so nobody made them.
+      creator: json['creator'] as String?,
+      // Absent on every pre-existing save, which is correct: those worlds were
+      // generator-placed or predate the field, and inventing a maker's faction
+      // would be worse than having none.
+      creatorFaction: _parseFactionClass(json['creatorFaction'] as String?),
     );
   }
 
@@ -376,8 +527,8 @@ class Planet {
     'Ice': 400000,
     'Lava': 200000,
     'Moon': 200000,
+    'Mountain': 400000,
     'Barren': 150000,
-    'Gas Giant': 100000,
     'Toxic': 100000,
   };
 
@@ -503,6 +654,118 @@ class Planet {
   // number on screen and the number a tick applied could not be checked against
   // each other — and neither existed. `PlanetProductionService` calls
   // [produce]; the screen calls the [mineralOutput]-style getters. Same code.
+  // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+
+  /// Ticks a purchased colonist shipment spends in transit: **two**.
+  ///
+  /// At one tick per 30 seconds that is one real minute, which is long enough
+  /// that the departure is a thing the player watches rather than a number that
+  /// changes under the cursor, and short enough that nobody comes back later
+  /// wondering whether the purchase went through. The point of the delay is that
+  /// a purchase reads as a shipment — buying 2,000 people is not an instant edit
+  /// to a population figure — not that it is a logistical puzzle.
+  ///
+  /// Named for the *delay* so it cannot collide with the per-shipment countdown
+  /// it initialises, which is a different number on every world.
+  static const int colonistTransitDelayTicks = 2;
+
+  /// Queues a purchased shipment and starts its countdown.
+  ///
+  /// Clamped to the room actually left on the world **including what is already
+  /// on its way**, because two shipments in flight can each have been affordable
+  /// when ordered and together overrun the cap. Returns the headcount actually
+  /// sent, so the caller charges for that and not for what was asked for — a
+  /// clamp here and a price computed on the request is a silent overcharge.
+  int dispatchColonists(int headcount) {
+    final room = colonistMax - population - colonistsInTransit;
+    final sending = headcount < room ? headcount : room;
+    if (sending <= 0) return 0;
+
+    colonistsInTransit += sending;
+    // Restarted rather than added, so a second purchase made while the first is
+    // still in the air ships with the first instead of queueing behind it. Two
+    // shipments, one flight.
+    colonistTransitTicks = colonistTransitDelayTicks;
+    return sending;
+  }
+
+  /// True while a purchased shipment is on its way.
+  bool get hasColonistsInTransit => colonistsInTransit > 0;
+
+  /// Total ticks this shipment was given, for the progress bar's denominator.
+  ///
+  /// [colonistTransitDelayTicks] rather than a stored total, because a second
+  /// order **restarts** the countdown rather than queueing behind the first
+  /// (see [dispatchColonists]) — so the total is always the delay, and storing
+  /// it would be a second copy of a constant that could drift from it.
+  int get colonistTransitTotalTicks =>
+      hasColonistsInTransit ? colonistTransitDelayTicks : 0;
+
+  /// 0.0 to 1.0 through the current shipment, for a determinate progress bar.
+  ///
+  /// Deliberately the same shape as [constructionProgress] so the two read the
+  /// same way on screen: a purchase and a build are both "work already paid for
+  /// that advances one step per tick", and a player who has watched one should
+  /// not have to learn a second idiom for the other.
+  double get colonistTransitProgress {
+    if (!hasColonistsInTransit) return 0;
+    final total = colonistTransitTotalTicks;
+    if (total <= 0) return 1;
+    return (1 - (colonistTransitTicks / total)).clamp(0.0, 1.0);
+  }
+
+  /// Where the bar should be **drawn**, which is one tick ahead of
+  /// [colonistTransitProgress].
+  ///
+  /// A display value, and the only place in this model that is allowed to be one.
+  /// [colonistTransitProgress] is the truth but it only moves when a tick lands,
+  /// so a bar drawn from it sits at 0% for the first thirty seconds of a
+  /// two-tick flight and then jumps half its length — which reads as frozen, and
+  /// is what a player reported. Drawing toward the *next* tick instead lets the
+  /// screen animate continuously across the whole flight, and the bar completes
+  /// exactly when the shipment is due.
+  ///
+  /// The trade is explicit: if a tick is late, the bar is already full while the
+  /// shipment is still in the air. It can therefore never be used as a
+  /// completion test — the landing is still decided by [colonistTransitTicks]
+  /// and nothing reads this for state.
+  double get colonistTransitDrawnProgress {
+    if (!hasColonistsInTransit) return 0;
+    final total = colonistTransitTotalTicks;
+    if (total <= 0) return 1;
+    final completed = total - colonistTransitTicks;
+    return ((completed + 1) / total).clamp(0.0, 1.0);
+  }
+
+  /// Advances an in-transit shipment by one tick, landing it when it arrives.
+  ///
+  /// Returns the headcount that landed, so a caller can tell an arrival from a
+  /// tick that merely counted down. Called by `PlanetProductionService`, which
+  /// runs it **before** the `population <= 0` skip — a world with no colonists
+  /// yet is exactly the world a first shipment is going to, so putting this
+  /// behind that check would strand it forever.
+  int advanceColonistTransit() {
+    if (colonistsInTransit <= 0) return 0;
+
+    // `colonistTransitTicks <= 0` with colonists still aboard is a state the
+    // rules never produce, so it lands them rather than returning 0. The
+    // alternative — trusting the invariant — strands a paid-for shipment
+    // forever on any save that caught the pair inconsistent, which is precisely
+    // the "I paid and nothing happened" failure the transit row exists to end.
+    if (colonistTransitTicks > 0) {
+      colonistTransitTicks--;
+      if (colonistTransitTicks > 0) return 0;
+    }
+
+    final room = colonistMax - population;
+    final landed = colonistsInTransit < room ? colonistsInTransit : room;
+    colonistsInTransit = 0;
+    population += landed;
+    return landed;
+  }
+
   // ---------------------------------------------------------------------------
 
   /// Ticks between colony-supply draws: **one game day**.
@@ -635,19 +898,44 @@ class Planet {
         _ => 0,
       };
 
-  /// Per-**tick** production for one track, from the scaled per-day figure.
+  /// Default ticks between ships from a major faction's homeworld.
   ///
-  /// A double, and deliberately not an int: the triangle's per-day figures are
-  /// small once divided by the 2,880 ticks in a day — a Volcanic ore track peaks
-  /// at 17.36 per tick. Rounding each tick would throw away most of what the
-  /// colony makes, so the remainder is carried in [productionRemainder] and
-  /// released whenever it completes a whole unit.
-  /// Fractional units produced so far and not yet delivered into storage.
+  /// The generator sets this on each homeworld; named here so the Planet Guide
+  /// quotes the model rather than a literal. It read `${10}` — an interpolation
+  /// of a constant, which is a hand-typed number wearing a string's clothes.
+  static const int defaultSpawnInterval = 10;
+
+  /// Ticks between ships from a pirate outpost, which the generator sets
+  /// separately from a faction capital's cadence.
+  static const int pirateOutpostSpawnInterval = 12;
+
+  /// The range [productionEfficiency] is rolled in when the galaxy is generated.
   ///
-  /// One slot per track, because each track's remainder is its own. Without it
-  /// a colony producing 0.03/tick of a Glacial organics track would bank
-  /// nothing, ever, and the world would look broken rather than slow.
-  final Map<String, double> productionRemainder = {};
+  /// Named rather than inline in the generator because the Planet Guide quotes
+  /// the range, and a help screen quoting a number the model does not name is
+  /// exactly how the supply bill came to be wrong by a factor of 2,880 — the
+  /// text said "one tick's output" and nothing tied it to the code.
+  static const double minEfficiency = 0.5;
+  static const double maxEfficiency = 1.5;
+
+  /// Fractional units produced so far and not yet delivered into storage, one
+  /// slot per track.
+  ///
+  /// Per-**tick** output is a fraction of a unit — the triangle's per-day figures
+  /// divided by the 2,880 ticks in a day — so a Volcanic ore track peaks at 17.36
+  /// per tick and a Glacial organics track at 0.17. Rounding each tick would throw
+  /// away most of what the colony makes; without this, **any track under 2,880
+  /// units/day banks nothing at all, ever**, and the world looks broken rather
+  /// than slow.
+  ///
+  /// **Persisted, and that is load-bearing rather than tidy.** The tick service
+  /// re-parses the whole universe on every pass, so a remainder that lived only
+  /// in memory arrived empty every tick and `_drawProduction` computed
+  /// `floor(0 + perTick)` forever — 13 of 26 tracks banking literally nothing, and
+  /// no colony able to bank the organics or industrial for even a 1→2 build.
+  /// Every production test held a single long-lived `Planet` across its ticks, so
+  /// the suite was green throughout and could not see it by construction.
+  final Map<String, double> productionRemainder;
 
   /// Units of one track produced this tick, carrying the remainder forward.
   ///
@@ -713,11 +1001,61 @@ class Planet {
   int dailyOutputFor(String track) => outputPerDayFor(track);
 
   /// The most of a track this world can produce in a day, at its optimum.
+  ///
+  /// This is the **class** ceiling: the published TradeWars figure for the
+  /// type. It is not what this colony produces — see
+  /// [achievableMaxPerDayFor] for that, which is the number a player should
+  /// ever be shown.
   int maxDailyOutputFor(String track) =>
       classSpec.productFor(track).maxOutputPerDay;
 
+  /// The most per day **this colony** can produce on [track], which is what
+  /// the screen must label "max".
+  ///
+  /// [maxDailyOutputFor] with the colony's own [yieldScale] applied. The two
+  /// are the same number only for a colony whose yield reaches 1.0, and the
+  /// gap is not a rounding detail: `productionEfficiency` is rolled in
+  /// [0.5, 1.5) at generation and `developmentMultiplier` is **1.00 at level
+  /// 1**, so a level-1 world with a below-average roll has a yield of about
+  /// 0.5 and the class figure is roughly **double** what that colony can ever
+  /// produce, at any staffing level.
+  ///
+  /// Labelling that unreachable number "max" was worse than showing no ceiling
+  /// at all. The track row puts "of {optimum}" under the count and "/ max N"
+  /// beside a per-day figure, so at correct staffing the row said *correctly
+  /// staffed* and *you are N short of max* at the same time — and the only way
+  /// to close that gap is to add colonists past the optimum, which is the one
+  /// move the triangle punishes. The display was steering the player into the
+  /// trap. With this, "at the optimum" and "at max" are the same statement,
+  /// which is what the shape of the curve already said.
+  ///
+  /// Clamped to the class ceiling for the same reason [outputPerDayFor] is: a
+  /// high-yield colony approaches the cap faster but never exceeds it.
+  int achievableMaxPerDayFor(String track) {
+    final ceiling = maxDailyOutputFor(track);
+    if (ceiling <= 0) return 0;
+    final scaled = (ceiling * yieldScale).round();
+    return scaled > ceiling ? ceiling : scaled;
+  }
+
   /// The most drones per day this world can produce.
+  ///
+  /// The **class** figure, pinned to the published TradeWars value — see
+  /// [achievableMaxDroneOutputPerDay] for this colony's own reach.
   int get maxDroneOutputPerDay => classSpec.maxDroneOutputPerDay;
+
+  /// The most drones per day **this colony** can produce: its three tracks'
+  /// achievable maxima, on the same derivation as the class figure.
+  ///
+  /// Drones are derived from output, so an aggregate of three *unreachable*
+  /// ceilings is unreachable three times over. Built from
+  /// [achievableMaxPerDayFor] so the number the player is shown is one they
+  /// could actually hit by staffing all three tracks to their optima.
+  int get achievableMaxDroneOutputPerDay => classSpec.droneOutputPerDay(
+        orePerDay: achievableMaxPerDayFor('minerals'),
+        organicsPerDay: achievableMaxPerDayFor('organics'),
+        equipmentPerDay: achievableMaxPerDayFor('industrial'),
+      );
 
   /// Mid-range unit value per commodity, used to pay out a collected shipment.
   ///
@@ -802,15 +1140,22 @@ class Planet {
   // The caps follow the classic game's shape: storage is a property of the
   // world and what it produces, so a Volcanic world is vast for minerals and
   // almost useless for organics, an Oceanic world is the reverse, and a
-  // Glacial or Vaporous world is cramped across the board. A colony therefore
-  // needs a reason to exist per commodity, not just a reason to exist.
+  // Glacial world, and the source table's Class U, are cramped across the
+  // board. A colony therefore needs a reason to exist per commodity, not just
+  // a reason to exist.
+  //
+  // The Class U reference is a citation of the source table's shape, not a type
+  // a player can encounter: its ratios are N-A on every product, so the world it
+  // described produced nothing at all, and it was removed rather than left as a
+  // dead end (see `planet_classes.dart`).
   // ---------------------------------------------------------------------------
 
   /// Working store per commodity at level 1: minerals, organics, industrial.
   ///
   /// Modelled on the classic game's per-product limits, which are wildly
   /// differentiated (Volcanic 1,000,000 ore / 10,000 organics; Oceanic
-  /// 1,000,000 organics / 50,000 equipment; Vaporous 10,000 of everything).
+  /// 1,000,000 organics / 50,000 equipment; source Class U 10,000 of
+  /// everything).
   /// Drones are not a classic product, so they are derived from the mineral
   /// store rather than given a hand-picked row.
   static const Map<String, List<int>> baseStorageByType = {
@@ -820,8 +1165,8 @@ class Planet {
     'Ocean': [100000, 1000000, 50000],
     'Ice': [20000, 50000, 10000],
     'Lava': [1000000, 10000, 100000],
-    'Gas Giant': [10000, 10000, 10000],
     'Moon': [30000, 15000, 25000],
+    'Mountain': [200000, 200000, 100000],
     'Barren': [250000, 12000, 40000],
     'Toxic': [300000, 10000, 60000],
   };
@@ -871,9 +1216,33 @@ class Planet {
   /// The working store for a commodity: the type's own figure, scaled by level,
   /// but never smaller than [minimumTicksOfOutput] of what the colony currently
   /// makes. See [minimumTicksOfOutput] for why the second half is not optional.
+  /// The working store for a commodity: the type's figure scaled by level, or
+  /// [minimumTicksOfOutput] of what the colony currently makes — whichever is
+  /// larger.
+  ///
+  /// **Uses [perTickFor], not [outputFor].** `outputFor` routes through
+  /// `_drawProduction`, which advances and floors the production remainder, so
+  /// reading it *consumes* production. This getter sits on the `deposit` path,
+  /// which put it inside every tick's write:
+  ///
+  /// ```
+  /// deposit('minerals', mineralOutput);   // draw 1, kept
+  ///   -> capFor('minerals') -> maxMinerals -> _cap -> outputFor  // draw 2, discarded
+  /// deposit('drones', droneOutput);
+  ///   -> capFor('drones') -> maxDrones -> maxMinerals -> _cap -> outputFor  // draw 3
+  /// ```
+  ///
+  /// Minerals were drawn three times a tick, organics and industrial twice, and
+  /// every discarded draw still floored whole units out of the accumulator — so a
+  /// track yielding 1.7/tick banked 1 and threw 3 away. Worse, `maxMinerals` is
+  /// an ordinary-looking read-only getter that the colony card's storage bar
+  /// calls, so *looking* at a colony drained it, with no bound.
+  ///
+  /// `perTickFor` is the same number with no side effect. See
+  /// `test/planet_production_test.dart` for the guard.
   int _cap(int baseIndex, String commodity) {
     final byType = (_baseStorage[baseIndex] * storageScale).round();
-    final byOutput = outputFor(commodity) * minimumTicksOfOutput;
+    final byOutput = (perTickFor(commodity) * minimumTicksOfOutput).round();
     return byOutput > byType ? byOutput : byType;
   }
 
@@ -909,6 +1278,23 @@ class Planet {
         'drones' => storedDrones,
         _ => 0,
       };
+
+  /// Stored units **plus** the sub-unit production carried but not yet banked.
+  ///
+  /// **Read-only, and that is load-bearing.** The `mineralOutput`-style getters
+  /// *consume* the remainder — `_drawProduction` moves it into storage as a side
+  /// effect — so a screen that displayed one of those would bank production just
+  /// by looking at the planet. This reads the same state without advancing it,
+  /// which is the only reason it is allowed near a UI.
+  ///
+  /// It is also the number a player needs in order to see a slow track working.
+  /// Per-tick output is a fraction of a unit: a Jungle minerals track staffed
+  /// with 5,000 colonists yields **0.376 per tick**, so `storedMinerals` moves by
+  /// 1 only every third tick and reads as dead in between. The carried fraction
+  /// is what moves every tick, and showing it is the difference between "this
+  /// colony is slow" and "this colony is broken".
+  double storedPlusRemainder(String commodity) =>
+      storedFor(commodity) + (productionRemainder[commodity] ?? 0);
 
   int pendingFor(String commodity) => switch (commodity) {
         'minerals' => pendingMinerals,
@@ -965,6 +1351,9 @@ class Planet {
   }
 
   /// Colonists currently on a production track. Never exceeds [population].
+  /// Colonists on the three staffed tracks. Excludes [colonistsDrones] on
+  /// purpose — drones are derived, so that field is legacy and any colonists
+  /// nominally on it are free. See the field's documentation.
   int get assignedColonists =>
       colonistsMinerals + colonistsOrganics + colonistsIndustrial;
 
@@ -1086,6 +1475,7 @@ class Planet {
     supplyTimer++;
     if (supplyTimer >= supplyInterval) {
       supplyTimer = 0;
+      _supplyDrawCount++;
       supplyFrom = _drawSupplyCommodity();
       supplyPaid = _paySupply();
       supplyShortfall = supplyDraw - supplyPaid;
@@ -1124,7 +1514,12 @@ class Planet {
   String _drawSupplyCommodity() {
     final options = supplyCommodities;
     if (options.isEmpty) return 'minerals';
-    final n = (population * 31 + supplyTimer * 17 + name.hashCode) & 0x7fffffff;
+    // Salts on the draw counter, not on `supplyTimer`. Passing the *elapsed*
+    // timer in instead would not help: the timer is reset exactly when this is
+    // called, so the value it had reached is always `supplyInterval` — constant,
+    // and the salt would be just as dead as it was.
+    final n =
+        (population * 31 + _supplyDrawCount * 17 + name.hashCode) & 0x7fffffff;
     return options[n % options.length];
   }
 
@@ -1300,8 +1695,8 @@ class Planet {
     'Ocean': AtmosphereConfig('N2-O2', 'Water world'),
     'Ice': AtmosphereConfig('Thin', 'Frozen wasteland'),
     'Lava': AtmosphereConfig('CO2', 'Volcanic, molten'),
-    'Gas Giant': AtmosphereConfig('Dense', 'Massive, gaseous'),
     'Moon': AtmosphereConfig('None', 'Small rocky body'),
+    'Mountain': AtmosphereConfig('Thin', 'Thin, cold highland air'),
     'Barren': AtmosphereConfig('None', 'Rocky, lifeless'),
     'Toxic': AtmosphereConfig('Acid', 'Corrosive atmosphere'),
   };
@@ -1319,8 +1714,16 @@ class Planet {
     // the answer is to haul organics in or plant an Ocean beside it.
     'Ice': TypeMultipliers(0.8, 0.0, 0.6, 0.8),
     'Lava': TypeMultipliers(2.0, 0.0, 1.4, 1.4),
-    'Gas Giant': TypeMultipliers(0.6, 0.6, 0.4, 1.0),
     'Moon': TypeMultipliers(1.0, 0.0, 0.6, 0.8),
+    // Mountain is a *flavour* row, not a second copy of the production maths.
+    // The triangle in `planet_classes.dart` is the live rule; this table says
+    // what a world is known for, and it feeds `canProduce` (which locks a
+    // workforce stepper), `dominantCommodity`, and the Planet Guide's
+    // "strongest at" line. Kept in agreement with the triangle's *direction*:
+    // Mountain's ore peak is its largest (10,000/day), organics second
+    // (4,000/day) and equipment last (1,000/day), so minerals must read as its
+    // headline or the help screen would contradict the numbers beside it.
+    'Mountain': TypeMultipliers(1.5, 1.2, 1.0, 1.2),
     'Barren': TypeMultipliers(1.2, 0.0, 0.8, 1.0),
     'Toxic': TypeMultipliers(1.6, 0.0, 1.0, 1.2),
   };
@@ -1328,15 +1731,38 @@ class Planet {
   static const List<String> allTypes = [
     'Terran',
     'Jungle',
+    'Mountain',
     'Desert',
     'Ocean',
     'Ice',
     'Lava',
-    'Gas Giant',
     'Moon',
     'Barren',
     'Toxic',
   ];
+
+  /// Folder every entry in [imagePool] lives in.
+  ///
+  /// **The prefix lives here, once.** `imagePool` holds bare file names because
+  /// that is the shape of the data, but `Image.asset` needs a path from the
+  /// asset root. Two callers each built that path independently — the universe
+  /// generator prefixed it and `WorldForging._imageFor` did not — so a
+  /// generator-placed world showed its picture and a **torpedo-launched one
+  /// silently showed nothing**, for every type, forever. One function that both
+  /// call is the fix; a comment on one of them would not have been.
+  static const String imageFolder = 'assets/images/planets/';
+
+  /// A randomly chosen image asset path for a world of [type], or null when the
+  /// type has no pool.
+  ///
+  /// Null rather than a plausible-looking path: both planet views guard on
+  /// `imagePath != null` and render nothing, so "no picture" degrades cleanly and
+  /// a wrong path degrades into a broken-image box.
+  static String? randomImageFor(String type, math.Random rng) {
+    final pool = imagePool[type];
+    if (pool == null || pool.isEmpty) return null;
+    return '$imageFolder${pool[rng.nextInt(pool.length)]}';
+  }
 
   static const Map<String, List<String>> imagePool = {
     'Terran': [
@@ -1357,8 +1783,17 @@ class Planet {
     'Ocean': ['Ocean_World_1.gif', 'Ocean_World_2.gif', 'Ocean_World_3.gif'],
     'Ice': ['Ice_World_1.gif', 'Ice_World_2.gif', 'Ice_world_3.gif'],
     'Lava': ['Lava_World_1.gif', 'Lava_World_2.gif', 'Lava_World_3.gif'],
-    'Gas Giant': ['Gas_Giant_1.gif', 'Gas_Giant_2.gif', 'Gas_Giant_3.gif'],
     'Moon': ['Moon_1.gif', 'Moon_2.gif', 'Moon_3.gif'],
+    // Reuses the pool that used to be orphaned under `Unknown_World_*.gif`.
+    // The files were renamed to match the convention every other type follows
+    // (`<Type>_World_N.gif`); nothing referenced them before, because
+    // `imagePool` had no `Unknown` key and the `Unknown` class spec is a
+    // private fallback rather than a real type.
+    'Mountain': [
+      'Mountain_World_1.gif',
+      'Mountain_World_2.gif',
+      'Mountain_World_3.gif'
+    ],
     'Barren': ['Moon_1.gif', 'Moon_2.gif', 'Moon_3.gif'],
     'Toxic': ['Toxic_World_1.gif', 'Toxic_World_2.gif', 'Toxic_World_3.gif'],
   };

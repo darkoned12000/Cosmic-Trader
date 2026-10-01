@@ -36,7 +36,7 @@ Player _pilot({
     installedModules: const {'scanner': 2},
     cargo: cargo ?? const {'minerals': 7},
     bankBalance: bank,
-    notoriety: 42.0,
+    alignment: 42.0,
   );
 }
 
@@ -73,7 +73,7 @@ void main() {
     expect(alive.name, dead.name);
     expect(alive.faction, dead.faction);
     expect(alive.bankBalance, 99999);
-    expect(alive.notoriety, 42.0);
+    expect(alive.alignment, 42.0);
     expect(alive.researchPoints, 3.5);
   });
 

@@ -35,13 +35,24 @@ class Sector {
   /// world in your own sector is trivial where hauling across the galaxy is a
   /// chore you route around.
   ///
-  /// A world is never removed from this list, only marked `isDestroyed` — see
-  /// [destroy] in `Planet` and the collision roll in the design doc. Removal from
-  /// a list mid-iteration is a bug factory, and a destroyed world still has to be
-  /// drawn, scanned and argued about.
+  /// A destroyed world is **removed** from this list. This reverses an
+  /// earlier decision to mark it `isDestroyed` and keep it, so a corpse could
+  /// "still be drawn and argued about" — which in practice left a vaporised
+  /// world in the sector contents, landable, and claimable again. Destroying
+  /// something and then being able to fly to it and take it back is not
+  /// destruction. Both destruction paths agree: [detonateWorld] and
+  /// [rollCollision] remove.
+  ///
+  /// The consequence to keep in mind is that `isDestroyed` on a world *in this
+  /// list* is now an invariant violation rather than a normal state. It still
+  /// means something on a detached instance — a screen's private copy, which
+  /// [Planet.produce] checks — and `_planetsFromJson` purges corpses from older
+  /// saves so the invariant survives a reload.
   List<Planet> planets;
 
-  /// Worlds still fit to colonise — everything in [planets] that is intact.
+  /// Worlds still fit to colonise. Identical to [planets] in practice, since
+  /// destroyed worlds are removed, but kept as the filter because a detached or
+  /// legacy instance can still carry the flag.
   List<Planet> get livingPlanets =>
       planets.where((p) => !p.isDestroyed).toList(growable: false);
 
@@ -113,7 +124,7 @@ class Sector {
       // Nullable is the *normal* state for a stable sector, so it is omitted
       // rather than written as null. A sector only carries a stamp while it is
       // over-stacked.
-      if (destabilisedAtMs != null) 'destabilisedAtMs': destabilisedAtMs,
+      if (destabilisedAtTick != null) 'destabilisedAtTick': destabilisedAtTick,
     };
   }
 
@@ -143,7 +154,11 @@ class Sector {
     // Assigned rather than passed to the constructor: the stamp is mutable (it
     // arms and clears as the sector crosses the cap), and a mutable field cannot
     // be a constructor parameter.
-    sector.destabilisedAtMs = (json['destabilisedAtMs'] as num?)?.toInt();
+    // A pre-clock save carries the millisecond stamp. It is read as nothing:
+    // the two units are not comparable and inventing a conversion would either
+    // destroy a world immediately or grant immunity. An unstable sector simply
+    // starts its day again, which is the same as being newly over-stacked.
+    sector.destabilisedAtTick = (json['destabilisedAtTick'] as num?)?.toInt();
     return sector;
   }
 
@@ -165,11 +180,20 @@ class Sector {
       return raw
           .whereType<Map<String, dynamic>>()
           .map(Planet.fromJson)
+          // Drop worlds an older build already destroyed. Destruction now removes
+          // the record outright, but a save written before that change carries
+          // corpses, and they would otherwise reload as landable worlds with
+          // `isDestroyed: true` — the "fly to the dead planet and claim it" bug,
+          // resurrected from disk. Purging here makes the invariant "no destroyed
+          // world is ever in the list" hold across a reload rather than only for
+          // sectors nobody has saved since.
+          .where((p) => !p.isDestroyed)
           .toList(growable: true);
     }
     final legacy = json['planet'];
     if (legacy is Map<String, dynamic>) {
-      return <Planet>[Planet.fromJson(legacy)];
+      final world = Planet.fromJson(legacy);
+      return world.isDestroyed ? <Planet>[] : <Planet>[world];
     }
     return <Planet>[];
   }
@@ -220,9 +244,9 @@ class Sector {
   /// It is re-armed after every roll, so an unstable system stays on a daily
   /// cycle for as long as it stays unstable. Clearing a world back under the cap
   /// clears the stamp, and going over again starts a fresh day.
-  int? destabilisedAtMs;
+  int? destabilisedAtTick;
 
-  /// Sets or clears [destabilisedAtMs] to match the sector's current state.
+  /// Sets or clears [destabilisedAtTick] to match the sector's current state.
   ///
   /// Idempotent and **self-healing**, and that is the point: it is called from
   /// every path that can change the world count, including the daily sweep, so
@@ -231,13 +255,13 @@ class Sector {
   /// will eventually be wrong, and a wrong stamp is either a sector that never
   /// rolls or one that rolls on a sector that never should.
   ///
-  /// [nowMs] is injected rather than read from the clock so the whole rule is
+  /// [tick] is injected rather than read from the clock so the whole rule is
   /// testable without waiting a day.
-  void reconcileStability(int cap, int nowMs) {
+  void reconcileStability(int cap, int tick) {
     if (isOverStacking(cap)) {
-      destabilisedAtMs ??= nowMs;
+      destabilisedAtTick ??= tick;
     } else {
-      destabilisedAtMs = null;
+      destabilisedAtTick = null;
     }
   }
 
@@ -261,10 +285,40 @@ class Sector {
   }
 
   /// Detonates [world], freeing its slot. Returns false if it is not here.
-  bool detonateWorld(Planet world) {
+  ///
+  /// Takes [cap] and [nowMs] and reconciles, mirroring [launchWorld]. A
+  /// detonation drops a world out of [livingPlanets], so it is the one way the
+  /// count can fall back **under** the cap, and the stamp has to learn that
+  /// immediately: a sector stabilised by a detonator and then pushed over again
+  /// must start a fresh day, not inherit the old one's remaining time.
+  ///
+  /// It previously could not do this — the method had no cap and no clock — and
+  /// the invariant held only because [WorldForging.runDueCollisions] happens to
+  /// sweep every sector each tick. That is self-healing by luck, not by
+  /// construction: the moment the sweep is filtered to "only sectors flagged
+  /// unstable" (the obvious optimisation once the sector count is large), or
+  /// anything calls [Planet.destroy] directly, a stale stamp survives for
+  /// however long it takes the next full sweep to reach that sector. A rule
+  /// that only holds because a bystander happens to sweep past is not a rule.
+  bool detonateWorld(Planet world, int cap, int nowMs) {
     final i = planets.indexWhere((p) => p.id == world.id);
     if (i < 0) return false;
+    // Neutralise, *then* remove. `destroy()` zeroes the colony and flips
+    // `isDestroyed`, which is what stops [Planet.produce] paying out — and every
+    // screen holds its own copy of the universe, so the object the detonation
+    // was fired from is a *different instance* from the one in this list. Dropping
+    // it without destroying it would leave that detached copy with 500,000
+    // colonists still producing into a world that no longer exists, and still
+    // rendering in whatever screen is holding it.
+    //
+    // Removing rather than marking is deliberate: a destroyed world is gone from
+    // the records, not a corpse left in the list. That reverses an earlier
+    // decision to keep it "so it can still be drawn and argued about", which in
+    // practice meant a dead world stayed landable — you could fly to a vaporised
+    // planet and claim it again, which is the opposite of destroying it.
     planets[i].destroy();
+    planets.removeAt(i);
+    reconcileStability(cap, nowMs);
     return true;
   }
 
@@ -292,7 +346,13 @@ class Sector {
     living.shuffle(rng);
     final lost = <Planet>[living.first, living[1]];
     for (final p in lost) {
+      // Same contract as [detonateWorld]: neutralise the object, then remove it
+      // from the records. A collision that left a corpse behind while a
+      // detonator did not would mean two different meanings for "destroyed",
+      // and the player's world would come back or not depending on which one
+      // got it.
       p.destroy();
+      planets.removeWhere((q) => q.id == p.id);
     }
     return lost;
   }

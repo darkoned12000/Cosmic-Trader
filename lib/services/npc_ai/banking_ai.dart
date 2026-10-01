@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
@@ -24,23 +25,45 @@ class BankingAi {
   /// Interest owed since [lastInterestTime], or null when no period has
   /// elapsed yet (first balance starts the clock with no retro payout).
   /// Pure math — the tick loop applies the result.
-  static ({int interest, DateTime stamp})? accrueInterest({
+  /// Credits owed for whole days elapsed since [lastInterestTick].
+  ///
+  /// Same rule as the player's, deliberately: one game day is
+  /// `GameClock.ticksPerDay` ticks and the stamp advances by **whole days only**,
+  /// so a partial day carries forward instead of being discarded. The old code
+  /// stamped "now" after paying, so an NPC paid every tick paid `floor(one day's
+  /// worth)` over and over — which at a 30-second tick is 2,880 partial payouts
+  /// instead of one, and silently *over*-paid by the discarded remainders. Two
+  /// copies of one rule with opposite rounding errors is the shape that motivated
+  /// putting the period in `GameClock` at all.
+  ///
+  /// Returns the interest and the stamp to write, or null when nothing is due.
+  static ({int interest, int stamp})? accrueInterest({
     required int bankBalance,
-    required DateTime? lastInterestTime,
+    required int? lastInterestTick,
     required double rate,
-    required DateTime now,
+    required int nowTick,
   }) {
     if (bankBalance <= 0) return null;
-    if (lastInterestTime == null) {
-      return (interest: 0, stamp: now);
+    if (lastInterestTick == null) {
+      return (interest: 0, stamp: nowTick);
     }
-    final elapsed = now.difference(lastInterestTime);
-    if (elapsed < const Duration(hours: 24)) return null;
-    final days =
-        elapsed.inMicroseconds / const Duration(hours: 24).inMicroseconds;
-    final interest = (bankBalance * rate * days).floor();
+    final elapsed = nowTick - lastInterestTick;
+    if (elapsed < GameClock.ticksPerDay) return null;
+    // Pay for the **whole days consumed** and advance by exactly those.
+    //
+    // The two halves have to agree or the rule leaks. My first version paid for
+    // the fractional `days` (1.5 days of interest) while advancing the stamp by
+    // the whole ones (1 day), so the next payout charged a full day for the same
+    // half day: 2,500 cr over two days where the rate says 2,000. Paying only
+    // for `wholeDays` makes the two agree by construction, and the remainder
+    // stays owed instead of being paid twice.
+    final wholeDays = elapsed ~/ GameClock.ticksPerDay;
+    final interest = (bankBalance * rate * wholeDays).floor();
     if (interest <= 0) return null;
-    return (interest: interest, stamp: now);
+    return (
+      interest: interest,
+      stamp: lastInterestTick + wholeDays * GameClock.ticksPerDay,
+    );
   }
 
   /// Check if NPC should deposit on-ship credits at a port.

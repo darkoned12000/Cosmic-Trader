@@ -19,11 +19,13 @@ import 'package:cosmic_trader/screens/login_screen.dart';
 import 'package:cosmic_trader/screens/port_screen.dart';
 import 'package:cosmic_trader/screens/sector_view.dart';
 import 'package:cosmic_trader/screens/settings_screen.dart';
+import 'package:cosmic_trader/widgets/sector_view_widgets/action_log_provider.dart';
 import 'package:cosmic_trader/screens/ship_status.dart';
 import 'package:cosmic_trader/services/audio_service.dart';
 import 'package:cosmic_trader/services/bounty_board.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
 import 'package:cosmic_trader/services/game_event_log.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
@@ -75,10 +77,12 @@ class _GameShellState extends State<GameShell> {
     _tickService.onTickComplete = (_) {
       _reloadNpcs();
       _applySolarRecharge();
+      _applyColonyReputation();
     };
     _tickService.onTickError = (error) {
       debugPrint('[GameShell] Tick error: $error');
     };
+    _tickService.reputationFaction = _player.faction;
     _tickService.onNpcAttacksPlayer = _handleNpcAttack;
     _tickService.start();
     // Hand the app-level close guard a way to flush this session if the OS
@@ -104,6 +108,10 @@ class _GameShellState extends State<GameShell> {
   void dispose() {
     GameShell.exitSaveHook = null;
     _tickService.stop();
+    // A clean exit should not cost the player cooldown progress. Not awaited
+    // because `dispose` cannot be, and it does not need to be: the clock is
+    // already flushed on a throttle, so the worst case is one window.
+    GameClock.flush();
     super.dispose();
   }
 
@@ -124,11 +132,40 @@ class _GameShellState extends State<GameShell> {
     } catch (_) {}
   }
 
+  /// Sends the player back to the Sector view, from wherever they are.
+  ///
+  /// Used after an action that empties the screen they are on — a detonation
+  /// removes the world, so the Planet tab has no subject left. Goes through the
+  /// same tab switch as the nav bar so the selected destination, the docked
+  /// flag and the planet key are all updated consistently; setting
+  /// `_currentIndex` on its own would leave the tick service believing the
+  /// player is still docked.
+  void _goToSectorTab() {
+    if (!mounted || _currentIndex == 0) return;
+    setState(() => _currentIndex = 0);
+    _tickService.playerDocked = false;
+  }
+
   Future<void> _reloadNpcs() async {
     try {
       final loaded = await NpcStorage().loadAll();
       if (mounted) setState(() => _npcs = loaded);
     } catch (_) {}
+  }
+
+  /// Pays out reputation for Citadel tiers that finished this tick.
+  ///
+  /// The tick only knows *how many* builds completed; the player lives here. The
+  /// tally is drained rather than read, so the same upgrade cannot be paid for
+  /// twice — see `_unpaidConstructionReputation`.
+  void _applyColonyReputation() {
+    final owed = _tickService.drainConstructionReputation();
+    if (owed == 0) return;
+    _updatePlayer(_player.withAlignmentDelta(owed.toDouble()));
+    if (mounted) {
+      ActionLogProvider.global
+          .info('Colony work completed — reputation +$owed');
+    }
   }
 
   /// Solar Array modules trickle-charge the active player each tick.
@@ -176,6 +213,12 @@ class _GameShellState extends State<GameShell> {
   }
 
   Future<void> _loadSettings() async {
+    // The clock is loaded *awaited and first*, before the tick service can run.
+    // A cooldown read against an unloaded clock sees tick 0 and decides nothing
+    // has expired yet, so ordering this after `start()` would let the first
+    // tick or two act on a clock that is about to jump.
+    await GameClock.load();
+
     final saved = await SettingsStorage.instance.load();
     if (saved != null && mounted) {
       setState(() => _settings = saved);
@@ -609,7 +652,9 @@ class _GameShellState extends State<GameShell> {
                       playerId: _player.id,
                     ),
                     ShipStatusView(
-                        player: _player, onPlayerUpdate: _updatePlayer),
+                        player: _player,
+                        onPlayerUpdate: _updatePlayer,
+                        worldCap: _settings.planetsPerSector),
                     ComputerScreen(
                       key: _universeKey,
                       player: _player,
@@ -625,6 +670,8 @@ class _GameShellState extends State<GameShell> {
                       player: _player,
                       onPlayerUpdate: _updatePlayer,
                       constructionTimeScale: _settings.constructionTimeScale,
+                      worldCap: _settings.planetsPerSector,
+                      onExitToSector: _goToSectorTab,
                     ),
                     SettingsScreen(
                       key: ValueKey('settings_${_settings.seed}'),
@@ -877,7 +924,9 @@ class _GameShellState extends State<GameShell> {
                             playerId: _player.id,
                           ),
                           ShipStatusView(
-                              player: _player, onPlayerUpdate: _updatePlayer),
+                              player: _player,
+                              onPlayerUpdate: _updatePlayer,
+                              worldCap: _settings.planetsPerSector),
                           ComputerScreen(
                             key: _computerKey,
                             player: _player,
@@ -894,6 +943,8 @@ class _GameShellState extends State<GameShell> {
                             onPlayerUpdate: _updatePlayer,
                             constructionTimeScale:
                                 _settings.constructionTimeScale,
+                            worldCap: _settings.planetsPerSector,
+                            onExitToSector: _goToSectorTab,
                           ),
                           SettingsScreen(
                             key: ValueKey('settings_${_settings.seed}'),

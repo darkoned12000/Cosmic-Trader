@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
@@ -64,11 +65,16 @@ class BountyBoard extends ChangeNotifier {
   set skipDiskLoadForTest(bool value) => _skipDiskLoad = value;
   bool _skipDiskLoad = false;
 
-  /// Federation bounty for a notoriety level: 0 below 50, otherwise
-  /// notoriety × 100 clamped to [5000, 100000]. Pure rule for tests.
-  static int fedAmount(double notoriety) {
-    if (notoriety < 50) return 0;
-    return (notoriety * 100).round().clamp(5000, 100000);
+  /// Federation bounty for a reputation, from the player's **evilness** — the
+  /// magnitude of a negative alignment, so 0 for anyone the galaxy thinks well
+  /// of. The Federation hunts villains, so a liked pilot draws no Fed bounty at
+  /// all rather than a small one.
+  ///
+  /// Threshold 64 is the original's: "Menace 1st Class" is the rank at which the
+  /// Federation starts posting. Pure rule for tests.
+  static int fedAmount(double evilness) {
+    if (evilness < 64) return 0;
+    return (evilness * 100).round().clamp(5000, 100000);
   }
 
   /// Distinct poster factions owed on [targetId] (for completion
@@ -102,11 +108,14 @@ class BountyBoard extends ChangeNotifier {
     return pruned;
   }
 
-  /// Removes expired marks (bounty review escrow): 7-day wall-clock TTL
-  /// from posting. Lapsed marks refund. Returns the pruned marks.
-  List<Bounty> pruneExpired({DateTime? now}) {
-    final at = now ?? DateTime.now();
-    final pruned = _active.where((b) => !b.expiresAt.isAfter(at)).toList();
+  /// Removes expired marks (bounty review escrow): a 7-day TTL from posting.
+  /// Lapsed marks refund. Returns the pruned marks.
+  ///
+  /// [nowTick] is injected so the rule is testable without waiting a week, and
+  /// it is the same reason the model takes a tick rather than a timestamp.
+  List<Bounty> pruneExpired({int? nowTick}) {
+    final at = nowTick ?? GameClock.tick;
+    final pruned = _active.where((b) => at >= b.expiresAtTick).toList();
     if (pruned.isEmpty) return const [];
     for (final b in pruned) {
       _active.remove(b);
@@ -278,7 +287,7 @@ class BountyBoard extends ChangeNotifier {
     required String posterName,
     String posterFaction = '',
     String reason = '',
-    DateTime? expiresAt,
+    int? expiresAtTick,
   }) {
     if (amount < minBountyAmount) return null;
     if (targetId.isEmpty) return null;
@@ -304,8 +313,8 @@ class BountyBoard extends ChangeNotifier {
       posterName: posterName,
       posterFaction: posterFaction,
       reason: reason,
-      createdAt: DateTime.now(),
-      expiresAt: expiresAt ?? DateTime.now().add(Bounty.ttl),
+      createdAtTick: GameClock.tick,
+      expiresAtTick: expiresAtTick ?? GameClock.tick + Bounty.ttlTicks,
     );
     _active.add(bounty);
     // Evict the cheapest mark first (bounty review): a flood of minimum

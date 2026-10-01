@@ -110,6 +110,17 @@ class GameSettings {
   final String fontFamily;
   final double fontSize;
 
+  // --- The clock ---
+
+  /// The persisted game-tick counter. See `GameClock`.
+  ///
+  /// Lives here rather than in a file of its own because it is one integer
+  /// with a natural home already being read at startup and written on change.
+  /// It is **world state, not a preference** — it must not be reset by the
+  /// "regenerate universe" path, which is why it is not part of the
+  /// generation config it sits beside.
+  final int worldTick;
+
   // --- Audio ---
   final double musicVolume;
   final double sfxVolume;
@@ -117,6 +128,7 @@ class GameSettings {
 
   const GameSettings({
     required this.totalSectors,
+    this.worldTick = 0,
     this.seed = 0,
     this.rawSeed = '',
     required this.portDensity,
@@ -221,6 +233,7 @@ class GameSettings {
 
   GameSettings copyWith({
     int? totalSectors,
+    int? worldTick,
     int? seed,
     String? rawSeed,
     double? portDensity,
@@ -269,6 +282,7 @@ class GameSettings {
   }) {
     return GameSettings(
       totalSectors: totalSectors ?? this.totalSectors,
+      worldTick: worldTick ?? this.worldTick,
       seed: seed ?? this.seed,
       rawSeed: rawSeed ?? this.rawSeed,
       portDensity: portDensity ?? this.portDensity,
@@ -323,6 +337,7 @@ class GameSettings {
   Map<String, dynamic> toJson() {
     return {
       'totalSectors': totalSectors,
+      'worldTick': worldTick,
       'seed': seed,
       'rawSeed': rawSeed,
       'portDensity': portDensity,
@@ -373,6 +388,9 @@ class GameSettings {
   factory GameSettings.fromJson(Map<String, dynamic> json) {
     return GameSettings(
       totalSectors: json['totalSectors'] as int? ?? 50,
+      // Absent in every pre-clock save, and 0 is the correct reading: a save
+      // that predates the clock has no cooldown progress to preserve.
+      worldTick: (json['worldTick'] as num?)?.toInt() ?? 0,
       seed: json['seed'] as int? ?? 0,
       rawSeed: json['rawSeed'] as String? ?? '',
       portDensity: (json['portDensity'] as num?)?.toDouble() ?? 0.35,

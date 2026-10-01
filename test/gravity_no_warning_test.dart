@@ -1,52 +1,32 @@
-import 'dart:convert';
-
 import 'package:cosmic_trader/data/models/faction.dart';
-import 'package:cosmic_trader/data/models/game_settings.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
-import 'package:cosmic_trader/widgets/sector_view_widgets/sector_interaction_panel.dart';
+import 'package:cosmic_trader/widgets/genesis_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/storage_fakes.dart';
 
-/// Faithful storage, for the same reason the colony tests need one: the panel
-/// writes through to `UniverseStorage` and the launch path awaits it.
-class _FaithfulUniverse extends UniverseStorage {
-  _FaithfulUniverse(List<Sector> initial)
-      : _blob =
-            jsonEncode(initial.map((e) => e.toJson()).toList(growable: false));
-  String _blob;
-
-  @override
-  Future<List<Sector>> loadUniverse() async =>
-      (jsonDecode(_blob) as List<dynamic>)
-          .cast<Map<String, dynamic>>()
-          .map(Sector.fromJson)
-          .toList();
-
-  @override
-  Future<void> saveSectors(List<Sector> updated) async {
-    final existing = await loadUniverse();
-    for (final u in updated) {
-      final i = existing.indexWhere((s) => s.id == u.id);
-      if (i >= 0) existing[i] = u;
-    }
-    _blob = jsonEncode(existing.map((e) => e.toJson()).toList(growable: false));
-  }
-}
+/// Faithful storage: it re-parses on every read and actually writes, because the
+/// launch path awaits the write-through and a shared-list fake would make an
+/// unsaved mutation structurally impossible to observe.
 
 /// Over-stacking does not stop the player, and does not make a speech first.
 ///
-/// Deliberately a **behaviour** test rather than a source scan. The first
-/// version of this guard grepped the panel's source for the strings 'Unstable
-/// orbit' and 'UNSTABLE', and it failed — not because the code still warned, but
-/// because a *comment* explaining that the warning had been removed still
-/// mentioned the removed text. A source scan is answered by prose, which is the
-/// opposite of what it is for. Tapping the control and watching what happens is
-/// not answerable by a comment.
+/// Deliberately a **behaviour** test. The first version of this guard grepped the
+/// panel's source for the words 'Unstable' and 'UNSTABLE' and failed — not because
+/// the code still warned, but because a *comment* explaining the removal still
+/// mentioned them. A source scan is answered by prose, which is the opposite of
+/// what it is for.
+///
+/// It used to drive the Sector Contents orbit row, which no longer exists \u2014 the
+/// Ship screen's Cargo & Equipment card is now the single launch point. The
+/// *rule* under test never lived in either: it lives in [runGenesisLaunch], so
+/// that is what gets driven here. Testing the shared function rather than one
+/// of its two entry points is the point of having extracted it.
 void main() {
-  setUp(() => UniverseStorage.instanceForTest = _FaithfulUniverse([]));
+  setUp(() => UniverseStorage.instanceForTest = FaithfulUniverse([]));
   tearDown(() => UniverseStorage.instanceForTest = null);
 
   Player pilot({int torpedoes = 1}) => Player(
@@ -66,107 +46,163 @@ void main() {
       );
 
   /// A sector holding [worlds] worlds against [cap].
-  Sector sectorWith(int worlds, int cap) {
-    final s = Sector(
-      id: 1,
-      name: 'Kronos Reach',
-      x: 0,
-      y: 0,
-      warpRoutes: const [],
-      planets: List<Planet>.generate(
-          worlds, (i) => Planet(name: 'W$i', planetType: 'Terran')),
-    );
-    return s;
-  }
+  Sector sectorWith(int worlds) => Sector(
+        id: 1,
+        name: 'Kronos Reach',
+        x: 0,
+        y: 0,
+        warpRoutes: const [],
+        planets: List<Planet>.generate(
+            worlds, (i) => Planet(name: 'W$i', planetType: 'Terran')),
+      );
 
+  /// A host that mirrors what the real launch buttons do: read the player from
+  /// its own field, hand the updated one back through the callback.
+  ///
+  /// It has to **rebuild from what the callback returned**. A host that passed
+  /// the player in once and mutated a local would read a stale copy on a second
+  /// launch, and the guard would report zero while the flow worked perfectly \u2014
+  /// the same shape of bug the colony tests hit.
   Future<void> pump(WidgetTester tester, Sector sector, Player player,
       {int cap = 3}) async {
     tester.view.physicalSize = const Size(1400, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+    var live = player;
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
       home: Scaffold(
-        body: SectorInteractionPanel(
-          currentSector: sector,
-          player: player,
-          onPlayerUpdate: (_) {},
-          settings: GameSettings.defaults().copyWith(planetsPerSector: cap),
+        body: _LauncherHost(
+          sector: sector,
+          cap: cap,
+          player: live,
+          onPlayerUpdate: (p) => live = p,
         ),
       ),
     ));
     await tester.pumpAndSettle();
   }
 
-  testWidgets('tapping LAUNCH in a full sector fires without asking',
+  testWidgets('a full sector is disclosed inline, while naming',
       (tester) async {
-    final sector = sectorWith(3, 3);
-    final player = pilot();
-    await pump(tester, sector, player);
+    final sector = sectorWith(3);
+    await pump(tester, sector, pilot());
 
-    expect(find.text('LAUNCH TORPEDO'), findsOneWidget,
-        reason: 'the action is offered');
-
-    // Select the row, then fire. Every entry in this panel goes through the same
-    // select-then-act flow and the torpedo row shares it, so a guard that only
-    // tapped the row's label would have passed against a dead control — which is
-    // exactly what this row was until the missing button turned up.
-    //
-    // The SELECT buttons are identical across rows, so this picks the one in the
-    // launch row. The launch row is appended after every world in `_entries`, so
-    // it is the last one; asserted rather than assumed, because an entry added
-    // later would otherwise silently move the target and the tap would hit a
-    // planet instead.
-    final selects = find.text('[ SELECT ]');
-    expect(selects, findsNWidgets(4),
-        reason: 'three worlds plus the launch row');
-    expect(find.text('LAUNCH TORPEDO'), findsOneWidget);
-    await tester.tap(selects.last);
+    await tester.tap(find.text('LAUNCH'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Launch'), findsOneWidget,
-        reason: 'selecting the row must reveal a way to fire it');
-    await tester.tap(find.text('Launch'));
+    // Named first, warned once, and the warning arrives *with the name* rather
+    // than as a separate gate the player has to acknowledge before they can
+    // finish typing.
+    expect(find.text('Name this world'), findsOneWidget);
+    expect(find.textContaining('gravitationally unstable'), findsOneWidget,
+        reason: 'over-stacking is disclosed before the launch, not after');
+  });
+
+  testWidgets('an empty name cannot be launched', (tester) async {
+    final sector = sectorWith(1);
+    await pump(tester, sector, pilot());
+    await tester.tap(find.text('LAUNCH'));
     await tester.pumpAndSettle();
 
-    // No dialog stood in the way. This is the whole assertion: whatever the
-    // rules are, the player is not asked to acknowledge them a fourth time.
-    expect(find.byType(AlertDialog), findsNothing);
-    expect(find.textContaining('Fire anyway'), findsNothing);
-    expect(find.textContaining('Unstable'), findsNothing);
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Launch'),
+    );
+    expect(button.onPressed, isNotNull,
+        reason: 'prefilled, so it starts valid');
 
-    // And the launch actually happened, so the absence of the dialog is not just
-    // the control being broken.
-    expect(sector.livingPlanets, hasLength(4));
+    // Clear it. The confirm must go dead rather than silently substituting the
+    // suggestion \u2014 a player who emptied the box to type their own name should
+    // not get a name they never chose.
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Launch'))
+          .onPressed,
+      isNull,
+    );
+    expect(sector.worldSlotsUsed, 1, reason: 'nothing was created');
   });
 
-  testWidgets('the entry reads the same whether or not the sector is full',
+  testWidgets('the type is never revealed before the launch commits',
       (tester) async {
-    // One label, not two. A row that changed its wording past the cap would be
-    // the warning, just quieter.
-    final roomy = sectorWith(1, 3);
-    await pump(tester, roomy, pilot());
-    final roomyLabel = tester
-        .widgetList<Text>(find.byType(Text))
-        .map((t) => t.data ?? '')
-        .firstWhere((d) => d.contains('LAUNCH'));
+    // The leak: the dialog used to be titled "A <Type> World", which turned the
+    // naming step into a free reroll \u2014 read the roll, abort if it was wrong, fire
+    // again, since aborting costs nothing.
+    final sector = sectorWith(1);
+    await pump(tester, sector, pilot());
+    await tester.tap(find.text('LAUNCH'));
+    await tester.pumpAndSettle();
 
-    final full = sectorWith(3, 3);
-    await pump(tester, full, pilot());
-    final fullLabel = tester
-        .widgetList<Text>(find.byType(Text))
-        .map((t) => t.data ?? '')
-        .firstWhere((d) => d.contains('LAUNCH'));
+    expect(
+        find.text('Planet Creation Process Initiated\u2026'), findsOneWidget);
 
-    expect(fullLabel.split(' · ').first, roomyLabel.split(' · ').first);
+    final dialogText = tester
+        .widgetList<Text>(find.descendant(
+            of: find.byType(AlertDialog), matching: find.byType(Text)))
+        .map((t) => t.data ?? '')
+        .join(' ');
+    for (final type in Planet.allTypes) {
+      expect(dialogText, isNot(contains(type)),
+          reason: 'the dialog leaked the $type roll');
+    }
   });
 
-  testWidgets('the slot count is still shown, because that is information',
+  testWidgets('and it is revealed afterwards, once the launch is committed',
       (tester) async {
-    final full = sectorWith(3, 3);
-    await pump(tester, full, pilot());
-    // Not a warning, but the player still needs to know the sector is at its
-    // limit. Facts are not nagging.
-    expect(find.textContaining('3/3 slots used'), findsOneWidget);
+    final sector = sectorWith(1);
+    await pump(tester, sector, pilot());
+    await tester.tap(find.text('LAUNCH'));
+    await tester.pumpAndSettle();
+
+    final dialogLaunch = find.descendant(
+        of: find.byType(AlertDialog), matching: find.text('Launch'));
+    await tester.tap(dialogLaunch);
+    await tester.pumpAndSettle();
+
+    // Post-hoc disclosure is fine and useful \u2014 the finding out is on landing.
+    expect(sector.worldSlotsUsed, 2);
+    expect(sector.livingPlanets.last.planetType, isIn(Planet.allTypes));
   });
+}
+
+/// Minimal host for [runGenesisLaunch].
+class _LauncherHost extends StatefulWidget {
+  final Sector sector;
+  final int cap;
+  final Player player;
+  final ValueChanged<Player> onPlayerUpdate;
+
+  const _LauncherHost({
+    required this.sector,
+    required this.cap,
+    required this.player,
+    required this.onPlayerUpdate,
+  });
+
+  @override
+  State<_LauncherHost> createState() => _LauncherHostState();
+}
+
+class _LauncherHostState extends State<_LauncherHost> {
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ElevatedButton(
+        onPressed: () async {
+          final outcome = await runGenesisLaunch(
+            context: context,
+            player: widget.player,
+            sector: widget.sector,
+            worldCap: widget.cap,
+          );
+          if (outcome == null || !mounted) return;
+          widget.onPlayerUpdate(outcome.player);
+          setState(() {});
+        },
+        child: const Text('LAUNCH'),
+      ),
+    );
+  }
 }

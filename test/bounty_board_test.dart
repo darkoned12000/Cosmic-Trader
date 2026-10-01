@@ -1,3 +1,4 @@
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/bounty.dart';
@@ -171,7 +172,8 @@ void main() {
         amount: 1000,
         posterId: 'p',
         posterName: 'P',
-        expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+        // Already lapsed: one tick short of an hour of *play*.
+        expiresAtTick: GameClock.tick - GameClock.ticksPerHour + 1,
       );
       board.post(
         targetId: 'fresh',
@@ -197,7 +199,8 @@ void main() {
         amount: 5000,
         posterId: 'FEDERATION',
         posterName: 'Federation Marshal',
-        expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+        // Already lapsed: one tick short of an hour of *play*.
+        expiresAtTick: GameClock.tick - GameClock.ticksPerHour + 1,
       );
       expect(board.pruneExpired(), hasLength(1));
       expect(board.pendingRefunds, isEmpty);
@@ -239,7 +242,7 @@ void main() {
 
     test('posts default to a 7-day expiry; legacy rows backfill', () {
       final board = BountyBoard.global;
-      final before = DateTime.now();
+      final before = GameClock.tick;
       final posted = board.post(
         targetId: 't',
         targetName: 'T',
@@ -248,12 +251,27 @@ void main() {
         posterId: 'p',
         posterName: 'P',
       )!;
-      expect(posted.expiresAt.difference(before).inDays, 7);
+      expect(posted.expiresAtTick - before, Bounty.ttlTicks,
+          reason: 'a week is 7 x 2,880 = 20,160 ticks');
+      // A legacy row: a wall-clock `createdAt` and no expiry at all.
+      //
+      // It is read as created *now*, which is a deliberate choice and not an
+      // oversight — see `Bounty.fromJson`. Converting the old timestamp would
+      // mean inventing a tick, and "some time before now" is unknowable, so the
+      // row is treated as fresh and gets a full TTL from load. The assertion
+      // pins that behaviour rather than leaving it to be discovered.
       final legacy = Bounty.fromJson({
         'id': 'x',
         'createdAt': DateTime.utc(2026, 1, 1).toIso8601String(),
       });
-      expect(legacy.expiresAt, DateTime.utc(2026, 1, 1).add(Bounty.ttl));
+      expect(legacy.createdAtTick, GameClock.tick,
+          reason: 'a pre-clock row is re-stamped at load, not converted');
+      expect(legacy.expiresAtTick, GameClock.tick + Bounty.ttlTicks);
+
+      // A row already on the tick keys round-trips exactly.
+      final modern = Bounty.fromJson(posted.toJson());
+      expect(modern.createdAtTick, posted.createdAtTick);
+      expect(modern.expiresAtTick, posted.expiresAtTick);
     });
   });
 
@@ -460,12 +478,16 @@ void main() {
     expect(board.paid.first.targetName, 'T24');
   });
 
-  test('Federation amounts scale with notoriety above 50', () {
+  test('Federation amounts scale with evilness above the Menace threshold', () {
+    // FedAmount takes **evilness** (the magnitude of a negative alignment), not a
+    // signed reputation: the Federation hunts villains, so a well-liked pilot
+    // draws no Fed bounty at all rather than a small one. 64 is "Menace 1st
+    // Class", the original's threshold for the Federation to start posting.
     expect(BountyBoard.fedAmount(0), 0);
-    expect(BountyBoard.fedAmount(49.9), 0);
-    expect(BountyBoard.fedAmount(50), 5000);
-    expect(BountyBoard.fedAmount(75), 7500);
-    expect(BountyBoard.fedAmount(100), 10000);
+    expect(BountyBoard.fedAmount(63.9), 0);
+    expect(BountyBoard.fedAmount(64), 6400);
+    expect(BountyBoard.fedAmount(96), 9600);
+    expect(BountyBoard.fedAmount(128), 12800);
     expect(BountyBoard.fedAmount(5000), 100000);
   });
 

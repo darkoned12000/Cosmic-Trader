@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 
 /// Dialog for purchasing a port through haggling. Styled to match the
 /// compact HUD look used in port_trade_view.dart: a terminal-style
@@ -190,15 +191,6 @@ class _BuyPortDialogState extends State<BuyPortDialog>
     _ownerCounter = _askingPrice;
   }
 
-  String _formatCredits(double value) {
-    if (value >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(2)}M';
-    } else if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(1)}K';
-    }
-    return value.toStringAsFixed(0);
-  }
-
   // ---------------------------------------------------------------------
   // Think-timer: player has _thinkSeconds to submit an offer each round.
   // The heartbeat border speeds up as time runs low. Running out burns a
@@ -276,7 +268,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
       _log.add((
         round: _round,
         speaker: 'you',
-        text: 'Offered ${_formatCredits(offer)} cr',
+        text: 'Offered ${compactMoney(offer)} cr',
         type: 'you',
       ));
     });
@@ -293,7 +285,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
             round: _round,
             speaker: 'owner',
             text:
-                'Deal! ${_formatCredits(offer)} cr accepted. ${_pick(_acceptLines)}',
+                'Deal! ${compactMoney(offer)} cr accepted. ${_pick(_acceptLines)}',
             type: 'success',
           ));
         });
@@ -315,8 +307,8 @@ class _BuyPortDialogState extends State<BuyPortDialog>
             round: _round,
             speaker: 'owner',
             text: atRoundLimit
-                ? '$line (Counter: ${_formatCredits(_ownerCounter)} cr.)'
-                : '$line Counter: ${_formatCredits(_ownerCounter)} cr.',
+                ? '$line (Counter: ${compactMoney(_ownerCounter)} cr.)'
+                : '$line Counter: ${compactMoney(_ownerCounter)} cr.',
             type: 'warning',
           ));
           if (atRoundLimit) {
@@ -371,7 +363,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
           _log.add((
             round: _round,
             speaker: 'system',
-            text: 'Insufficient funds. Need ${_formatCredits(price)} cr.',
+            text: 'Insufficient funds. Need ${compactMoney(price)} cr.',
             type: 'error',
           ));
         });
@@ -488,7 +480,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
                       ),
                     ),
                     Text(
-                      '${_formatCredits(widget.port.netWorth)} net',
+                      '${compactMoney(widget.port.netWorth)} net',
                       style: TextStyle(
                         fontFamily: mono,
                         fontSize: 12,
@@ -515,10 +507,10 @@ class _BuyPortDialogState extends State<BuyPortDialog>
                         cs,
                         mono,
                         'current ask',
-                        _formatCredits(_ownerCounter),
+                        compactMoney(_ownerCounter),
                         valueColor: cs.primary,
                         subValue: _ownerCounter != _askingPrice
-                            ? _formatCredits(_askingPrice)
+                            ? compactMoney(_askingPrice)
                             : null,
                       ),
                     ),
@@ -535,7 +527,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
                         cs,
                         mono,
                         'your credits',
-                        _formatCredits(widget.player.credits.toDouble()),
+                        compactMoney(widget.player.credits.toDouble()),
                       ),
                     ),
                     if (widget.player.bankBalance > 0) ...[
@@ -552,7 +544,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
                           cs,
                           mono,
                           'bank',
-                          _formatCredits(widget.player.bankBalance.toDouble()),
+                          compactMoney(widget.player.bankBalance.toDouble()),
                         ),
                       ),
                     ],
@@ -913,7 +905,7 @@ class _BuyPortDialogState extends State<BuyPortDialog>
               ),
             ),
             Text(
-              _formatCredits(amount),
+              compactMoney(amount),
               style: TextStyle(
                 fontFamily: mono,
                 fontSize: 10,

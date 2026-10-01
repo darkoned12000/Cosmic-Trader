@@ -5,6 +5,8 @@ import 'package:cosmic_trader/core/faction_colors.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 
 class PortManagementScreen extends StatefulWidget {
   final Port port;
@@ -55,15 +57,6 @@ class _PortManagementScreenState extends State<PortManagementScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
-  }
-
-  String _fmt(double value) {
-    if (value >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(2)}M';
-    } else if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(1)}K';
-    }
-    return value.toStringAsFixed(0);
   }
 
   @override
@@ -192,7 +185,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
-                'Net: ${_fmt(_port.netWorth)}',
+                'Net: ${compactMoney(_port.netWorth)}',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
@@ -236,7 +229,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
             Row(
               children: [
                 Text(
-                  '${_fmt(revenue)} cr',
+                  '${compactMoney(revenue)} cr',
                   style: theme.textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: Colors.green.shade300,
@@ -300,14 +293,14 @@ class _PortManagementScreenState extends State<PortManagementScreen>
               ),
             ),
             const SizedBox(height: 16),
-            _statRow(cs, 'Port Credits', _fmt(_port.portCredits)),
+            _statRow(cs, 'Port Credits', compactMoney(_port.portCredits)),
             _statRow(
                 cs, 'Cash Health', '$healthLabel (${(ratio * 100).round()}%)',
                 valueColor: healthColor.shade300),
             _statRow(cs, 'Defense Level', '${_port.defenseLevel}/4'),
             _statRow(cs, 'Storage Level', '${_port.storageLevel}/10'),
             _statRow(cs, 'Trade Tax', '${(_port.ownerTaxRate * 100).round()}%'),
-            _statRow(cs, 'Desired Credits', _fmt(_port.desiredCredits)),
+            _statRow(cs, 'Desired Credits', compactMoney(_port.desiredCredits)),
           ],
         ),
       ),
@@ -458,7 +451,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                       backgroundColor: cs.primary,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                     ),
-                    child: Text('${_fmt(cost)} cr'),
+                    child: Text('${compactMoney(cost)} cr'),
                   ),
               ],
             ),
@@ -489,12 +482,12 @@ class _PortManagementScreenState extends State<PortManagementScreen>
 
   void _upgradeDefense(double cost) {
     if (widget.player.credits < cost) {
-      _showError('Insufficient credits. Need ${_fmt(cost)} cr.');
+      _showError('Insufficient credits. Need ${compactMoney(cost)} cr.');
       return;
     }
     _showConfirm(
       'Upgrade Defenses',
-      'Upgrade to Level ${_port.defenseLevel + 1} for ${_fmt(cost)} cr?',
+      'Upgrade to Level ${_port.defenseLevel + 1} for ${compactMoney(cost)} cr?',
       () {
         _updatePort(_port.copyWith(
           defenseLevel: _port.defenseLevel + 1,
@@ -598,7 +591,9 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                   onPressed: canUpgrade ? () => _upgradeStorage(cost) : null,
                   icon: const Icon(Icons.add_circle_rounded, size: 20),
                   label: Text(
-                    cost.isFinite ? 'Upgrade — ${_fmt(cost)} cr' : 'MAX LEVEL',
+                    cost.isFinite
+                        ? 'Upgrade — ${compactMoney(cost)} cr'
+                        : 'MAX LEVEL',
                   ),
                   style: FilledButton.styleFrom(
                     backgroundColor: canUpgrade ? cs.primary : null,
@@ -610,7 +605,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
-                    'Not enough credits (need ${_fmt(cost)} cr)',
+                    'Not enough credits (need ${compactMoney(cost)} cr)',
                     style: TextStyle(
                       fontSize: 12,
                       color: cs.error,
@@ -678,7 +673,7 @@ class _PortManagementScreenState extends State<PortManagementScreen>
   void _upgradeStorage(double cost) {
     _showConfirm(
       'Upgrade Storage',
-      'Upgrade to Level ${_port.storageLevel + 1} for ${_fmt(cost)} cr?\n\n'
+      'Upgrade to Level ${_port.storageLevel + 1} for ${compactMoney(cost)} cr?\n\n'
           'Supply/Demand capacity will increase by 50%.',
       () {
         _updatePort(_port.copyWith(
@@ -999,16 +994,24 @@ class _PortManagementScreenState extends State<PortManagementScreen>
 
     _showConfirm(
       'Collect Revenue',
-      'Withdraw ${_fmt(revenue)} cr from port earnings?',
+      'Withdraw ${compactMoney(revenue)} cr from port earnings?',
       () {
         _updatePort(_port.copyWith(
           accumulatedRevenue: 0,
           portCredits: _port.portCredits - revenue,
         ));
-        widget.onPlayerUpdate(widget.player.copyWith(
-          credits: widget.player.credits + revenue.toInt(),
-          bankBalance: widget.player.bankBalance,
-        ));
+        // A working port is the game's other good deed, and deliberately small:
+        // repeatable and undramatic, so a player who keeps one drifts upward
+        // without a single quest. Applied through the delta helper so the clamp
+        // and the sign live in one place.
+        widget.onPlayerUpdate(
+          widget.player
+              .withAlignmentDelta(ReputationActions.portRevenue)
+              .copyWith(
+                credits: widget.player.credits + revenue.toInt(),
+                bankBalance: widget.player.bankBalance,
+              ),
+        );
       },
     );
   }

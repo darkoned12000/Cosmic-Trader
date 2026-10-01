@@ -15,7 +15,7 @@ import 'package:cosmic_trader/services/npc_ai/npc_personality.dart';
 Player _player({
   required FactionClass faction,
   required int sector,
-  double notoriety = 0,
+  double alignment = 0,
   Map<String, int> standings = const {},
   Map<String, String> weaponTypes = const {},
   Map<String, int> weaponSlots = const {'main_forward': 1},
@@ -33,7 +33,7 @@ Player _player({
     credits: 10000,
     researchPoints: 0,
     faction: faction,
-    notoriety: notoriety,
+    alignment: alignment,
     factionStandings: standings,
     weaponTypes: weaponTypes,
     weaponSlots: weaponSlots,
@@ -62,7 +62,7 @@ NpcShip _npc({
 }
 
 void main() {
-  test('notoriety deters attacks below overwhelming odds', () {
+  test('a fearsome reputation deters attacks below overwhelming odds', () {
     // pirateRaider (caution 0.2 → base threshold 1.36) with L1 plasmaLance
     // (35 + 5 hull bonus = 40) vs autoLaser player (25): ratio 1.6.
     final npc = _npc(
@@ -73,8 +73,11 @@ void main() {
       hullLevel: 2,
     );
     final clean = _player(faction: FactionClass.trader, sector: 11);
+    // Negative: `threatRating` only rises as alignment *falls*, so a positive
+    // value here would make the pilot look harmless and the guard would pass for
+    // the wrong reason.
     final notorious =
-        _player(faction: FactionClass.trader, sector: 11, notoriety: 100);
+        _player(faction: FactionClass.trader, sector: 11, alignment: -100);
 
     expect(NpcAiService.shouldAttackPlayer(npc, clean), isTrue);
     // 1.6× < 1.36 × 1.5 (fear multiplier): deterred.
@@ -158,10 +161,13 @@ void main() {
           seed: 206,
         );
     // Player mounts the same plasmaLance (35 vs 35): no fear, no flee.
-    Player pirate(int notoriety) => _player(
+    // Negative, because that is now the direction that reads as dangerous:
+    // `threatRating` is one-sided, so a positive value would make this pilot
+    // *less* threatening and the guard below would pass for the wrong reason.
+    Player pirate(int evilness) => _player(
           faction: FactionClass.pirate,
           sector: 11,
-          notoriety: notoriety.toDouble(),
+          alignment: -evilness.toDouble(),
           weaponTypes: const {'main_forward': 'plasmaLance'},
         );
 

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:cosmic_trader/data/models/faction.dart';
@@ -11,6 +10,7 @@ import 'package:cosmic_trader/services/planet_production_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'support/storage_fakes.dart';
 
 /// A universe storage fake that behaves like the real one: **a fresh object
 /// graph on every load**, and a write that actually persists.
@@ -22,39 +22,6 @@ import 'package:flutter_test/flutter_test.dart';
 /// missing save could not possibly be observed. The real storage re-parses the
 /// file on every call, which is precisely what makes an unsaved mutation
 /// disappear.
-class _FaithfulUniverse extends UniverseStorage {
-  _FaithfulUniverse(List<Sector> initial) : _blob = _encode(initial);
-
-  String _blob;
-
-  /// Number of writes that actually reached the blob, so a test can assert a
-  /// save happened rather than inferring it from what the screen shows.
-  int writes = 0;
-
-  static String _encode(List<Sector> sectors) =>
-      jsonEncode(sectors.map((s) => s.toJson()).toList(growable: false));
-
-  @override
-  Future<List<Sector>> loadUniverse() async =>
-      (jsonDecode(_blob) as List<dynamic>)
-          .cast<Map<String, dynamic>>()
-          .map(Sector.fromJson)
-          .toList();
-
-  @override
-  Future<void> saveSectors(List<Sector> updated) async {
-    // Mirrors the real merge: read what is on disk, splice the caller's
-    // sector in by id, write the lot back.
-    final existing = await loadUniverse();
-    if (existing.isEmpty) return;
-    for (final u in updated) {
-      final i = existing.indexWhere((s) => s.id == u.id);
-      if (i >= 0) existing[i] = u;
-    }
-    _blob = _encode(existing);
-    writes++;
-  }
-}
 
 void main() {
   setUpAll(() async {
@@ -64,7 +31,7 @@ void main() {
     await loader.load();
   });
 
-  late _FaithfulUniverse store;
+  late FaithfulUniverse store;
   late Planet planet;
   late Sector sector;
 
@@ -92,7 +59,7 @@ void main() {
       warpRoutes: const [],
       planets: [planet],
     );
-    store = _FaithfulUniverse([sector]);
+    store = FaithfulUniverse([sector]);
     UniverseStorage.instanceForTest = store;
   });
   tearDown(() => UniverseStorage.instanceForTest = null);

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
+import 'package:cosmic_trader/data/models/reputation.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/faction_standing.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
@@ -124,10 +125,30 @@ class NpcAiService {
   static Map<String, NpcShip>? npcById;
   static Set<String>? livingIds;
 
+  /// Sector ids within 2 hops of any player (review batch 4).
+  ///
+  /// The action log is the player's own feed, and the tick service has
+  /// always proximity-filtered ITS logs. NPC events written straight to
+  /// [ActionLogProvider] bypassed that, so on a wide map a player watched
+  /// distant NPCs refuel, capture ports, and trade while their own
+  /// sector was silent. Null outside a tick → every event is shown, so
+  /// tests and direct [processTurn] calls keep the unfiltered behaviour.
+  static Set<int>? playerProximitySectors;
+
+  /// Whether an event in [sectorId] is close enough to a player to
+  /// belong in their action log. True when unset (no tick context).
+  static bool isNearPlayer(int sectorId) =>
+      playerProximitySectors?.contains(sectorId) ?? true;
+
   /// Builds the per-tick indices ([sectorById], [npcsBySector],
-  /// [npcById], [livingIds]) plus the shared pathfinding map. Call once
-  /// before the NPC loop, [endTick] after.
-  static void beginTick(List<Sector> sectors, List<NpcShip> allNpcs) {
+  /// [npcById], [livingIds]) plus the shared pathfinding map, and takes
+  /// the player-proximity set that gates player-facing NPC log lines.
+  /// Call once before the NPC loop, [endTick] after.
+  static void beginTick(
+    List<Sector> sectors,
+    List<NpcShip> allNpcs, {
+    Set<int>? playerProximity,
+  }) {
     final byId = {for (final s in sectors) s.id: s};
     sectorById = byId;
     PathfindingService.sharedIndex = byId;
@@ -142,6 +163,7 @@ class NpcAiService {
     npcsBySector = bySector;
     npcById = byNpcId;
     livingIds = alive;
+    playerProximitySectors = playerProximity;
   }
 
   /// Clears the per-tick indices (nulls restore scan fallbacks).
@@ -150,6 +172,7 @@ class NpcAiService {
     npcsBySector = null;
     npcById = null;
     livingIds = null;
+    playerProximitySectors = null;
     PathfindingService.sharedIndex = null;
   }
 
@@ -512,10 +535,13 @@ class NpcAiService {
     final playerPower = CombatService.calculatePlayerFirepower(player);
     if (playerPower <= 0) return true;
 
-    // Higher caution = needs bigger power advantage; notoriety inflates
-    // the requirement (fear); personal hatred without lore hostility
-    // demands a decisive edge.
-    var powerThreshold = (1.2 + caution * 0.8) * (1 + player.notoriety / 200);
+    // Higher caution = needs bigger power advantage; a reputation for villainy
+    // inflates the requirement (fear); personal hatred without lore hostility
+    // demands a decisive edge. Reads [Player.threatRating], which is one-sided,
+    // so a well-liked pilot is *less* likely to be shot at rather than merely
+    // equally unlikely.
+    var powerThreshold =
+        (1.2 + caution * 0.8) * (1 + player.threatRating / 200);
     if (!hostile) powerThreshold *= 1.5;
     return npcPower > playerPower * powerThreshold;
   }
@@ -566,14 +592,20 @@ class NpcAiService {
   // Faction hostility
   // ────────────────────────────────────────────────────────────────
 
-  static bool _isHostileFaction(FactionClass a, FactionClass b) {
-    if (a == b) return false;
-    if (a == FactionClass.pirate || b == FactionClass.pirate) return true;
-    // Duran vs Vinari are always hostile
-    if (a == FactionClass.duran && b == FactionClass.vinari) return true;
-    if (a == FactionClass.vinari && b == FactionClass.duran) return true;
-    return false;
-  }
+  /// Whether two factions are at war — pirates against everyone, Duran and
+  /// Vinari against each other, everyone else at peace.
+  ///
+  /// **Public** because it is no longer only the AI's business. It decides which
+  /// disposition a hail gets, and it decides whether killing an NPC is a routine
+  /// slaying or the murder of a peaceful pilot. Both of those read the rule, so
+  /// the rule has one owner: it was duplicated in `npc_chatter.dart` as a private
+  /// mirror, which is the shape where two copies drift and nobody notices.
+  static bool areFactionsHostile(FactionClass a, FactionClass b) =>
+      FactionHostility.areHostile(a, b);
+
+  /// Private alias retained so the ~12 internal call sites read unchanged.
+  static bool _isHostileFaction(FactionClass a, FactionClass b) =>
+      areFactionsHostile(a, b);
 
   // ────────────────────────────────────────────────────────────────
   // Helpers
