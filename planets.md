@@ -802,8 +802,12 @@ existing planet phases. T7 and T8 are deferred by decision, not by dependency.
 | **T4** | **Port Report: quantities and distance.** A column for what a port will still take, and hops from the player. | Small | — | Widget test on the rendered rows. The quantity data is already public (`supply`, `demand`, `effectiveMax*`); distance is not computed today |
 | **T5** | **The gate and the UI.** `GameSettings.planetTradingEnabled` + a new **Settings → Modules** panel, and Buy/Sell in Transfers with a job-status row. | Medium | T1-T4 | **DONE.** Widget test pins the gate both ways (absent off, present on); every job row carries a per-run `TickProgressBar` countdown |
 | **T6** | **Retire `Collect`.** Route the shipment pool through a sell job, or delete the button. | Small | T5 | **DONE as sweep, not sale.** The pool is overflow, so `Collect` became a free **Move to store** bounded by room (drones included); the flat payout table is deleted, leaving exactly one price per commodity — the live port one. Guard: model bounds + widget flow + a source scan pinning the table's absence |
-| **T7** | **Failure rolls.** The chance a run is lost, and what it costs. | Small | T5 | Injectable RNG so both branches are reachable in a test — a probability tested with a real RNG is a test of the weather |
-| **T8** | **Convoy + insurance.** Player or NPC ships fly the runs; losses are ships; insurance covers them. | Large | T7 | Deferred by decision. See the note above |
+| **T7** | **Failure rolls.** The chance a run is lost, and what it costs. | Small | T5 | **DONE.** Injected RNG reaches both branches; risk is deterministic per hops (knowable on the quote), distance-gated (same-sector never fails) |
+| **T7b** | **A loss must be visible, named and countable.** Per-run ledger, per-job delivered/lost, a Report. | Medium | T7 | **DONE.** The counter could not lie: delivered/lost/remaining partition the order exactly, and the guard asserts the *number*, not the marker beside it |
+| **T8** | **Four outcome classes.** Destroyed / delayed / seized / delivered, and the reservation accounting each implies. | Medium | T7 | **DONE.** The cause→outcome rule lives on the enum, so weights and consequences cannot drift. Zero-weight causes are a promise kept by arithmetic |
+| **T9** | **Order history.** A finished order keeps its totals after its jobs are gone. | Small | T8 | **DONE.** Bounded at ten per world; a split order records **one** order naming every port it touched |
+| **T10** | **Insurance.** Per-order premium quoted beside the run risk, covering lost runs. | Medium | T8 | Open. With all four classes shipped there is finally something for a policy to *select* |
+| **T11** | **Convoy escorts / manual port choice / cost-based routing.** | Large | T8-T10 | Deferred by decision. See the note above |
 
 **A job row needs a per-run countdown, not just a run count.** A run is minutes
 long, so a row reading `12 runs to go` that does not move for four minutes is
@@ -2651,6 +2655,164 @@ grants (F) are what make the existing screen honest, and neither is large.
   which is also the correctness argument, since no run can complete inside
   the window. Past the bound the order is assumed landed and logged, because
   blind re-creation could duplicate delivered goods.
+- **T7 failure rolls.** Each run rolls `0.6% × hops` for interception
+  (same-sector = 0%, so a local run is free of risk; a four-hop run ~2.4%).
+  The roll is **injected** (`advanceAll(universe, rng:)`) so both branches are
+  reachable in a test and the game shares one stream. A failed run consumes
+  its units and lands nothing — the loss is the units that never arrive,
+  already paid for, borne by whoever committed the value (pilot's credits for
+  a buy, the world's goods for a sell). The job carries on with the
+  remainder. Risk is *deterministic per hops*, so the quote shows the
+  order-level `N% run risk` **before** the player pays — making a failure a
+  risk they accepted (a silent loss reads as a bug) and making "split the
+  order into smaller ones" visibly worthwhile. T8's insurance is the deferred
+  mitigation for the loss itself.
+- **T7b a loss must be visible, named, and countable.** Three layers, because
+  one was not enough: the **log line** names the cause; the **order row** shows
+  `delivered / total · N LOST` in red plus a standing "N units lost — see
+  Report"; and a **Report** dialog lists the last ten resolved runs with a
+  status and a reason each. Causes are *contextual* (weights read the route:
+  pirates dominate where pirates are and on long hauls, federal ports seize and
+  free ports do not, anomaly sectors throw storms, a same-sector run can only
+  fail mechanically), so a reason tells the player something about the route
+  they would change. The ledger lives on the **world** (`Planet.tradeIncidents`,
+  bounded at ten, cleared by `destroy()`), never on the player, because the tick
+  resolves runs and must not write a player.
+- **The counter was lying, and the marker did not catch it.**
+  `delivered` was `unitsTotal - unitsRemaining`, which counts a lost run as
+  delivered: an order that lost its only run read `50/100` while the store
+  gained nothing. `unitsLost` is now tracked separately and the three figures
+  (delivered, lost, remaining) partition the order exactly. **The first guard
+  for this could not fail** — it asserted `LOST` *appears*, and that marker is
+  driven by `unitsLost`, so it rendered just as happily beside a lying
+  counter. Fault injection proved it (both faults, zero failures). The guard
+  now asserts the number itself (`0 / 12.0K` present, `5.0K / 12.0K` absent),
+  and fires. **A marker and the number it annotates are separate facts; test
+  the number.**
+- **A one-run order that loses its run completes and its row disappears** —
+  correct, and the reason the Report (not the row) is the durable record. The
+  widget guard builds a three-run order so a row survives to show the loss.
+- **A zero weight in the cause table is a promise kept by the arithmetic, not
+  by the guard.** Deleting `if (entry.value <= 0) continue;` changed no outcome
+  (`roll < 0` is never true, `roll -= 0` is a no-op) — fault-injected, nothing
+  failed. The line stays for clarity and is no longer credited with enforcing
+  anything; the sweep test catches a genuine draw fault (a sign flip on the
+  subtraction *does* fail it). **A guard that names a mechanism the code does
+  not use is worse than no guard, because it stops anyone looking.**
+
+### T8 — four outcome classes, and the accounting each one implies
+
+All six T7 causes collapsed to the same mechanical result: the run fails, the
+cargo is gone. That made the reason **cosmetic** — the player's response to
+"pirates destroyed the freighter" and to "customs seized the shipment" was
+identical, so there was nothing to decide and nothing to read. T8 splits them.
+
+| class | causes | what happens |
+|---|---|---|
+| **delivered** | — | arrives whole |
+| **lost** | pirates destroyed, pirates hijacked, anomaly storm | consumed, gone; the reservation slice returns to the port on a sell |
+| **delayed** | rerouted, fuel containment | **nothing is lost and nothing is consumed** — the units go back on the order and the run is attempted again, `+3`/`+4` ticks later |
+| **seized** | customs | most of the run arrives; a deterministic quarter is impounded and recorded separately |
+
+- **The cause→outcome mapping lives on the enum, not in a switch in the
+  service.** The weights and the consequence have to agree — a reroute that also
+  destroyed the cargo would be a lie in the report — and a switch is a second
+  place for that to drift. One row of the table is the whole rule, so a cause
+  cannot be added without declaring what it does.
+- **The seizure share is a rule, not a roll.** A deterministic quarter, because
+  it is readable ("customs takes about a quarter") *and* because it keeps the
+  injected generator meaning exactly one thing — whether the run went wrong. A
+  test then needs one roll, not two, to reach the branch it is about. It floors
+  at one unit and takes the whole run when the run is one unit: a one-unit
+  shipment is not partially delivered, and reporting it as a seizure would be a
+  loss wearing a kinder hat.
+- **The log has three voices.** A loss is a `warning` and says the units are
+  gone; a diversion is `info`, because nothing was lost and the only consequence
+  is a longer wait; a seizure is a `warning` that says the run *did* arrive,
+  less than quoted. One template for all three told a player "5.0K minerals
+  lost" when customs took a quarter of a run that otherwise landed.
+
+#### The failed SELL was a four-way leak, and "bounded" was not an argument for it
+
+T7 documented the un-released reservation as an *accepted residual* on the
+grounds that it was "bounded by the failure rate". That is an argument about
+**magnitude**, and it was doing duty as an argument about **correctness**. On
+every lost sell: the world lost the goods, the port lost its demand slot, the
+port lost the escrow, and nobody received anything.
+
+- **Only a sell releases.** The asymmetry is deliberate, and it is the whole
+  accounting rule: in a sell the port is the *buyer* — it set goods and money
+  aside pending arrival, they never arrived, so it is made whole and the world
+  eats the freight. In a buy the port had already taken the credits and the
+  goods had left its shelf; its side of the deal completed **before the freight
+  existed**, so releasing there too would hand back both stock and payment for
+  goods that no longer exist and make failure free.
+- **Slicing needs its own ledger, and the slice needs a correct "last" test.**
+  `TradeJob.escrowedReleased` exists because a cancel on top of a loss was
+  refunding the whole escrow twice — minting the port's credits. The final
+  slice takes whatever is outstanding rather than a proportional share, so
+  integer rounding cannot strand credits. **The first version compared
+  `units >= unitsRemaining`, which is always true for equal-sized runs** —
+  `advance()` had already decremented the remainder — so *every* loss released
+  the entire escrow and every second loss released it again. The guard that
+  caught it is the loss-then-cancel **conservation** check: the port's credits
+  after both must equal its credits before the order, to the credit. It is an
+  equality, not a bound, because a double refund shows as credits *above* the
+  starting figure.
+
+#### Three guards that could not fail, found by injection
+
+Every one of these was green against the fault it was written for.
+
+- **A marker and the number it annotates are separate facts.** The T7b row guard
+  asserted `LOST` *appears* — but that marker is driven by `unitsLost`, so it
+  rendered perfectly happily beside a counter that reported five thousand
+  delivered. Asserting the number itself (`0 / 12.0K` present, `5.0K / 12.0K`
+  absent) is what bites.
+- **`seized += 0` broke nothing, because no widget test created a seizure.** The
+  service guards covered the model; the row's use of it was uncovered until a
+  federal-port fixture was added. **A service guard and a screen guard are
+  different claims about the same field.**
+- **A control's promise is not what its handler saves.** The Max guard asserted
+  `unitsTotal == 8000` after tapping Sell — and that passed with a *completely
+  wrong* figure in the amount field, because the sell path clamps to the store
+  and the planner fills only what the port will buy. The guard now asserts the
+  **displayed** amount, which is what Max actually contracts to do.
+
+#### Determinism as a test lever
+
+`_LastCauseRandom` returns `nextInt(max) => max - 1`, which lands in the final
+occupied band of the weight table, so **the route chooses the cause**: a free
+port makes `rerouted` last (delayed), a federal port makes `customsSeizure`
+last (seized), an anomaly at the destination makes `anomalyStorm` last (lost).
+Hand-rolling a generator that computed an offset into the weight table would
+have meant recomputing the table in the test — a second implementation of the
+rule, which vouches only for itself. Deriving the choice from the route asserts
+the *rule* instead of a transcription of it.
+
+### T9 — order history, and why it must live on the world
+
+An order that completes **vanished**: its last run lands, the job leaves
+`tradeJobs`, and the row the player has watched for an hour disappears. The run
+ledger cannot answer "what did that 80,000-unit order get me?" because it is
+truncated to ten entries and a sixteen-run order's early runs are long gone.
+
+- **`orderId` is stamped on every incident**, which is what makes the totals
+  reconstructable at all. A split order across four ports records **one** order
+  naming every port it touched.
+- **It lives on the world, and that is forced rather than chosen.** The tick
+  closes orders and must never write a player — the clobber rule that ate
+  colonist recruits twice. A world is the only writable home. The cost is
+  proportional to player activity, not galaxy size: bounded at ten per world,
+  written only where the player traded, ~40KB against a universe file measured in
+  megabytes.
+- **The real risk is fragmentation, not scale** — a pilot trading eight worlds
+  has eight ledgers. That is solvable later and cheaply, because aggregating is
+  a **read** over the player's worlds, which the tick prohibition does not
+  touch. A cross-world ledger is a later screen, not a later data model.
+- `closeOrder` is a **no-op when the order's runs have already been evicted**,
+  because a record of zeroes reads as "you received nothing" rather than "we no
+  longer know".
 - ~~**The exchange**~~ — **PARKED**, pending the trade jobs above. See *PARKED —
   the exchange*.
 

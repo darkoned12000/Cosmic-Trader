@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
@@ -5,10 +7,56 @@ import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
+import 'package:cosmic_trader/data/models/trade_job.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/planet_screen.dart';
+import 'package:cosmic_trader/services/planet_trade_service.dart';
 import 'package:cosmic_trader/widgets/shared/progress_bar.dart';
 import 'support/storage_fakes.dart';
+
+/// Always below any failure chance, so a run that comes due is lost. Mirrors
+/// `_AlwaysFailRandom` in the service tests; duplicated rather than shared
+/// because a double that lives in another test file is a cross-file import
+/// that breaks the moment that file is renamed.
+class _AlwaysFailRandom implements math.Random {
+  @override
+  double nextDouble() => 0.0;
+
+  @override
+  bool nextBool() => false;
+
+  @override
+  int nextInt(int max) => 0;
+}
+
+/// Never below any failure chance, so the runs after a forced loss deliver.
+class _NeverFailRandom implements math.Random {
+  @override
+  double nextDouble() => 1.0;
+
+  @override
+  bool nextBool() => false;
+
+  @override
+  int nextInt(int max) => max - 1;
+}
+
+final _rng = _NeverFailRandom();
+
+/// Always fails, and picks the **last positive-weight cause** by returning the
+/// top of the roll range. Against a federal port with no anomaly that is
+/// `customsSeizure`, which is how a widget test reaches the seizure class
+/// without a second injected decision.
+class _LastCauseRandom implements math.Random {
+  @override
+  double nextDouble() => 0.0;
+
+  @override
+  bool nextBool() => false;
+
+  @override
+  int nextInt(int max) => max - 1;
+}
 
 Player _player({int credits = 1000000}) => Player(
       id: 'p1',
@@ -45,6 +93,78 @@ Port _sellingPort() => Port(
       portCredits: 1000000,
       desiredCredits: 1000000,
     );
+
+/// Two ports with **different** maxima: one sells 50K, the other buys 8K.
+///
+/// This asymmetry is the point. With one port, or two ports where both maxima
+/// coincide, a direction-blind "Max" is indistinguishable from a correct one —
+/// so the fixture has to make the two answers disagree.
+List<Sector> _twoSidedUniverse({int storedMinerals = 20000}) {
+  final planet = _ownedWorld()..storedMinerals = storedMinerals;
+  return [
+    Sector(
+        id: 1,
+        name: 'Home',
+        x: 0,
+        y: 0,
+        warpRoutes: const [2, 3],
+        planets: [planet]),
+    Sector(
+        id: 2,
+        name: 'Market',
+        x: 100,
+        y: 0,
+        warpRoutes: const [1],
+        hasPort: true,
+        port: _sellingPort()),
+    Sector(
+        id: 3,
+        name: 'Buyer',
+        x: -100,
+        y: 0,
+        warpRoutes: const [1],
+        hasPort: true,
+        port: Port(
+          name: 'Buyer',
+          portClass: PortClass.free,
+          buyPrices: const {'minerals': 60},
+          sellPrices: const {},
+          supply: const {},
+          demand: const {'minerals': 8000},
+          maxSupply: const {},
+          maxDemand: const {'minerals': 8000},
+          portCredits: 1000000,
+          desiredCredits: 1000000,
+        )),
+  ];
+}
+
+/// The single port, but **federal** — which is the only port class that can
+/// impound a shipment, and therefore the only way to reach the seizure class
+/// from a widget test.
+List<Sector> _federalUniverse({int storedMinerals = 0}) {
+  final planet = _ownedWorld()..storedMinerals = storedMinerals;
+  return [
+    Sector(
+        id: 1,
+        name: 'Home',
+        x: 0,
+        y: 0,
+        warpRoutes: const [2],
+        planets: [planet]),
+    Sector(
+        id: 2,
+        name: 'Customs',
+        x: 100,
+        y: 0,
+        warpRoutes: const [1],
+        hasPort: true,
+        port: _sellingPort().copyWith(
+          name: 'Customs',
+          portClass: PortClass.federal,
+        )),
+  ];
+}
 
 List<Sector> _universe({int storedMinerals = 0}) {
   final planet = _ownedWorld()..storedMinerals = storedMinerals;
@@ -351,6 +471,223 @@ void main() {
     reloaded = await store.loadUniverse();
     expect(reloaded.first.planets.single.tradeJobs, hasLength(1));
     expect(player.credits, charged);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a lost run shows LOST and a named cause in the Report',
+      (WidgetTester tester) async {
+    // The bug this fixes: the row counted a lost run toward "delivered", so an
+    // order that lost its only run read 50/100 while the store gained nothing.
+    // The row is the thing the player is watching, so a number that
+    // overstates delivery is worse than no number at all.
+    //
+    // The order is built through the model rather than by tapping, because a
+    // one-run order that loses its run **completes** and its row disappears —
+    // which is correct, and is precisely why the Report (not the row) is the
+    // durable record. A three-run order keeps a row alive to show the loss on.
+    final store = FaithfulUniverse(_universe());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    final reloaded = await store.loadUniverse();
+    PlanetTradeService.create(
+      planet: reloaded.first.planets.single,
+      playerId: 'p1',
+      portSectorId: 2,
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      units: 12000,
+      ticksPerRun: 2,
+      unitsPerRun: PlanetTradeService.freighterHold,
+      unitPrice: 50,
+    );
+    // Two ticks: the first counts down, the second fires the run — and the
+    // always-fail generator loses it.
+    PlanetTradeService.advanceAll(reloaded, rng: _AlwaysFailRandom());
+    PlanetTradeService.advanceAll(reloaded, rng: _AlwaysFailRandom());
+    await store.saveUniverse(reloaded);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    // Obvious, named, and it says where to find out why.
+    expect(find.textContaining('LOST'), findsWidgets);
+    expect(find.textContaining('see Report for the cause'), findsOneWidget);
+
+    // **The delivered figure itself.** Asserting "LOST appears" cannot catch a
+    // counter that lies: the marker is driven by `unitsLost`, so it renders
+    // whether or not the number is right. This is the number the player is
+    // watching, so it is the number asserted — 0 of 12.0K arrived, and the
+    // 5.0K that went missing must not be counted as delivery.
+    expect(find.textContaining('0 / 12.0K'), findsOneWidget);
+    expect(find.textContaining('5.0K / 12.0K'), findsNothing);
+
+    // And the Report names a cause, not just "lost".
+    final report = find.byKey(const Key('market-report'));
+    await tester.scrollUntilVisible(report, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(report);
+    await tester.pumpAndSettle();
+    expect(find.text('Freight Report'), findsOneWidget);
+    expect(find.textContaining('LOST —'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Max is direction-specific: the menu names both, and each fills '
+      'its own figure', (WidgetTester tester) async {
+    // The bug this fixes: one "Max" took the larger of the two maxima and wrote
+    // it into a shared field, so pressing Max then the *other* button silently
+    // did less than Max promised. Here the maxima differ five-fold, so the
+    // wrong one is unmissable.
+    final store = FaithfulUniverse(_twoSidedUniverse());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    final max = find.byKey(const Key('market-max-minerals'));
+    await tester.scrollUntilVisible(max, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(max);
+    await tester.pumpAndSettle();
+
+    // Both directions are offered, each with its own figure quoted live.
+    // `textContaining`, not `text`: there is a Max button per commodity row, so
+    // the bare label is not unique, and the menu entries carry trailing padding
+    // spaces — both make an exact-match finder report "not found" for something
+    // plainly on screen.
+    expect(find.textContaining('Max buy'), findsOneWidget);
+    expect(find.textContaining('Max sell'), findsOneWidget);
+    // Both figures are **quoted**, not merely applied: a menu that silently
+    // picked one would pass the behaviour check below while telling the
+    // player nothing about the other.
+    expect(find.text('50.0K'), findsWidgets, reason: 'the buy maximum');
+    expect(find.text('8.0K'), findsWidgets, reason: 'the sell maximum');
+
+    await tester.tap(find.textContaining('Max sell'));
+    await tester.pumpAndSettle();
+
+    // **What the control promised, not what the handler saved.** The sell path
+    // clamps to the store and the planner fills only what the port will buy, so
+    // a wrong figure in the field still produces a correct-looking order — and a
+    // guard that only checks `unitsTotal` after the tap cannot tell the two
+    // apart. The *displayed* amount is Max's actual contract.
+    expect(find.text('8.0K'), findsOneWidget,
+        reason: 'the field must show the sell maximum after Max sell');
+    expect(find.text('50.0K'), findsNothing,
+        reason: 'and not the buy maximum, which is what the old Max filled in');
+
+    // The field now holds the *sell* maximum, and pressing Sell places exactly
+    // that — not the buy maximum, and not a clamped surprise.
+    final sell = find.byKey(const Key('market-sell-minerals'));
+    await tester.scrollUntilVisible(sell, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(sell);
+    await tester.pumpAndSettle();
+
+    // **Re-read after the tap.** `loadUniverse` re-parses a fresh graph every
+    // call, so a universe captured beforehand is a snapshot the tap never
+    // touches — asserting on it measures the wrong object and passes for the
+    // wrong reason.
+    final after = await store.loadUniverse();
+    final jobs = after.first.planets.single.tradeJobs;
+    expect(jobs, hasLength(1));
+    expect(jobs.single.unitsTotal, 8000);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the Report shows a finished order and its cause',
+      (WidgetTester tester) async {
+    final store = FaithfulUniverse(_universe());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    // Built through the model, then driven by the real tick pass with a forced
+    // loss, because a *widget* can only be reached by tapping: the report's
+    // subject is a settled order.
+    final reloaded = await store.loadUniverse();
+    PlanetTradeService.createOrder(
+      planet: reloaded.first.planets.single,
+      universe: reloaded,
+      playerId: 'p1',
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      volume: 10000,
+      actorFaction: 'trader',
+    );
+    // **Two** passes with the forcing generator: the cadence is hops-derived, so
+    // the first pass only counts the run down and the second fires it. One pass
+    // loses nothing, the order closes clean, and the report reads COMPLETE —
+    // a fixture that cannot satisfy the condition it is testing.
+    PlanetTradeService.advanceAll(reloaded, rng: _AlwaysFailRandom());
+    PlanetTradeService.advanceAll(reloaded, rng: _AlwaysFailRandom());
+    for (var i = 0;
+        i < 20 && reloaded.first.planets.single.tradeJobs.isNotEmpty;
+        i++) {
+      PlanetTradeService.advanceAll(reloaded, rng: _rng);
+    }
+    await store.saveUniverse(reloaded);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    final report = find.byKey(const Key('market-report'));
+    await tester.scrollUntilVisible(report, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(report);
+    await tester.pumpAndSettle();
+
+    // Two sections answering two different questions.
+    expect(find.text('Freight Report'), findsOneWidget);
+    expect(find.text('ORDERS'), findsOneWidget);
+    expect(find.text('RECENT RUNS'), findsOneWidget);
+    // The order is summarised rather than listing ten anonymous runs.
+    expect(find.textContaining('PARTIALLY LOST'), findsOneWidget);
+    expect(find.textContaining('lost'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an impounded run reads HELD on the row, not LOST',
+      (WidgetTester tester) async {
+    // The report cannot be the only place a seizure is visible: the row is what
+    // the player watches while the order runs. This is the guard that was
+    // missing — with `seized += 0` in the row, every other test in the file
+    // stayed green because none of them created a seizure.
+    final store = FaithfulUniverse(_federalUniverse());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    final reloaded = await store.loadUniverse();
+    PlanetTradeService.createOrder(
+      planet: reloaded.first.planets.single,
+      universe: reloaded,
+      playerId: 'p1',
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      volume: 10000,
+      actorFaction: 'trader',
+    );
+    // Two passes: the cadence is hops-derived, so the first only counts down.
+    PlanetTradeService.advanceAll(reloaded, rng: _LastCauseRandom());
+    PlanetTradeService.advanceAll(reloaded, rng: _LastCauseRandom());
+    await store.saveUniverse(reloaded);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    // The row names the shortfall and says which kind it is.
+    expect(find.textContaining('HELD'), findsWidgets);
+    expect(find.textContaining('LOST'), findsNothing,
+        reason: 'an impoundment is a partial delivery, not a destruction');
+    expect(find.textContaining('held by customs'), findsOneWidget);
+
+    final report = find.byKey(const Key('market-report'));
+    await tester.scrollUntilVisible(report, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(report);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('PARTIAL —'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }

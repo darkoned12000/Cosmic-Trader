@@ -139,6 +139,38 @@ class Planet {
   /// list, which throws on the first `add`.
   final List<TradeJob> tradeJobs;
 
+  /// The last few resolved freight runs — delivered **and** lost — newest
+  /// last. Read by nothing but the Market section's Report.
+  ///
+  /// Lives here rather than on the player because the tick resolves runs and
+  /// must never write a player (the read-modify-write clobber that ate colonist
+  /// recruits). Bounded by [tradeIncidentHistory] and trimmed on append, so a
+  /// long session cannot grow it without limit — an unbounded history on a
+  /// model that re-serialises every tick is a file that grows forever.
+  ///
+  /// Lost runs are recorded with their cause, so "what happened to my
+  /// shipment" has an answer after the fact and not only in the log line,
+  /// which is a 200-entry ring the player may have scrolled past.
+  final List<TradeIncident> tradeIncidents;
+
+  /// Finished orders, newest last.
+  ///
+  /// A run ledger alone cannot answer "how did that order end" — it is
+  /// truncated to ten entries, so a sixteen-run order's last runs have already
+  /// been evicted by the time it finishes, and nothing anywhere holds the
+  /// totals. This is that somewhere. Ten orders is bounded, and only worlds the
+  /// player actually traded carry any, so the cost tracks player activity rather
+  /// than galaxy size: 20 active worlds × 10 × ~200 bytes is ~40KB against a
+  /// universe file measured in megabytes.
+  final List<TradeOrderRecord> tradeOrders;
+
+  /// How many resolved runs a world remembers. Ten is a fortnight of trade at
+  /// a busy cadence and a bounded save.
+  static const int tradeIncidentHistory = 10;
+
+  /// How many finished orders a world remembers.
+  static const int tradeOrderHistory = 10;
+
   /// Drones, not fighters: ships field drones throughout the game
   /// (`Player.drones`). The old `colonistsFighters` name survived the
   /// planet screen already being labelled "Drones", which made the model
@@ -258,6 +290,8 @@ class Planet {
     this.population = 0,
     this.accumulatedRevenue = 0,
     List<TradeJob>? tradeJobs,
+    List<TradeIncident>? tradeIncidents,
+    List<TradeOrderRecord>? tradeOrders,
     this.colonistsInTransit = 0,
     this.colonistTransitTicks = 0,
     this.colonistsMinerals = 0,
@@ -303,7 +337,9 @@ class Planet {
         // because Dart requires a default parameter value to be constant — hence
         // the initializer list, where a non-constant expression is legal.
         productionRemainder = productionRemainder ?? <String, double>{},
-        tradeJobs = tradeJobs ?? <TradeJob>[];
+        tradeJobs = tradeJobs ?? <TradeJob>[],
+        tradeIncidents = tradeIncidents ?? <TradeIncident>[],
+        tradeOrders = tradeOrders ?? <TradeOrderRecord>[];
 
   /// Builds a world from a Genesis Torpedo: empty, unowned, unpopulated.
   ///
@@ -379,6 +415,14 @@ class Planet {
     // still be owed a delivery, and the arrival path would deposit into a store
     // this method just zeroed.
     tradeJobs.clear();
+    // So does the freight history: a vaporised world has no shipments left to
+    // have delivered or lost, and a report reading "Pirates destroyed the
+    // freighter" for a world that no longer exists is a ghost entry.
+    tradeIncidents.clear();
+    // And its order history: a vaporised world has no commerce to report, and
+    // a ledger naming ports and earnings on a world that no longer exists is
+    // the same ghost entry one layer up.
+    tradeOrders.clear();
     // The treasury goes with the world. A destroyed colony's earnings are not
     // something the player can still withdraw, and leaving them would let a
     // detonated world keep paying out.
@@ -435,6 +479,12 @@ class Planet {
       if (accumulatedRevenue != 0) 'accumulatedRevenue': accumulatedRevenue,
       if (tradeJobs.isNotEmpty)
         'tradeJobs': tradeJobs.map((j) => j.toJson()).toList(growable: false),
+      if (tradeIncidents.isNotEmpty)
+        'tradeIncidents':
+            tradeIncidents.map((i) => i.toJson()).toList(growable: false),
+      if (tradeOrders.isNotEmpty)
+        'tradeOrders':
+            tradeOrders.map((o) => o.toJson()).toList(growable: false),
       'colonistsInTransit': colonistsInTransit,
       'colonistTransitTicks': colonistTransitTicks,
       'colonistsMinerals': colonistsMinerals,
@@ -502,6 +552,21 @@ class Planet {
       tradeJobs: (json['tradeJobs'] as List?)
           ?.cast<Map<String, dynamic>>()
           .map(TradeJob.fromJson)
+          .toList(),
+      // Absent in every pre-T7 save, and empty is the correct reading: there
+      // is no history to invent, and a fabricated "delivered" entry would be a
+      // trade the player never made.
+      tradeIncidents: (json['tradeIncidents'] as List?)
+          ?.cast<Map<String, dynamic>>()
+          .map(TradeIncident.fromJson)
+          .toList(),
+      // Absent in every save predating finished-order history, and empty is
+      // correct: nothing has finished yet under the new bookkeeping, and
+      // inventing an order the player never placed is worse than an empty
+      // ledger.
+      tradeOrders: (json['tradeOrders'] as List?)
+          ?.cast<Map<String, dynamic>>()
+          .map(TradeOrderRecord.fromJson)
           .toList(),
       colonistsInTransit: json['colonistsInTransit'] as int? ?? 0,
       colonistTransitTicks: json['colonistTransitTicks'] as int? ?? 0,

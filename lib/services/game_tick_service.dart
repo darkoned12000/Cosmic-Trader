@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+import 'package:cosmic_trader/core/number_format.dart';
 import 'package:cosmic_trader/data/models/npc_ship.dart';
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -417,22 +418,75 @@ class GameTickService {
       // `accumulatedRevenue` and its owner withdraws them. See
       // `PlanetTradeService.advanceAll`.
       DevProfiler.instance.trace('tick_trade_jobs', () {
-        final landed = PlanetTradeService.advanceAll(sectors);
+        // The shared `_tickRng` is threaded in so the per-run failure roll is
+        // testable against a fixed generator and shares the tick's one
+        // random stream (a probability tested with a live Random is a test of
+        // the weather).
+        final landed = PlanetTradeService.advanceAll(sectors, rng: _tickRng);
         if (landed.isNotEmpty) {
           var unitsArrived = 0;
           var unitsCollected = 0;
           for (final entry in landed.values) {
+            // A delayed run delivers nothing *this* pass and is not lost — its
+            // units are back on the order and the run is simply later. Counting
+            // it here would report freight that has not arrived as if it had.
+            if (entry.outcome == TradeRunOutcome.delayed) continue;
             if (entry.direction == TradeDirection.buy) {
-              unitsArrived += entry.units;
+              unitsArrived += entry.deliveredUnits;
             } else {
-              unitsCollected += entry.units;
+              unitsCollected += entry.deliveredUnits;
             }
           }
-          log.system(
-            'Trade: $unitsArrived units delivered, '
-            '$unitsCollected collected'
-            '${landed.isNotEmpty ? ' · ${landed.length} order(s) complete' : ''}',
-          );
+          // Every disruption is reported on its own line, in the player's
+          // feed, naming what, how much and **why** — a silent loss reads as a
+          // bug rather than a risk the player accepted, and an unnamed one
+          // reads as a bug even when it is announced.
+          //
+          // **Three voices, because they are three different events.** A loss
+          // is a warning and says the units are gone; a diversion is
+          // informational, because nothing was lost and the only consequence
+          // is a longer wait; a seizure is a warning but says the run *did*
+          // arrive, less than quoted. Writing one template for all three is
+          // what made the reason cosmetic — a player told "5.0K minerals lost"
+          // when customs took a quarter of a run that otherwise landed has been
+          // told something false, and a log that lies is worse than no log.
+          for (final entry in landed.values) {
+            final verb =
+                entry.direction == TradeDirection.buy ? 'bought' : 'sold';
+            final where = 'port #${entry.job.portSectorId}';
+            switch (entry.outcome) {
+              case TradeRunOutcome.delivered:
+                break;
+              case TradeRunOutcome.lost:
+                log.warning(
+                  'Freight lost: ${compact(entry.units)} '
+                  '${entry.job.commodity} bound for $where — '
+                  '${entry.cause?.label ?? 'lost in transit'}. '
+                  'The $verb order continues; these units are gone.',
+                );
+              case TradeRunOutcome.delayed:
+                log.info(
+                  'Freight diverted: ${compact(entry.units)} '
+                  '${entry.job.commodity} bound for $where — '
+                  '${entry.cause?.label ?? 'rerouted'}. '
+                  'Nothing lost; arrival ${GameClock.estimate(entry.delayTicks)} later.',
+                );
+              case TradeRunOutcome.seized:
+                log.warning(
+                  'Freight impounded: ${compact(entry.seizedUnits)} of '
+                  '${compact(entry.units)} ${entry.job.commodity} held at $where '
+                  '— ${entry.cause?.label ?? 'seized by customs'}. '
+                  '${compact(entry.deliveredUnits)} still delivered.',
+                );
+            }
+          }
+          if (unitsArrived > 0 || unitsCollected > 0) {
+            log.system(
+              'Trade: $unitsArrived units delivered, '
+              '$unitsCollected collected'
+              '${landed.isNotEmpty ? ' · ${landed.length} order(s) complete' : ''}',
+            );
+          }
         }
       });
       // Gravity checks on over-stacked systems. A sector's 24-hour clock starts

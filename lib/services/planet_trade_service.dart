@@ -1,9 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:uuid/uuid.dart';
 
 import 'package:cosmic_trader/data/models/planet.dart';
+import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/models/trade_job.dart';
 import 'package:cosmic_trader/services/economy_metrics.dart';
+import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/npc_ai/pathfinding_service.dart';
 
 /// One share of an order, filled by one port.
@@ -57,6 +61,113 @@ class PlanetTradeService {
   /// tick, so the median four-hop port is a four-minute run. Distance sets
   /// the cadence; order size sets the number of runs; the two do not interact.
   static const int ticksPerHop = 2;
+
+  /// Base failure chance for a run to a same-sector port (0%).
+  ///
+  /// Failure is distance-driven: a run across the same sector cannot be
+  /// intercepted, so the floor is zero and the rate climbs with each hop.
+  static const double failureChanceBase = 0.0;
+
+  /// Additional failure chance per hop beyond the first.
+  ///
+  /// Tuned so a median four-hop run is ~2.4%: the doc's 16-run 80,000-unit
+  /// Citadel order then loses at least one run about a third of the time —
+  /// a real decision pressure, not a tax, and the reason a player splits a
+  /// large order into smaller ones. The rate is on the *run*, so order size
+  /// (run count) drives total exposure while each individual loss stays one
+  /// run's worth of value; per-run value in credits scales with the
+  /// commodity's price, which is what T8's insurance would cover.
+  static const double failureChancePerHop = 0.006;
+
+  /// Failure chance for a single run [hops] sectors away, 0.0 to 1.0.
+  ///
+  /// Deterministic given the distance, which is the point: the *risk* is
+  /// knowable before the order is placed, so the player can see it on the
+  /// quote and decide, while the *roll* is injected.
+  static double failureChanceForHops(int hops) {
+    if (hops <= 0) return 0.0;
+    return (failureChanceBase + failureChancePerHop * hops).clamp(0.0, 1.0);
+  }
+
+  /// How much weight each cause carries on a route, so a loss can explain
+  /// *itself*.
+  ///
+  /// Contextual by design: pirates dominate where pirates are and on long
+  /// hauls, a federal port seizes and a free port does not, an anomaly sector
+  /// throws storms, and a same-sector run can only ever fail mechanically. A
+  /// reason drawn from the same pool everywhere would tell the player nothing
+  /// about the route they chose — which is the one thing they would change
+  /// after reading it.
+  ///
+  /// **Deterministic given the context**, exactly like
+  /// [failureChanceForHops]: the weights are a rule (so a test can assert a
+  /// cause is *unreachable* on a route), and the pick is the injected roll.
+  /// A zero weight is therefore a promise, not a rarity.
+  static Map<TradeFailureCause, int> causeWeightsFor({
+    required int hops,
+    required PortClass portClass,
+    required int piratesAtPort,
+    required bool anomalyAtPort,
+    required bool navHazAtPort,
+  }) {
+    final span = hops.clamp(0, 4);
+    final pirates = piratesAtPort > 0;
+    return {
+      // No pirates in orbit of your own sector: a same-sector run is a
+      // mechanical failure or nothing.
+      TradeFailureCause.piratesDestroyed:
+          (span <= 0 ? 0 : 30) + 25 * span + (pirates ? 40 : 0),
+      TradeFailureCause.piratesHijacked:
+          (span <= 0 ? 0 : 15) + 12 * span + (pirates ? 30 : 0),
+      TradeFailureCause.fuelContainment: 12 + 6 * span + (navHazAtPort ? 8 : 0),
+      TradeFailureCause.rerouted: 10 + 5 * span,
+      // Federal only: an independent or free port has no customs to seize
+      // against.
+      TradeFailureCause.customsSeizure: portClass == PortClass.federal ? 18 : 0,
+      TradeFailureCause.anomalyStorm: anomalyAtPort ? 30 : 0,
+    };
+  }
+
+  /// Picks a cause from [weights] using [rng].
+  ///
+  /// Returns null when every weight is zero. That cannot happen for a real
+  /// route — the mechanical cause always carries something — but it is
+  /// handled rather than assumed, because a zero total with a modulo throws
+  /// inside the tick and takes the whole pass down with it.
+  ///
+  /// **A zero weight is a promise, and the arithmetic keeps it — not the
+  /// guard.** `roll < 0` is never true and `roll -= 0` is a no-op, so
+  /// deleting the zero-weight `continue` changes no outcome at all. That was
+  /// measured (fault-injected, nothing failed), so the line is kept for
+  /// clarity rather than credited with enforcing anything: the guarantee is
+  /// the subtraction, and a sign flip there *is* caught — by the sweep in
+  /// `test/planet_trade_jobs_test.dart`, not by this comment.
+  static TradeFailureCause? pickCause(
+      Map<TradeFailureCause, int> weights, math.Random rng) {
+    final total = weights.values.fold<int>(0, (a, b) => a + b);
+    if (total <= 0) return null;
+    var roll = rng.nextInt(total);
+    for (final entry in weights.entries) {
+      if (entry.value <= 0) continue;
+      if (roll < entry.value) return entry.key;
+      roll -= entry.value;
+    }
+    // Unreachable: the loop consumed `total` exactly. Named rather than
+    // asserted so a future edit that changes the arithmetic degrades to "the
+    // last cause" instead of throwing.
+    return weights.entries.lastWhere((e) => e.value > 0).key;
+  }
+
+  /// Records one resolved run on the world's history, trimmed to
+  /// [Planet.tradeIncidentHistory].
+  ///
+  /// Newest last, so the report reads oldest-to-newest like a ledger.
+  static void recordIncident(Planet planet, TradeIncident incident) {
+    planet.tradeIncidents.add(incident);
+    while (planet.tradeIncidents.length > Planet.tradeIncidentHistory) {
+      planet.tradeIncidents.removeAt(0);
+    }
+  }
 
   /// Units one port-freighter run carries.
   ///
@@ -122,16 +233,64 @@ class PlanetTradeService {
     return true;
   }
 
-  /// Advances every job in [universe] by one tick.
+  /// Advances every job in [universe] by one tick, rolling each run that
+  /// comes due for failure.
   ///
-  /// Returns the loads that landed this tick, keyed by job id. A job stays
-  /// listed until its final run lands — removing it on the first partial
-  /// delivery would strand the remainder and report the order complete early.
-  static Map<String,
-          ({Planet planet, TradeJob job, int units, TradeDirection direction})>
-      advanceAll(List<Sector> universe) {
+  /// [rng] is the generator the failure rolls draw from. **Required, not
+  /// optional**: a probability tested against a real `Random` is a test of the
+  /// weather, and a caller that forgot to inject would silently get a
+  /// different game. The tick passes its own shared `_tickRng`; tests pass a
+  /// fixed one and reach both branches. [rng] is also seeded per run off the
+  /// job, so a re-dispatched share does not re-roll a fixed generator's
+  /// history.
+  ///
+  /// Each job's risk is priced by its own BFS distance to its port (built
+  /// lazily, only for planets that actually have jobs), so a same-sector run
+  /// is risk-free and a four-hop run carries the distance premium. See
+  /// [failureChanceForHops].
+  ///
+  /// Returns the runs that resolved this tick keyed by job id. A job stays
+  /// listed until its final run resolves; a lost run consumes its units (they
+  /// are gone), so the job advances and the remainder continues.
+  ///
+  /// **The cause decides what happens, not just why.** The roll only says
+  /// "something went wrong"; [TradeFailureCause.outcome] says what — lost,
+  /// delayed or seized — so a diverted freighter costs patience and not goods,
+  /// and a customs impoundment delivers most of the run. Collapsing all three
+  /// into "the cargo is gone" is what made the reason cosmetic.
+  static Map<
+      String,
+      ({
+        Planet planet,
+        TradeJob job,
+        int units,
+        int deliveredUnits,
+        int seizedUnits,
+        int delayTicks,
+        TradeRunOutcome outcome,
+        TradeFailureCause? cause,
+        TradeDirection direction
+      })> advanceAll(List<Sector> universe, {required math.Random rng}) {
     final landed = <String,
-        ({Planet planet, TradeJob job, int units, TradeDirection direction})>{};
+        ({
+      Planet planet,
+      TradeJob job,
+      int units,
+      int deliveredUnits,
+      int seizedUnits,
+      int delayTicks,
+      TradeRunOutcome outcome,
+      TradeFailureCause? cause,
+      TradeDirection direction
+    })>{};
+
+    // job id -> route context, built once per planet-with-jobs per tick.
+    final routesByJob = _buildRoutesByJob(universe);
+    final tick = GameClock.tick;
+    // Orders that became final this pass, closed after the walk rather than
+    // from inside it — the walk removes the last share, and a split order is
+    // only finished once *every* share has gone.
+    final finished = <Planet, Set<String>>{};
 
     for (final sector in universe) {
       for (final planet in sector.planets) {
@@ -143,21 +302,294 @@ class PlanetTradeService {
           final units = job.advance();
           if (units <= 0) continue;
 
-          _applyLanding(planet, job, units);
+          // The roll, on the run that just came due.
+          final route = routesByJob[job.id];
+          final hops = route?.hops ?? 0;
+          final failed = rng.nextDouble() < failureChanceForHops(hops);
+
+          var outcome = TradeRunOutcome.delivered;
+          TradeFailureCause? cause;
+          var deliveredUnits = units;
+          var seizedUnits = 0;
+          var delayTicks = 0;
+
+          if (!failed) {
+            _applyLanding(planet, job, units);
+          } else {
+            cause = pickCause(
+              causeWeightsFor(
+                hops: hops,
+                portClass: route?.portClass ?? PortClass.free,
+                piratesAtPort: route?.piratesAtPort ?? 0,
+                anomalyAtPort: route?.anomalyAtPort ?? false,
+                navHazAtPort: route?.navHazAtPort ?? false,
+              ),
+              rng,
+            );
+            // A null cause is unreachable in practice — the mechanical one
+            // always carries weight — but it is treated as the *worst* case
+            // rather than as a clean delivery, so a future edit that can return
+            // null costs the player goods instead of handing them out.
+            outcome = cause?.outcome ?? TradeRunOutcome.lost;
+
+            switch (outcome) {
+              case TradeRunOutcome.delivered:
+                // Unreachable via a non-null cause: every cause declares a
+                // non-delivered outcome. Handled anyway, because a future cause
+                // added with the wrong value would otherwise consume the units
+                // *and* pay out for them.
+                _applyLanding(planet, job, units);
+              case TradeRunOutcome.delayed:
+                // Nothing is lost and nothing is consumed: `advance()` already
+                // took the units off `unitsRemaining`, so they go back and the
+                // run is attempted again later. The reservation is untouched,
+                // which is what makes a diversion cost time and nothing else.
+                job.unitsRemaining += units;
+                delayTicks = cause?.delayTicks ?? 0;
+                job.ticksRemaining += delayTicks;
+                deliveredUnits = 0;
+              case TradeRunOutcome.seized:
+                // A partial delivery: most of the run arrives, the rest is
+                // impounded. The two halves are accounted separately so the
+                // row and the order record can say which happened.
+                seizedUnits = _seizedUnits(units);
+                deliveredUnits = units - seizedUnits;
+                job.unitsSeized += seizedUnits;
+                if (deliveredUnits > 0) {
+                  _applyLanding(planet, job, deliveredUnits);
+                }
+                // The impounded share of the reservation goes back: the port
+                // never received those goods.
+                releaseRunSlice(universe, job, seizedUnits);
+              case TradeRunOutcome.lost:
+                job.unitsLost += units;
+                deliveredUnits = 0;
+                // The reservation slice comes back to the port. Previously the
+                // whole thing stayed consumed, which leaked on every loss: the
+                // world lost the goods, the port lost the demand slot *and* the
+                // escrow, and nobody received anything.
+                //
+                // Only for a **sell**, and the asymmetry is deliberate. In a
+                // sell the port is the buyer: it set goods and money aside
+                // pending arrival, they never arrived, so it is made whole and
+                // the world eats the freight. In a buy the port had already
+                // taken the credits and the goods had left its shelf — its side
+                // of the deal completed before the freight existed — so
+                // releasing there too would hand back both stock and payment
+                // for goods that no longer exist, and make failure free.
+                if (job.direction == TradeDirection.sell) {
+                  releaseRunSlice(universe, job, units);
+                }
+            }
+          }
+
+          job.lastRunFailed = outcome == TradeRunOutcome.lost;
+
+          // One ledger entry per resolved run, whatever became of it, so the
+          // Report can answer "what happened to my freight" long after the log
+          // line has rolled off its 200-entry ring.
+          recordIncident(
+            planet,
+            TradeIncident(
+              orderId: job.orderId,
+              tick: tick,
+              commodity: job.commodity,
+              direction: job.direction,
+              units: units,
+              portSectorId: job.portSectorId,
+              outcome: outcome,
+              cause: cause,
+              seizedUnits: seizedUnits,
+              delayTicks: delayTicks,
+            ),
+          );
+
           if (job.isComplete) {
             planet.tradeJobs.remove(job);
+            if (job.orderId.isNotEmpty) {
+              finished.putIfAbsent(planet, () => <String>{}).add(job.orderId);
+            }
           }
           landed[job.id] = (
             planet: planet,
             job: job,
             units: units,
+            deliveredUnits: deliveredUnits,
+            seizedUnits: seizedUnits,
+            delayTicks: delayTicks,
+            outcome: outcome,
+            cause: cause,
             direction: job.direction,
           );
         }
       }
     }
 
+    // A split order across four ports records one 80,000-unit order, not four
+    // 20,000-unit ones.
+    finished.forEach((planet, orderIds) {
+      for (final orderId in orderIds) {
+        if (planet.tradeJobs.any((j) => j.orderId == orderId)) continue;
+        closeOrder(planet, orderId, tick: tick);
+      }
+    });
+
     return landed;
+  }
+
+  /// Units customs impound out of a run that [TradeRunOutcome.seized] names.
+  ///
+  /// A **deterministic quarter**, not a roll. Two reasons, and the second is
+  /// the one that matters: it is readable ("customs takes about a quarter"), so
+  /// a player seized repeatedly knows what to do about it; and it keeps the
+  /// injected generator meaning exactly one thing — *whether* the run went
+  /// wrong — so a test does not have to satisfy two rolls to reach the branch
+  /// it is about.
+  ///
+  /// Floors at one unit so a multi-unit "seizure" always leaves something on
+  /// the ship, and takes the whole run when it is a single unit: a one-unit
+  /// shipment is not partially delivered, and reporting it as a seizure would
+  /// be a loss wearing a kinder hat.
+  static int _seizedUnits(int units) {
+    if (units <= 1) return units;
+    return (units * seizureFraction).round().clamp(1, units - 1);
+  }
+
+  /// The share of an impounded run customs takes. See [_seizedUnits].
+  static const double seizureFraction = 0.25;
+
+  /// Hands back the reservation slice covering [units] that never arrived.
+  ///
+  /// The whole reservation is unwound on cancel, so a slice per loss means
+  /// cancel has to know what is left — [TradeJob.escrowOutstanding] is for
+  /// that. Slicing by the *nominal* unit price would be wrong on a sell: the
+  /// escrow is what the port's pool actually moved, clamped and possibly less
+  /// than the order's face value, so a nominal share of it is not the recorded
+  /// share. This takes the recorded figure, and the **final** slice takes
+  /// whatever is outstanding so integer rounding cannot strand credits on a job
+  /// that then completes.
+  static void releaseRunSlice(
+    List<Sector> universe,
+    TradeJob job,
+    int units,
+  ) {
+    if (units <= 0) return;
+    final outstanding = job.escrowOutstanding;
+    if (outstanding <= 0) return;
+
+    // **The last slice is the one where nothing is left owed** — `unitsRemaining`
+    // was already decremented by `advance()` before this runs. Comparing against
+    // it as if it still counted the current run (`units >= unitsRemaining`)
+    // makes every *equal-sized* run look final: an 8,000-unit order in two
+    // 4,000-unit runs released the whole escrow on the first loss, and the
+    // second loss then released it again — minting the port's credits out of
+    // nothing. The guard is the loss-then-cancel conservation check.
+    final isFinalSlice = job.unitsRemaining <= 0;
+    final slice = isFinalSlice
+        ? outstanding
+        : math.min(
+            outstanding,
+            (outstanding * units / math.max(1, job.unitsTotal)).round(),
+          );
+    if (slice <= 0) return;
+
+    releaseReservation(
+      universe: universe,
+      portSectorId: job.portSectorId,
+      commodity: job.commodity,
+      direction: job.direction,
+      units: units,
+      unitPrice: job.unitPrice,
+      // Only a sell escrowed anything, and `escrowOutstanding` is 0 for a buy
+      // — so the recorded figure is what moves, which is nothing on a buy.
+      escrowed: slice,
+    );
+    job.escrowedReleased += slice;
+  }
+
+  /// Writes a finished order into the world's history.
+  ///
+  /// Totals come from the **incident ledger**, not from the jobs: by the time
+  /// this runs the last share has left `tradeJobs`, so the job objects are gone.
+  /// That is why `orderId` is stamped on every incident — it is the only thing
+  /// that still ties a run back to the request that created it.
+  ///
+  /// No-op when the order's runs have already been evicted from the ten-entry
+  /// ledger. A record of zeroes would be worse than no record, because it reads
+  /// as "you received nothing" rather than "we no longer know".
+  static void closeOrder(Planet planet, String orderId, {int? tick}) {
+    if (orderId.isEmpty) return;
+    if (planet.tradeOrders.any((o) => o.orderId == orderId)) return;
+
+    final runs = planet.tradeIncidents
+        .where((i) => i.orderId == orderId)
+        .toList(growable: false);
+    if (runs.isEmpty) return;
+
+    final first = runs.first;
+    planet.tradeOrders.add(TradeOrderRecord(
+      orderId: orderId,
+      tick: tick ?? first.tick,
+      commodity: first.commodity,
+      direction: first.direction,
+      unitsTotal: runs.fold<int>(0, (a, r) => a + r.units),
+      unitsDelivered: runs.fold<int>(0, (a, r) => a + r.deliveredUnits),
+      unitsLost: runs.fold<int>(0, (a, r) => a + r.lostUnits),
+      unitsSeized: runs.fold<int>(0, (a, r) => a + r.seizedUnits),
+      runs: runs.length,
+      ports: runs.map((r) => r.portSectorId).toSet().toList(growable: false),
+    ));
+    while (planet.tradeOrders.length > Planet.tradeOrderHistory) {
+      planet.tradeOrders.removeAt(0);
+    }
+  }
+
+  /// What a failure roll needs to know about a job's route: distance, the
+  /// destination port's class, and whether pirates, an anomaly or nav hazards
+  /// sit at the far end.
+  ///
+  /// Recorded per job id, built once per planet-with-jobs per tick — a handful
+  /// of O(sectors) passes against the tick's NPC work. A job whose port is
+  /// unreachable gets hops 0 and a free-port context, the safe direction: an
+  /// unreachable port cannot deliver, so its failures are not the player's
+  /// problem to insure.
+  static Map<
+      String,
+      ({
+        int hops,
+        PortClass portClass,
+        int piratesAtPort,
+        bool anomalyAtPort,
+        bool navHazAtPort
+      })> _buildRoutesByJob(List<Sector> universe) {
+    final out = <String,
+        ({
+      int hops,
+      PortClass portClass,
+      int piratesAtPort,
+      bool anomalyAtPort,
+      bool navHazAtPort
+    })>{};
+    final byId = {for (final s in universe) s.id: s};
+    for (final sector in universe) {
+      for (final planet in sector.planets) {
+        if (planet.tradeJobs.isEmpty) continue;
+        final parents = PathfindingService.bfsParents(universe, sector.id);
+        for (final job in planet.tradeJobs) {
+          final at = byId[job.portSectorId];
+          out[job.id] = (
+            hops:
+                PathfindingService.distanceInTree(parents, job.portSectorId) ??
+                    0,
+            portClass: at?.port?.portClass ?? PortClass.free,
+            piratesAtPort: at?.pirateCount ?? 0,
+            anomalyAtPort: at?.anomaly != null,
+            navHazAtPort: at?.navHaz ?? false,
+          );
+        }
+      }
+    }
+    return out;
   }
 
   /// Pure port selection: nearest first, split across ports when one cannot
@@ -484,6 +916,7 @@ class PlanetTradeService {
   /// confined to jobs already in flight).
   static void releaseShare(List<Sector> universe, TradeJob job) {
     if (job.unitsRemaining <= 0) return;
+    final outstanding = job.escrowOutstanding;
     releaseReservation(
       universe: universe,
       portSectorId: job.portSectorId,
@@ -491,8 +924,20 @@ class PlanetTradeService {
       direction: job.direction,
       units: job.unitsRemaining,
       unitPrice: job.unitPrice,
-      escrowed: job.escrowed,
+      // **What is still owed, not what was taken.** A run that never arrived
+      // has already handed a slice back (see [releaseRunSlice]), so refunding
+      // `escrowed` in full on cancel returns more than was ever escrowed —
+      // minting the port's credits, once per loss. `escrowOutstanding` is the
+      // remainder, and it is also the pre-accounting fallback (0 on a buy,
+      // where nothing was escrowed) that keeps this from re-introducing the
+      // mint the recorded figure was added to fix.
+      escrowed: outstanding,
     );
+    // Recorded, so a *second* unwind on the same share cannot refund it again.
+    // `releaseRunSlice` does this for a lost run; a cancel is the other way in,
+    // and without it the job's own ledger still claimed the whole escrow was
+    // outstanding after it had been handed back.
+    job.escrowedReleased += outstanding;
   }
 
   /// Returns a raw reservation to its port without needing the job object.
