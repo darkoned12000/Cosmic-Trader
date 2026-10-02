@@ -8,10 +8,14 @@ magnitude. Corrected below, with the audit that produced it in the next section.
 
 ### What is built and working
 
-- **Model** (`lib/data/models/planet.dart`): 11 planet types with atmosphere,
+- **Model** (`lib/data/models/planet.dart`): **10** planet types with atmosphere,
   production multipliers, colonist caps, and image pools. Ownership, homeworld
   status, colonists per track, storage, Citadel level 1-6, defense
   (level/shield/hull), NPC spawn timers, and a `scanned` flag.
+
+  > This said **11**, which was true before Gas Giant was removed. Ten is the
+  > shipped count: Terran, Jungle, Mountain, Desert, Ocean, Ice, Lava, Moon,
+  > Barren, Toxic.
 - **Generator** (`universe_generator.dart:1280`): planets placed at `planetDensity`
   with a random image, random `productionEfficiency` (0.5-1.5), random defense
   level (0-2), and small starting stores. `scanned: false`.
@@ -25,10 +29,17 @@ magnitude. Corrected below, with the audit that produced it in the next section.
   restores it), backup homeworlds that idle while a live primary exists,
   destroyed-world exclusion, and rare hero ships (5%, roster-unique, minted with
   a Guild bounty on first kill).
-- **Scanning**: two paths, both charging energy and persisting to the sector
-  file. Planet tab costs 4 energy and grants +1 standing with the owner
-  (`planet_screen.dart:58`); the sector panel costs 1 energy and grants nothing
-  (`sector_interaction_panel.dart:203`).
+- **Scanning**: **one** verb, `ScanService` — `EnergyService.scanCost` (1 energy),
+  set the flag, +1 standing with the owner, persist, log. Both the planet tab and
+  the sector panel call it, so the two cannot charge differently for the same
+  action.
+
+  > This said "two paths… Planet tab costs 4 energy and grants +1 standing; the
+  > sector panel costs 1 energy and grants nothing". Both halves were stale: the
+  > two verbs were unified into one (Code Audit #3) and the standing is granted on
+  > **both** paths, because leaving it on one would have inverted the dominance
+  > rather than removed it. It also contradicted this document 200 lines further
+  > down, in the Code Audit that fixed it.
 - **UI**: planet tab, header + image, resources/defense cards, production
   readout, **cargo** transfers in both directions (`Unload`/`Load` — free, and
   bounded by free hold space; they used to be a credits-to-goods purchase that
@@ -77,13 +88,36 @@ magnitude. Corrected below, with the audit that produced it in the next section.
 - **Colonists as physical cargo**: not started. They are priced and fuelled like
   a shipment but are still an abstract count with no cargo-hold constraint. This
   is now step 3 of the Economy Redesign and is no longer deferred.
-- **Scanner-module auto-scan**: the module exists in `hardware_data.dart` and is
-  unwired.
-- **Colonies feeding ports directly**: not started. A shipment is still cashed
-  in by hand at whatever the port pays. See *The resource market* below — the
-  `Wdr` button and the `Collect` pool currently pay **two different invented
-  prices for the same goods** (5 cr vs 42.5 cr per mineral), which is the defect
-  that makes a real market necessary rather than merely nice.
+- **Scanner-module auto-scan**: not started, and **there is no module to wire.**
+  This said "the module exists in `hardware_data.dart` and is unwired"; it does
+  not exist. The eight modules are Warp Core Booster, Targeting Computer, Cargo
+  Expansion Kit, Solar Array, Auto-Repair System, Shield Capacitor, Cloak
+  Generator and Afterburner — no Scanner. The feature therefore needs the module
+  **created** first (a catalogue entry, a stat line, a level ladder) and then
+  wired, which is materially more than "wire it up". See *Proposed Mechanics 7*.
+- **Buy/sell from the planet**: **shipped as T1-T5.** Bulk orders are placed
+  from Transfers (behind the Settings → Modules `Planet Trading` toggle),
+  filled by port freighters over hops-scaled runs against live port prices,
+  with per-run countdown rows, cancellation with refunds, and sell revenue
+  landing in the world's treasury for withdrawal. What remains is T6 (retire
+  `Collect`), T7 (failure rolls) and T8 (convoy + insurance).
+- **Playtest fix (T5): run size decoupled from cadence.** A run used to
+  deliver `ticksPerRun` units, so a 3.7k order at 6 ticks/run took 617 runs
+  and 31 hours — distance set the shipment size, not just the rhythm. Runs
+  now carry the freighter hold (5,000) and one tap is one order id: split
+  shares group into a single row with a single Cancel, and legacy jobs keep
+  their quoted pacing (`unitsPerRun` defaults to `ticksPerRun`).
+- **External review response (T5): three fixed, one already fixed.**
+  `planAndCreate` deleted (it spent planet goods without reserving the port —
+  value from nothing; `createOrder` is the one seam); sell escrow now records
+  what the pool actually held and releases exactly that, unclamped, so
+  reserve-then-cancel on a cash-poor port cannot mint; model clamps
+  `ticksPerRun`/`unitsPerRun` ≥ 1 in the constructor so a save edit cannot
+  delete the cadence; withdrawal settle starts a 10-poll digest watch that
+  re-guards against a stale pass landing after the confirming poll.
+  The fourth claim (deposit draining the production remainder) was already
+  fixed: `_cap` reads pure `perTickFor`, with the old bug described in its
+  own comment and guarded in `planet_production_test.dart`.
 - **NPC colonisation / backup claiming by AI**: not started (the control-gating
   rules it would need already exist).
 
@@ -106,10 +140,11 @@ world per sector — and that single field is the blocker for the entire design
 below. Eight files read it, and with three worlds per sector a per-planet stable id
 becomes mandatory because `(sectorId)` stops being an identity.
 
-**Four decisions are still open** and are marked `OPEN` in place: whether a
-Genesis Torpedo offers type *profiles* or pure random, what the exchange spread
-should be, whether drone maintenance is worth building, and whether ports should
-grow on their own. None of them block the top-priority refactor.
+**Decisions still open** and marked `OPEN` in place: whether a Genesis Torpedo
+offers type *profiles* or pure random, whether drone maintenance is worth
+building, and whether ports should grow on their own. The exchange is no longer on
+this list — it is **parked** pending the trade jobs (*DECISION — resource trade as
+jobs*), because those may remove the need for it entirely.
 
 ### The measurements that drove everything
 
@@ -159,12 +194,27 @@ Three conclusions, and they drove everything after:
 
 ### A second, quieter defect: the port treasury ratchets
 
-**STILL OPEN.** `portCredits` is debited by every player sale (`port_trade_view`,
-clamped at 0), but nothing restores it except an NPC happening to buy there.
-`Port.regenTick` moves supply and demand only. So a port that sells into a
-colony trends toward zero and stays there. The self-correcting valve exists —
-`cashRatio` drives `priceMultiplier` across 0.55x-2.0x — but it depends on a
-reservoir that cannot refill, so the port pins at the floor permanently.
+**PARTLY OPEN — and the mechanism as first written here was wrong.** It said
+"nothing restores it except an NPC happening to buy there". A **player** buying
+restores it too, and that is the ordinary case:
+`port_trade_view.dart:219` does `portCredits + transactionValue` when the player
+buys, and `:264` does `portCredits - transactionValue` (clamped at 0) when the
+player sells. `Port.regenTick` moves supply and demand only.
+
+So the reservoir does refill, through the same screen that drains it — a port
+whose goods anyone buys recovers, and the `cashRatio` valve (`portCredits /
+desiredCredits`, feeding `priceMultiplier` across 0.55x–2.0x) works as intended
+for a port that sees traffic in both directions.
+
+What remains genuinely open is the case the correction does **not** cover: a port
+that only ever *sells* to the player. Every purchase drains it, nothing puts
+credits back except a player buying *from* it, and a port whose entire stock is
+bought out has nothing left to sell — so it can pin at the floor with no
+automatic path back. Whether that needs a fix depends on whether ports should
+recover on their own or whether "buying a port dry is permanent until someone
+sells to it" is the intended market pressure. **Undecided**, and the first version
+of this note could not have informed the decision because it described the wrong
+mechanism.
 
 ### A third: the Transfers buttons are not transfers
 
@@ -188,9 +238,10 @@ fifty. `_transferPrices` is **deleted, not retuned**: it priced goods that no
 longer change hands, and it gave the same minerals three values in one screen
 (5 cr on that row, 42.5 cr on Collect, a live price at a port).
 
-A resource market is a **third, separate verb** — buy at a port into cargo, fly,
-unload. Drones have no market row and no cash value, but they *can* be loaded so
-they can be fielded (below).
+Buying and selling are a **third verb** — and as of *DECISION — resource trade as
+jobs* they no longer require flying, because the planet screen can place an order
+that real ports fill over time. Drones have no market row and no cash value, but
+they *can* be loaded so they can be fielded (below).
 
 Two details worth recording:
 
@@ -280,9 +331,18 @@ Planet Guide, and three test files.
 
 #### Colony supply — DONE
 
-Every `Planet.supplyInterval` (10) ticks a colony is billed for the goods its
-people need: `supplyShareOfOutput` (8%) of **one tick's own output**, drawn at
-random from minerals, organics or industrial.
+Every `Planet.supplyInterval` ticks — **one game day, 2,880** — a colony is billed
+for the goods its people need: `supplyShareOfOutput` (8%) of the output it
+produces in those same 2,880 ticks, drawn at random from minerals, organics or
+industrial.
+
+> **This paragraph said "(10) ticks" and "one tick's own output", and both were
+> wrong** — the interval by 288x and the base by 2,880x. It is the same defect
+> that was found and fixed in the Planet Guide, still living here: the code is
+> `Planet.supplyInterval = PlanetClock.ticksPerDay` and the bill is a share of
+> `outputPerDayFor`, summed across the three tracks. A doc quoting a number the
+> model does not use is worse than no number, and this one sat in a section
+> headed **DONE**.
 
 Three deliberate properties:
 
@@ -330,7 +390,9 @@ volume*. A full 1 -> 6 needs **65,250 organics, total, ever**, against roughly
 output. This design buys real **identity and strategic dependency**; it does not
 put meaningful pressure on the market, and it should not be claimed to. What
 escapes a self-sufficient empire is **surplus in whatever it is best at**, and
-surplus is unbounded while deficit is bounded. That is what sizes the exchange.
+surplus is unbounded while deficit is bounded. That is what sizes the trade
+network: what a self-sufficient empire needs is somewhere to *sell* what it is
+best at, which is exactly what a sell job does.
 
 ### DECISION — multiple planets per sector (the top priority)
 
@@ -598,42 +660,209 @@ The cap should be per type and per commodity, and it should scale with Citadel
 level — otherwise it is another fixed number that cannot serve a small and a very
 large colony, which is the same trap as `colonistMax` and the storage floor.
 
-### DECISION — the resource market, and why one port is not enough
+### DECISION — resource trade as jobs: buy and sell from the planet
 
-A port's type string is **per commodity** (each legal good independently rolled
-`S` or `B` at 50/50), so a port can never both buy and sell the same commodity,
-and only **12.5%** of ports buy all three resources. Assigning one port per planet
-would therefore be unable to run a colony's economy in ~99% of cases.
+**The problem, measured.** A 5 -> 6 Citadel needs **80,000 minerals**
+(`levelUpCosts`, verified). A ship with 150 holds needs **533 round trips** to
+deliver them. That is not a difficulty setting, it is a wall, and it is the single
+largest source of tedium in the game. The same applies in reverse: a colony
+producing 27.6M minerals a day cannot be cashed in by flying.
 
-**Each commodity, in each direction, gets its own counterparty** — up to six per
-planet. Each is stable, each is named in its own `(i)` bubble, and each is
-rerollable. The reroll must **search for a port that can actually perform that
-trade**, never roll at random, so a counterparty can never be assigned one that
-refuses the commodity. Port character stays a feature: a black market that will not
-touch contraband stays a black market.
+**The mechanic.** The Transfers panel gains **Buy** and **Sell**, alongside the
+existing `Unload`/`Load`. They place an **order**, not a haul. The game finds
+suitable ports, and over time a series of cargo runs delivers or collects the
+goods, with a job status the player can watch — exactly like a colonist shipment,
+which is the template (`dispatchColonists` -> `colonistTransitTicks` ->
+`advanceColonistTransit`, advanced by the tick, with a progress panel).
 
-### DECISION — the exchange, as a pressure valve
+**The transaction happens at a real port.** This is the point, and it is what
+separates this from the `Collect` button. A job consumes the target port's real
+`demand`, pays its real `buyPrices` (which move with `cashRatio`), and moves its
+`portCredits`. The port economy therefore *moves* rather than being bypassed — and
+it replaces the hardcoded `_shipmentUnitValue` table (minerals 42.5, organics 115,
+industrial 230) with a live price. Two prices for the same goods is the defect
+that was already fixed once between `Wdr` and `Collect`; this is the third and
+last place it exists.
 
-An unlimited market with a **spread**, so ports are always better:
+**Explicit cargo runs, not a duration.** A job is `N` runs of hold-size, each
+taking `hops`-scaled ticks, and the UI reports `12 runs, 4 to go`. A single
+`ticks = volume / rate` delay was considered and rejected: it is a duration
+wearing a cargo run's clothes, it makes hold size irrelevant, and it gives the
+player nothing to read. Explicit runs also make the job's cost naturally
+proportional to volume **and** distance, which is what keeps the hauler honest.
+
+**Orders split across ports, and that is forced rather than chosen.** One port's
+`effectiveMaxDemand` is finite and refills over a game day, so an 80,000-mineral
+order *cannot* come from one port. The design is constrained by the economy
+rather than bolted onto it — which is why it should hold up.
+
+**The port sends its own freighter.** The player's hold and engine are not
+involved; the job is a credit-and-time cost. Deliberate for now: it keeps the
+feature about removing tedium rather than about ship build. A later revision could
+let the player's or an NPC's ships fly the runs, which would open a real mechanic —
+convoy losses to pirates, protection contracts, insurance — and make the universe
+feel inhabited. **Deferred, and flagged as the interesting direction rather than a
+detail.**
+
+**A paid order is a reservation.** If the player has paid for 20,000 minerals,
+those minerals are theirs: the job reserves that much of the port's demand at
+order time rather than racing other buyers for it. The alternative — re-checking
+demand on every run — is more realistic and can strand a job mid-flight, which for
+a 1-2 hour delivery is a punishment the player cannot act on. Ports have finite,
+refilling demand; a reservation is the honest reading of "I bought it".
+
+**Sell proceeds go to the world, and the owner withdraws them.** A sell run
+credits `Planet.accumulatedRevenue`, not a pilot. That is the **port pattern**,
+deliberately and down to the name: `Port.accumulatedRevenue` already accumulates
+trade income that its owner collects — the player via a confirm dialog on the port
+screen, an NPC automatically in the tick. A planet doing the same is learnable
+rather than novel, and neither withdrawal has to be invented.
+
+It also happens to be the only safe shape. **`GameTickService` loads players but
+never saves them**, and a save would be a start-of-pass snapshot — the
+read-modify-write clobber that ate colonist recruits earlier. So `advanceAll` takes
+no player list at all: it credits the *world*, which the tick owns, and the screen
+moves the money to the *pilot*, which the screen owns. An NPC's share is collected
+in the tick, which is safe for the same reason NPCs are persisted there already.
+
+**This does not contradict retiring `Collect` (T6).** T6 retires a button that
+converts *goods into credits at an invented flat price*. A treasury withdrawal
+moves *already-earned credits into a wallet*. No price, no invention, no second
+price for the same goods — a different verb wearing a similar label.
+
+**Gated behind a toggle in Settings, for now.** This is an advanced convenience
+that saves a great deal of time, so it should not be free at the start. It ships as
+a **`Planet Trading` toggle in a new Settings -> Modules panel**, and the reasoning
+for a toggle rather than a purchasable module is mechanical: `installedModules` is
+*equipment* — a `Map<String, int>` of id -> level on `Player` — while feature gates
+in this codebase are plain bools on `GameSettings` (`unlockAllShips`,
+`uiScaleAuto`). A toggle is therefore the established pattern and needs no new
+machinery.
+
+**Two ways to unlock it later are deliberately left open:** gating it behind a
+Citadel level (so a developed world earns the capability), or selling it as a real
+purchase. Both are additive changes to the gate, not to the feature, which is why
+the feature must live behind **one seam** — a single service owning job creation,
+advancing and cancellation, with the UI calling only into it. Removing the feature
+should mean deleting the service and its UI with no other file touched. That is the
+same shape as `ScanService`: one verb, one owner, so two screens cannot drift.
+
+**A job can fail, and that is a decision rather than an oversight.** An order is a
+chance roll, not a guaranteed delivery — which is what makes it a *decision* rather
+than a button that converts credits into goods with a delay. A failure needs to be
+legible when it happens (the job reports what was lost and why) because a silent
+loss reads as a bug.
+
+**Insurance is the intended mitigation, and it is deferred.** The natural response
+to a loss is to buy cover against it, and that is the mechanism to build *after*
+jobs are running and the failure rate can be measured. Deliberately not designed
+here: an insurance premium priced against a failure chance nobody has observed is a
+guess, and it would be the third thing built on top of two that do not exist yet.
+Recorded so the idea is not lost — it also pairs with the convoy mechanic below,
+where the loss is a *ship* rather than a crate.
+
+**What the Port Report needs.** It already lists every port with buy and sell
+prices, and the data for quantities is **already public** — `port.supply`,
+`port.demand`, `effectiveMaxSupply`, `effectiveMaxDemand` — the report simply does
+not render it. A quantity column is therefore small. What is genuinely missing is
+**distance**: the report computes no hops, so "relatively close" currently has
+nothing to sort by. Job selection needs it, and the report should show it.
+
+**Decided:**
+
+- **Credits are paid up front.** The order is paid in full when placed, which is
+  what makes the reservation above honest — the player has bought the goods, so
+  they are theirs. Colonists charge at order, so this matches the existing
+  precedent rather than inventing a second payment model.
+
+**Still open:**
+
+- **What is the failure chance, and what does a failure cost?** The roll is
+  decided; its probability and its penalty are not. The penalty should probably
+  scale with the order — losing a 200-unit run is noise, losing a 20,000-unit run
+  is a decision the player wants to have insured.
+- **Modules panel: what else goes in it?** It is being created for one toggle, which
+  is fine, but the name implies a home for future gates and that is worth thinking
+  about before the second one arrives.
+- **Does a job survive the port being destroyed mid-flight?** A reserved order
+  should be safe from *other buyers*, but a port that ceases to exist is a
+  different question, and "what happens to my cargo" has to have an answer.
+
+#### Planned phases — trade jobs
+
+**Eight phases, ordered so each one is independently landable and the feature stays
+behind one seam.** `T` rather than `A`-`I` so these do not collide with the
+existing planet phases. T7 and T8 are deferred by decision, not by dependency.
+
+| # | Phase | Size | Depends on | Guard |
+|---|---|---|---|---|
+| **T1** | **`TradeJob` model + `PlanetTradeService`.** A job: id, planet id, port id, commodity, direction, runs total/remaining, ticks per run, ticks remaining, reserved units, credits paid, status. The service owns create / advance / cancel. No UI. | Medium | — | Unit tests driving the service directly: a job advances one run per `hops`-scaled interval, lands its cargo exactly once, and cancels cleanly |
+| **T2** | **The tick advances jobs.** `GameTickService` steps every job each pass and writes through. | Small | T1 | **DONE.** The `productionRemainder` lesson applies here. The tick re-parses the universe every pass, so a job that lives only in memory resets every tick and never progresses. Guard: mutate → save → reload → advance, for a multi-run job |
+| **T3** | **Port selection.** Given a planet, commodity, direction and volume: find ports that can actually perform the trade, nearest first, split across them when one cannot absorb the order. | Medium | — | Pure function over a universe. Guard: a 100,000-unit order against ports whose combined capacity is 60,000 splits into jobs summing to 60,000 and reports the shortfall, and never selects a port that does not trade that commodity |
+| **T4** | **Port Report: quantities and distance.** A column for what a port will still take, and hops from the player. | Small | — | Widget test on the rendered rows. The quantity data is already public (`supply`, `demand`, `effectiveMax*`); distance is not computed today |
+| **T5** | **The gate and the UI.** `GameSettings.planetTradingEnabled` + a new **Settings → Modules** panel, and Buy/Sell in Transfers with a job-status row. | Medium | T1-T4 | **DONE.** Widget test pins the gate both ways (absent off, present on); every job row carries a per-run `TickProgressBar` countdown |
+| **T6** | **Retire `Collect`.** Route the shipment pool through a sell job, or delete the button. | Small | T5 | **DONE as sweep, not sale.** The pool is overflow, so `Collect` became a free **Move to store** bounded by room (drones included); the flat payout table is deleted, leaving exactly one price per commodity — the live port one. Guard: model bounds + widget flow + a source scan pinning the table's absence |
+| **T7** | **Failure rolls.** The chance a run is lost, and what it costs. | Small | T5 | Injectable RNG so both branches are reachable in a test — a probability tested with a real RNG is a test of the weather |
+| **T8** | **Convoy + insurance.** Player or NPC ships fly the runs; losses are ships; insurance covers them. | Large | T7 | Deferred by decision. See the note above |
+
+**A job row needs a per-run countdown, not just a run count.** A run is minutes
+long, so a row reading `12 runs to go` that does not move for four minutes is
+indistinguishable from a stalled job — the same failure the colonist transit bar
+had at twenty-nine seconds, sixteen times worse. `TickProgressBar`
+(`lib/widgets/shared/progress_bar.dart`) is the shared answer: one tick is 30s, so
+a run of N ticks has an exactly known duration, and the bar measures real time
+*within* the current tick and resyncs when the count moves. It therefore moves
+every second **and** cannot claim progress the ticks have not granted. The
+sub-tick term is capped just below a full tick for that reason: without the cap,
+`(total - 1 + 1) / total` reads as finished on the last tick, which is the same lie
+a self-driven `t / D` clock tells.
+
+**Pacing.** `ticksPerHop` is 2, so one hop is a minute and the **median** four-hop
+port is a **four-minute** run. That makes an 80,000-mineral Citadel order 16 runs
+over about an hour, with a delivery every four minutes. Distance sets the cadence;
+order size sets the number of runs; the two do not interact.
+
+**Why T3 and T4 come before T5.** Both are independently useful — the Port Report
+gets better for a player who never enables the feature, and port selection is the
+piece most likely to be wrong in a way that is hard to see from the UI. Landing them
+first means T5 is only the controls, and the two things it depends on are already
+tested.
+
+**Why T6 is its own phase rather than part of T5.** Removing a button the player
+currently uses deserves its own commit and its own reasoning, not a side effect of
+adding a feature. If `Collect` is kept instead, the guard above is what stops the
+two prices drifting apart again — which is how this defect survived twice already.
+
+### PARKED — the exchange, as a pressure valve
+
+**Deferred until the trade jobs above have landed, and possibly forever.** It is
+kept here so the reasoning is not lost, not because it is scheduled.
+
+The original argument was that an unlimited market with a **spread** keeps ports
+strictly better:
 
 ```
 exchange bid  <  port average buy price  <  port average sell price  <  exchange ask
 ```
 
-Selling to the exchange pays the low bid; buying from it charges the high ask. The
-gap between them **is** the premium on logistics, and it is what makes cargo
-capacity, hull choice, engines, and owning a port worth anything. Without it, the
-exchange becomes the default the moment it can absorb more than a port, and the
-port economy becomes decorative.
+The gap is the premium on logistics, and it is what makes cargo capacity, hull
+choice, engines and owning a port worth anything.
 
-**The condition is a knife edge and needs a test**: if the bid is ever above a
-port's buy price, that is an arbitrage loop, and with colonies under pressure to
-liquidate fast it would be found immediately.
+**Two things changed.** First, trade jobs route bulk movement through real ports
+at real prices, which supplies the "unlimited enough" sink without a second
+parallel economy — and a second price for the same goods is exactly the defect
+this document keeps finding. Second, the exchange was partly justified by things
+the player **cannot** buy, and that list is shorter than it sounds: hardware comes
+from emporiums, scrap sells at them, contraband trades at black markets.
 
-**It is built last, and that is the important sequencing decision.** An unlimited
-flat sink **hides every other problem** — the moment it exists, the 10x faucet stops
-mattering, and the harsh worlds, the hauler and the torpedo all look like features
-nobody needs. Build it first and we ship a broken economy without ever finding out.
+So the honest position is: **build the trade jobs first, then ask what is actually
+left that needs an exchange.** If the answer is "nothing", the exchange was a
+solution to a problem the jobs already solved. If the answer is "equipment and
+artefacts", it should be scoped to exactly those rather than to resources.
+
+The knife-edge condition still applies if it is ever built: if the bid is ever
+above a port's buy price that is an arbitrage loop, and it would be found
+immediately.
 
 ### DECISION — no selling drones
 
@@ -648,24 +877,27 @@ below), a drone-heavy world becomes a pure industrial drain with no cash return.
 That is defensible — drones are worth their combat value — but the player has to be
 able to see it, or it reads as a trap.
 
-### OPEN — Mountain is implemented but not generated
+### DONE — Mountain is generated, weighted like Desert and Ocean
 
-`_pickPlanetType`'s `weightedTypes` list **does not include Mountain**, so a
-fresh universe never places one. The only way to get a Class L world is a
-Genesis Torpedo roll, which draws from `Planet.allTypes`. That makes the seventh
-sourced class — the one the Production Triangle table is written around —
-effectively a torpedo-only world, and "ten rolls to get one specific type"
-becomes many more for anyone chasing it.
+This was `OPEN — Mountain is implemented but not generated`, and it is now stale in
+the opposite direction. `_pickPlanetType`'s `weightedTypes` includes Mountain
+**twice**:
 
-**Undecided, and deliberately not changed here:** adding it perturbs
-`weightedTypes`, which shifts every downstream random draw and therefore every
-seed. Per the lesson in `AGENTS.md`, expect seed-sensitive breakage whenever draw
-counts change upstream of a random placement, and re-run the generator tests
-rather than assuming a green suite means the distribution still looks sane. The
-open question is only *where in the distribution* it belongs — a highland world
-productive in all three commodities is arguably a common sight, and giving it a
-mid-table slot would also rebalance the `planetDensity` change the multi-planet
-work made.
+```
+Terran x3, Jungle x2, Desert x2, Ocean x2, Ice x1,
+Lava x2, Mountain x2, Moon x2, Barren x1, Toxic x2
+```
+
+A mid-table slot rather than a rare one, on the reasoning that a highland world
+productive in all three commodities *is* the complement the harsh types are
+designed to want beside them, and a complement that exists mostly in torpedo rolls
+is not a complement. The **19-slot** table makes Mountain as common as Desert,
+Ocean, Lava, Moon or Toxic (2 each), and twice as common as Ice or Barren (1 each).
+
+The caveat the open note raised is the one that still applies to any future edit:
+**adding an entry shifts every downstream random draw and therefore every seed.**
+That is why the entry carries a comment in the generator saying so, and why the
+generator tests were re-run rather than assumed green.
 
 ### OPEN — the only remaining recurring sink
 
@@ -898,9 +1130,10 @@ sequence.
 | 3 | ~~`Dep`/`Wdr` -> cargo; delete `_transferPrices`~~ | **DONE** | The hauler. **Built before step 2, reversing the documented order** — see below. |
 | 4 | ~~Genesis Torpedo + Atomic Detonator + collision rolls~~ | **DONE** | Needs 2 and 3: planting a complement is worthless if goods cannot move |
 | 5 | ~~Per-type production caps~~ | **DONE** | Stops a large colony printing without limit. `planet_classes.dart` — see *The Production Triangle* below |
-| 6 | Per-commodity port counterparties + `(i)` bubbles | Medium | Now answerable, because there is a reason to care which port |
-| 7 | The exchange | Medium | **Last, deliberately** — see above |
+| 6 | **Buy/sell jobs from the planet screen** — **planned as phases T1-T6**, see *Planned phases — trade jobs* | Large | The tedium fix. Needs 3 (cargo moves) and 5 (there is a reason to care which port). Landed as six independently testable phases rather than one |
+| 7 | Port Report: quantities and distance | Small | The data for quantities is already public; distance is not computed. Job selection needs both |
 | 8 | Port growth on unowned ports | Medium | The most likely fix for the absorption overshoot |
+| 9 | ~~The exchange~~ | **PARKED** | Revisit only if something remains that cannot be bought. See *PARKED — the exchange* |
 
 Steps 2 and 3 are **independent of the refactor** and can be banked first if the
 risk in step 1 is not wanted up front. Scanner auto-scan, NPC colonisation and
@@ -1169,7 +1402,8 @@ of these ideas are decisions and which are still open.
   per-colonist rate, and that is still `OPEN`.
 - **Progressive scanning** (quick reveals type/owner/danger, detailed reveals
   population and production, scanner module reveals exact figures). This makes
-  the unwired scanner module worth buying and gives the two existing scan paths a
+  a scanner module worth buying — which has to be *created* first, since the
+  catalogue has no Scanner — and gives the two existing scan paths a
   reason to differ.
 - **Per-commodity storage** rather than one global `maxStorage`, so a player
   cannot fill a planet with minerals and consume all capacity. This also gives
@@ -1298,7 +1532,9 @@ but not as described; **NOT BUILT** = designed only.
 4. **PARTIAL — Scan before landing.** Scanning works and gates the screen, and
    there is now **one** scan verb (`ScanService`, 1 energy, +1 standing with the
    owner) shared by both entry points — the two prices and two copies are gone
-   (Code Audit #3, resolved). Still unwired: the scanner-module auto-scan.
+   (Code Audit #3, resolved). Not started: the scanner-module auto-scan, which
+   needs the module **created** before it can be wired — there is no Scanner in
+   the catalogue. See *Proposed Mechanics 7*.
 5. **DONE — Claiming & ownership.** Unclaimed planets can be claimed; owner and
    homeworld state drive map markers, repopulation control, and the screen.
 6. **DONE — Resource abundance.** Extraction rate scales with colonists, type,
@@ -1613,8 +1849,9 @@ The earlier "credit column derived from `_transferPrices`" note is **removed**: 
 described a flat 20cr colonist price that no longer exists. Credits are now
 `ColonistSupply.costFor` (distance-scaled) plus resource transfer prices, and
 `Dep`/`Wdr` no longer move credits at all — they move cargo. The measured table
-above stands until the resource market replaces its resource prices with live port
-prices.
+above stands until trade jobs replace its resource prices with live port prices —
+at which point the credit column becomes a *range*, because a port's price moves
+with its cash and demand.
 
 ### What a level grants — IMPLEMENTED
 
@@ -2257,15 +2494,17 @@ every port's combined treasury** in a single day. The market brake is therefore
 no longer exists. The ~60% of ports that are unowned never upgrade their storage
 level at all, so the sink cannot grow.
 
-Still to do: per-commodity port counterparties, colonies actively feeding a port
-(moving port prices directly), convoy and route mechanics, NPC factions competing
-for the same finite demand, and the exchange as the unlimited valve.
+Still to do: **buy/sell jobs from the planet screen** (*DECISION — resource trade
+as jobs*), which is what actually connects a colony to a port; port growth on
+unowned ports (so the sink can scale with the faucet); NPC factions competing for
+the same finite demand; and convoy and route mechanics as the deferred second
+stage of the jobs. The exchange is **parked** — see *PARKED — the exchange*.
 
-Planets currently compete with nothing, because they produce nothing. Once they
-produce, letting a nearby port draw on a claimed planet's stores gives the
-eight-commodity economy a second supply source that is not a port simply
-minting stock against the player's credit, and it gives distance a reason to
-matter.
+Planets currently compete with nothing, because nothing they produce leaves the
+world without the player flying it. Once a colony can place a sell job against a
+nearby port's live demand, it competes for the same finite pool every trader does,
+which gives distance a reason to matter and makes a port's `effectiveMaxDemand`
+the real ceiling on a colony's income.
 
 ### 4. Colonist transport — MOSTLY DONE
 
@@ -2305,15 +2544,28 @@ reaches it from gameplay, years earlier. That changes what invasion is for: it
 becomes the path that takes a world *without* destroying it, which is the only
 remaining thing a player cannot do.
 
-### 7. Scanner-module auto-scan — SMALL
+### 7. Scanner-module auto-scan — MEDIUM, not SMALL
 
-The module already exists in `hardware_data.dart` and is unwired. Wiring it makes
-it a real purchase instead of a stat line.
+**Re-rated upward, because the premise was wrong.** This said "the module already
+exists in `hardware_data.dart` and is unwired". It does not exist. The eight
+modules are Warp Core Booster, Targeting Computer, Cargo Expansion Kit, Solar
+Array, Auto-Repair System, Shield Capacitor, Cloak Generator and Afterburner.
+
+So the item is two pieces of work, not one:
+
+1. **Create the module** — a `ModuleDef` entry in the catalogue, a `statLine`, a
+   level ladder, and whatever effect the reveal has. That is the part the original
+   "SMALL" rating did not account for.
+2. **Wire it into scanning**, which is the part that was actually described.
 
 It also interacts with the scan decision: there is now a single 1-energy scan
 (Code Audit #3, fixed), so the module's value has to come from removing the
 *cost*, or from the deeper reveal that does not exist yet — not from
 out-scanning a second, more expensive version of the same verb.
+
+The Planet Guide made the same false claim about this module and it was removed
+there; this file kept it, which is why the two surfaces disagreed about whether a
+Scanner exists.
 
 ### 8. NPC colonisation — MEDIUM
 
@@ -2360,7 +2612,8 @@ grants (F) are what make the existing screen honest, and neither is large.
   atmospheres, random efficiency, starting stores, random image, plus homeworld
   and backup-homeworld placement.
 - **Phase C: Scanning & Discovery (partial)** — `scanned` flag, scan actions,
-  energy cost, persistence. *Auto-scan on scanner module not wired.*
+  energy cost, persistence. *Auto-scan not built, and no Scanner module exists
+  to build it with — see Proposed Mechanics 7.*
 - **Phase G: Planet UI** — planet tab, screen, scan, claim, transfers, level-up,
   map markers, land action.
 - **Phase I: NPC Repopulation (partial)** — homeworld ship spawning, floor
@@ -2389,9 +2642,17 @@ grants (F) are what make the existing screen honest, and neither is large.
   *The Production Triangle*.
 - ~~**Genesis Torpedo + Atomic Detonator**~~ — **DONE**, plus the collision roll
   for over-stacking a sector past its cap.
-- **Resource market** — not started. Per-commodity port counterparties with `(i)`
-  bubbles, then the exchange as an unlimited pressure valve at a spread that keeps
-  ports strictly better in both directions.
+- **Buy/sell jobs from the planet screen** — **shipped as T1-T6** (model +
+  service, tick advance, port selection, report quantities/distance, gate +
+  Transfers UI, `Collect` retired into a free pool sweep). Remaining: T7
+  (failure rolls), T8 (convoy + insurance).
+- **Order durability (pre-T7).** Placed orders are held as intent and
+  re-dispatched when a tick snapshot erases them — bounded at 8 polls (~8s),
+  which is also the correctness argument, since no run can complete inside
+  the window. Past the bound the order is assumed landed and logged, because
+  blind re-creation could duplicate delivered goods.
+- ~~**The exchange**~~ — **PARKED**, pending the trade jobs above. See *PARKED —
+  the exchange*.
 
 ### Recommended order for what remains
 1. ~~**E** — production + upkeep + storage ceiling.~~ **DONE.**
@@ -2404,9 +2665,13 @@ grants (F) are what make the existing screen honest, and neither is large.
 6. **The Economy Redesign order supersedes this list** — see *Revised order of
    work*. In short: multi-planet sectors first (it is a model refactor and eight
    files read `sector.planet`), then the harsh-type gaps and the `Dep`/`Wdr` cargo
-   fix, then the torpedo, then the market, and the exchange **last**.
-7. Scanner auto-scan, NPC colonisation.
-8. **H** — invasion, which makes homeworld capture a real growth denial and gives
+   fix, then the torpedo, then the trade jobs, and the exchange **last** (and now
+   **parked**, pending the jobs).
+7. **The trade jobs themselves** — planned as **phases T1-T8** in *Planned phases —
+   trade jobs*. T1-T6 are the feature; T7 (failure rolls) and T8 (convoy and
+   insurance) are deferred until it is running and measurable.
+8. Scanner auto-scan, NPC colonisation.
+9. **H** — invasion, which makes homeworld capture a real growth denial and gives
    ownership stakes. Note that `destroy()` no longer waits for it: the Atomic
    Detonator reaches it years earlier, and the gravity roll with it.
 
@@ -2432,7 +2697,9 @@ grants (F) are what make the existing screen honest, and neither is large.
 - `lib/screens/port_screen.dart` — pattern for planet screen UI
 - `lib/screens/port_management_screen.dart` — pattern for planet management screen
 - `lib/widgets/sector_view_widgets/sector_interaction_panel.dart` — where "Land on Planet" / "Scan Planet" buttons go
-- `lib/data/models/ship_equipment_types.dart` — for scanner module
+- `lib/data/models/hardware_data.dart` — the module catalogue. **There is no
+  Scanner module**, so a scanner auto-scan needs one created before it can be
+  wired (Proposed Mechanics 7)
 - `lib/services/game_clock.dart` — **the** clock. `GameClock.tick` is the only
   notion of game time in the codebase; `ticksPerDay` (2,880) and
   `ticksPerHour` (120) are the only period constants. Persisted on

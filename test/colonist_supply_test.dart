@@ -36,6 +36,60 @@ List<Sector> _universe({required int seed, int sectors = 100}) =>
     )).generate();
 
 void main() {
+  group('distance to an unreachable capital', () {
+    // **The unreachable clamp was dead code.** `hopsBetween` guarded on
+    // `PathfindingService.distance(...) <= 0`, and that function returns the
+    // sentinel **9999** for "no route" — never zero. So the guard never fired and
+    // an existing-but-unreachable capital priced colonists at
+    // `15 x 9999^1.5` = 14,997,750 cr each, against 624 at the intended
+    // `unreachableHops` of 12. A thousand colonists came to 15 billion.
+    //
+    // It also meant the *orphan* fallback never engaged for this case, because
+    // `isOrphan` is about having no capital at all, not an unreachable one — two
+    // different failures behind one guard.
+    test('is priced as the worst case, not as the sentinel', () {
+      // Two sectors that share no warp: 1 knows nobody, 2 knows nobody.
+      final disconnected = [
+        Sector(id: 1, name: 'A', x: 0, y: 0, warpRoutes: const []),
+        Sector(id: 2, name: 'B', x: 1, y: 0, warpRoutes: const []),
+      ];
+      final hops = ColonistSupply.hopsBetween(disconnected, 1, 2);
+      expect(hops, ColonistSupply.unreachableHops,
+          reason: 'an unreachable capital must clamp to the worst case');
+      expect(hops, isNot(9999),
+          reason: 'the pathfinder sentinel is not a distance');
+    });
+
+    test('and the price is the clamp price, not fifteen million', () {
+      final atClamp =
+          ColonistSupply.pricePerColonist(ColonistSupply.unreachableHops);
+      expect(atClamp, lessThan(2000), reason: '624 at the time of writing');
+      // The figure the dead guard produced, so a regression names itself.
+      final atSentinel = ColonistSupply.pricePerColonist(9999);
+      expect(atSentinel, greaterThan(10000000),
+          reason: 'this is what the bug looked like: ~15M cr per colonist');
+    });
+
+    test('a reachable pair still measures real hops', () {
+      // The fix must not break the ordinary case.
+      final chain = [
+        Sector(id: 1, name: 'A', x: 0, y: 0, warpRoutes: const [2]),
+        Sector(id: 2, name: 'B', x: 1, y: 0, warpRoutes: const [1, 3]),
+        Sector(id: 3, name: 'C', x: 2, y: 0, warpRoutes: const [2]),
+      ];
+      expect(ColonistSupply.hopsBetween(chain, 1, 2), 1);
+      expect(ColonistSupply.hopsBetween(chain, 1, 3), 2);
+    });
+
+    test('a sector is zero hops from itself, reported as one', () {
+      final chain = [
+        Sector(id: 1, name: 'A', x: 0, y: 0, warpRoutes: const []),
+      ];
+      expect(ColonistSupply.hopsBetween(chain, 1, 1), 1,
+          reason: 'one, not zero — a zero-hop shipment would be free');
+    });
+  });
+
   group('distance pricing', () {
     test('costs more the further the colony is from Terra', () {
       var previous = 0;

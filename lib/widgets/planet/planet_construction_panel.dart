@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/widgets/planet/planet_info_row.dart';
+import 'package:cosmic_trader/widgets/shared/progress_bar.dart';
 
 /// The progress panel for a Citadel tier already under construction.
 ///
@@ -72,18 +73,18 @@ class PlanetConstructionPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(5),
-          child: LinearProgressIndicator(
-            value: planet.constructionProgress,
-            minHeight: 10,
-            // The track is a real requirement, not decoration: a determinate bar
-            // at 0% is *only* its track, and `surfaceContainerHighest` on this
-            // background is so close to the card fill that a freshly started
-            // build looked like no bar at all.
-            backgroundColor: Colors.amber.withValues(alpha: 0.18),
-            valueColor: const AlwaysStoppedAnimation(Colors.amber),
-          ),
+        // The same bar as the transit panel, for the same reason: a build is a
+        // tick countdown, so it can move every second and stay honest about how
+        // many ticks are left. It used to be a bare `LinearProgressIndicator`
+        // driven straight from `constructionProgress`, which sat still for thirty
+        // seconds and then jumped — the identical defect, in the panel beside it.
+        TickProgressBar(
+          key: const ValueKey('planet-construction-bar'),
+          remaining: planet.constructionTicksRemaining,
+          total: planet.constructionTotalTicks,
+          secondsPerTick: GameClock.secondsPerTick,
+          color: Colors.amber,
+          trackColor: Colors.amber.withValues(alpha: 0.18),
         ),
         const SizedBox(height: 8),
         PlanetInfoRow(

@@ -90,7 +90,7 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               '',
               'Drones are derived, not staffed: a day of drones is the sum of the three tracks\' output divided by a per-class figure, so the ceiling on your fleet falls out of the production caps rather than being a separate number. Overstaffing a track past its optimum lowers all three outputs, and therefore the drones too.',
               '',
-              'Nothing is thrown away while you are away. Each store has its own limit, and when one fills the surplus moves into a shipment pool that holds ${Planet.pendingCapMultiple}× the store and keeps growing. Collect it whenever you are here — the planet screen offers a Collect button and tells you what it is worth.',
+              'Nothing is thrown away while you are away. Each store has its own limit, and when one fills the surplus moves into a shipment pool that holds ${Planet.pendingCapMultiple}× the store and keeps growing. Sweep it into the stores with the pool panel whenever you are here — it is free, and moving it is what makes it sellable.',
             ],
           ),
           const SizedBox(height: 12),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cosmic_trader/core/number_format.dart';
 import 'package:cosmic_trader/data/models/planet.dart';
 import 'package:cosmic_trader/services/game_clock.dart';
+import 'package:cosmic_trader/widgets/shared/progress_bar.dart';
 
 /// The in-transit colonist shipment, drawn like `PlanetConstructionPanel`.
 ///
@@ -70,52 +71,29 @@ class PlanetTransitPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(5),
-            // **The bar animates, but the tick clock stays the truth.**
-            //
-            // `colonistTransitProgress` only changes when a tick lands, so a raw
-            // bar sat still for 29 seconds and then jumped half its length — a
-            // liveness indicator that reads as frozen. `TweenAnimationBuilder`
-            // moves the drawn value from wherever it is *toward* the true value
-            // over one tick's worth of real time, which fills the gap without
-            // inventing progress: it never animates past `end`, so a late tick
-            // makes it wait rather than lie, and it cannot reach 100% before the
-            // shipment actually lands.
-            //
-            // The duration is one tick, not the whole flight, because the target
-            // is re-read on every rebuild (the screen refreshes each second, and
-            // the tick lands every 30). Each tick moves the target and the bar
-            // glides to meet it. If a dev changes the tick interval the *rate* is
-            // out of step while the *value* stays honest, which is the right way
-            // round for a display.
-            child: TweenAnimationBuilder<double>(
-              // `begin: 0` is read only on the first build — afterwards the
-              // builder keeps the current drawn value and animates from there to
-              // the new `end`, which is what makes the bar continuous rather than
-              // restarting on every rebuild.
-              tween: Tween<double>(
-                begin: 0,
-                end: planet.colonistTransitDrawnProgress,
-              ),
-              duration: const Duration(seconds: GameClock.secondsPerTick),
-              builder: (context, value, _) => LinearProgressIndicator(
-                // Keyed so a test can name *this* bar. The colony card draws six
-                // other progress bars (one per workforce track, plus the drone
-                // readout), so a count of `LinearProgressIndicator` cannot tell
-                // the transit bar apart from any of them — the same trap as
-                // counting warp-chip icons.
-                key: const ValueKey('colonist-transit-bar'),
-                value: value,
-                minHeight: 10,
-                // A real track, not decoration — the same reason as the build
-                // bar: a determinate bar at 0% is only its track, and a track too
-                // close to the card fill reads as no bar at all on the tick it
-                // starts.
-                backgroundColor: Colors.amber.withValues(alpha: 0.18),
-                valueColor: const AlwaysStoppedAnimation(Colors.amber),
-              ),
-            ),
+          // **The bar measures the sub-tick; the tick count stays the truth.**
+          //
+          // A run of N ticks is exactly N x 30s, so the bar can measure real time
+          // within the current tick and resync whenever the count moves. It moves
+          // every second and cannot claim progress the ticks have not granted —
+          // see `TickProgressBar`.
+          //
+          // This replaced a look-ahead getter (`colonistTransitDrawnProgress`,
+          // "one tick ahead") that existed only because the previous bar animated
+          // *toward* the next tick's value. Measuring the sub-tick directly is
+          // simpler and needs no such field on the model.
+          TickProgressBar(
+            // Keyed so a test can name *this* bar. The colony card draws six
+            // other progress bars (one per workforce track, plus the drone
+            // readout), so a count of `LinearProgressIndicator` cannot tell the
+            // transit bar apart from any of them — the same trap as counting
+            // warp-chip icons.
+            key: const ValueKey('colonist-transit-bar'),
+            remaining: planet.colonistTransitTicks,
+            total: planet.colonistTransitTotalTicks,
+            secondsPerTick: GameClock.secondsPerTick,
+            color: Colors.amber,
+            trackColor: Colors.amber.withValues(alpha: 0.18),
           ),
           const SizedBox(height: 6),
           Text(

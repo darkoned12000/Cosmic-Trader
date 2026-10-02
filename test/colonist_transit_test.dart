@@ -249,9 +249,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
+    // The key is on the `TickProgressBar` wrapper, so read the bar it draws —
+    // `find.byKey` alone would hand back the wrapper and the cast would throw.
     double drawn() => tester
         .widget<LinearProgressIndicator>(
-          find.byKey(const ValueKey('colonist-transit-bar')),
+          find.descendant(
+            of: find.byKey(const ValueKey('colonist-transit-bar')),
+            matching: find.byType(LinearProgressIndicator),
+          ),
         )
         .value!;
 

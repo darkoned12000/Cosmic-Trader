@@ -19,6 +19,8 @@ import 'package:cosmic_trader/services/npc_ai/banking_ai.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
 import 'package:cosmic_trader/services/repopulation_service.dart';
 import 'package:cosmic_trader/services/planet_production_service.dart';
+import 'package:cosmic_trader/services/planet_trade_service.dart';
+import 'package:cosmic_trader/data/models/trade_job.dart';
 import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/services/combat_metrics.dart';
 import 'package:cosmic_trader/widgets/dev_profiler.dart';
@@ -399,6 +401,40 @@ class GameTickService {
         // exactly the same footing as a tick of production.
       });
 
+      // Trade jobs: a world's buy and sell orders, stepped one run at a time.
+      //
+      // Deliberately **its own pass** rather than folded into colony production,
+      // so the whole feature hangs off one call. Removing it means deleting this
+      // block and the service — nothing else changes.
+      //
+      // After colony production, so a delivery tops up a store that has already
+      // taken this tick's output rather than being counted as part of it.
+      //
+      // **No player is passed, and that is the point.** The tick loads `players`
+      // but never saves them, so crediting one here would be discarded — and
+      // saving would be a start-of-pass snapshot, the read-modify-write clobber
+      // that ate colonist recruits. Sell proceeds land in the *world's*
+      // `accumulatedRevenue` and its owner withdraws them. See
+      // `PlanetTradeService.advanceAll`.
+      DevProfiler.instance.trace('tick_trade_jobs', () {
+        final landed = PlanetTradeService.advanceAll(sectors);
+        if (landed.isNotEmpty) {
+          var unitsArrived = 0;
+          var unitsCollected = 0;
+          for (final entry in landed.values) {
+            if (entry.direction == TradeDirection.buy) {
+              unitsArrived += entry.units;
+            } else {
+              unitsCollected += entry.units;
+            }
+          }
+          log.system(
+            'Trade: $unitsArrived units delivered, '
+            '$unitsCollected collected'
+            '${landed.isNotEmpty ? ' · ${landed.length} order(s) complete' : ''}',
+          );
+        }
+      });
       // Gravity checks on over-stacked systems. A sector's 24-hour clock starts
       // the moment it goes over the cap, so this is a due check rather than a
       // daily alarm, and calling it every pass is just arithmetic on a

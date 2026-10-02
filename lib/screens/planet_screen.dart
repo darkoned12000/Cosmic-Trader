@@ -18,6 +18,66 @@ import 'package:cosmic_trader/services/scan_service.dart';
 import 'package:cosmic_trader/services/colonist_supply.dart';
 import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/services/game_clock.dart';
+import 'package:cosmic_trader/services/planet_trade_service.dart';
+import 'package:cosmic_trader/data/models/trade_job.dart';
+import 'package:cosmic_trader/widgets/shared/progress_bar.dart';
+
+/// One placed market order awaiting confirmation, as data rather than as
+/// live job objects: the poll re-reads the universe into a fresh graph, so
+/// holding object references would pin the stale copy.
+class _PendingShare {
+  _PendingShare({
+    required this.jobId,
+    required this.portSectorId,
+    required this.commodity,
+    required this.direction,
+    required this.units,
+    required this.ticksPerRun,
+    required this.unitPrice,
+  });
+
+  final String jobId;
+  final int portSectorId;
+  final String commodity;
+  final TradeDirection direction;
+  final int units;
+  final int ticksPerRun;
+  final int unitPrice;
+}
+
+/// An order this screen placed that the stored universe has not yet
+/// confirmed — reconciled in [_syncFromDisk].
+class _PendingOrder {
+  _PendingOrder({
+    required this.planetId,
+    required this.orderId,
+    required this.shares,
+  });
+
+  final String planetId;
+  final String orderId;
+  final List<_PendingShare> shares;
+  int age = 0;
+}
+
+/// One tappable request and the port-runs it split into.
+///
+/// A record would do, but the same four fields are named in three places and
+/// named-record field order is part of the type — one transposed pair is a
+/// compile error in triplicate. A class names them once.
+class _OrderGroup {
+  _OrderGroup({
+    required this.cancelId,
+    required this.direction,
+    required this.commodity,
+    required this.jobs,
+  });
+
+  final String cancelId;
+  final TradeDirection direction;
+  final String commodity;
+  final List<TradeJob> jobs;
+}
 
 class PlanetScreen extends StatefulWidget {
   final Player player;
@@ -36,6 +96,13 @@ class PlanetScreen extends StatefulWidget {
   /// from the shell like [constructionTimeScale] rather than read from
   /// storage inside the tap handler.
   final int worldCap;
+
+  /// Whether the Transfers panel offers bulk Buy/Sell market orders.
+  ///
+  /// The Settings → Modules gate, passed in like [constructionTimeScale] so
+  /// the screen never reads storage in a tap handler. Off means the controls
+  /// are absent, not disabled — a gate that leaks is worse than no gate.
+  final bool planetTradingEnabled;
 
   /// Leaves the Planet tab for the Sector view.
   ///
@@ -56,6 +123,7 @@ class PlanetScreen extends StatefulWidget {
     required this.player,
     required this.onPlayerUpdate,
     this.constructionTimeScale = 1.0,
+    this.planetTradingEnabled = false,
     this.worldCap = 3,
     this.onExitToSector,
   });
@@ -119,6 +187,32 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
   }
 
+  /// Writes several sectors back and reports whether they landed.
+  ///
+  /// The multi-sector counterpart to [_persist]: a market order mutates the
+  /// world's sector *and* every port sector that fills it, and persisting
+  /// only the first would strand the reservations — paid for, never written,
+  /// resurrected on the next load.
+  Future<bool> _persistAll(List<Sector> sectors) async {
+    _writeInFlight = true;
+    try {
+      final ok = await UniverseStorage.instance.saveSectors(sectors);
+      if (ok) {
+        _pendingWrite = null;
+        _pendingWriteSectors = null;
+      } else {
+        _pendingWriteSectors = sectors;
+      }
+      return ok;
+    } catch (e) {
+      debugPrint('[PlanetScreen] persistAll failed: $e');
+      _pendingWriteSectors = sectors;
+      return false;
+    } finally {
+      _writeInFlight = false;
+    }
+  }
+
   /// Which world in this sector the screen is showing.
   ///
   /// `null` means "the first one", which is the right default for a
@@ -134,6 +228,92 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// substitute for them: a retry is attempted on every refresh, so a transient
   /// refusal self-heals, and the player is told when it does not.
   Sector? _pendingWrite;
+
+  /// Sectors from a multi-sector write (a market order touches the world's
+  /// sector *and* every port sector that fills it) that did not land.
+  ///
+  /// Same contract as [_pendingWrite]: retried on every refresh until disk
+  /// agrees, and the refresh keeps this screen's copies while any of it is
+  /// outstanding.
+  List<Sector>? _pendingWriteSectors;
+
+  /// Withdrawals this screen made that the stored universe has not yet
+  /// confirmed — reconciled in [_syncFromDisk] like [_unconfirmedShipments].
+  ///
+  /// The tick loads the whole universe, works it for seconds, then writes it
+  /// back. A withdrawal landing inside that window is overwritten by a
+  /// snapshot taken before it existed: the treasury jumps back to its
+  /// pre-withdrawal value and the same credits can be withdrawn again — an
+  /// infinite-money glitch with no error anywhere. Reproduced in
+  /// `test/planet_revenue_withdrawal_test.dart` with a stale write-back.
+  ///
+  /// Held as intent (which world, how much left, what it held at dispatch)
+  /// and re-asserted onto each fresh read until the stored value drops below
+  /// its pre-withdrawal figure — which proves the deduction survived. The
+  /// fixed amount cannot eat legitimate earnings: it subtracts what left and
+  /// never zeroes, so a sale landing meanwhile stays in the treasury. The
+  /// pilot is credited exactly once, in the tap handler, never here.
+  final List<({String planetId, int withdrawn, int revenueAtDispatch})>
+      _unconfirmedWithdrawals = [];
+
+  bool _hasPendingWithdrawal(String planetId) =>
+      _unconfirmedWithdrawals.any((w) => w.planetId == planetId);
+
+  /// Orders this screen placed that the stored universe has not yet
+  /// confirmed — reconciled in [_syncFromDisk].
+  ///
+  /// The withdraw intent above closes the money glitch; this closes the
+  /// order side of the same race: a tick snapshot taken before the order
+  /// existed overwrites it, leaving paid-for jobs that never were (the
+  /// likely true story behind "credits gone, no jobs"). Unlike withdrawals
+  /// the re-dispatch is bounded: a missing share is re-created only while
+  /// the order is younger than [_orderConfirmPolls] polls, because no share
+  /// can legitimately complete inside that window (one run is at least one
+  /// 30-second tick; the window is ~8 seconds) — so a missing job is
+  /// clobbered, never landed. Past the bound the order is assumed landed
+  /// and logged, because re-creating blindly could duplicate goods.
+  final List<_PendingOrder> _unconfirmedOrders = [];
+
+  /// Polls a placed order stays guarded. See [_unconfirmedOrders] for why
+  /// the bound is also the correctness argument.
+  static const int _orderConfirmPolls = 8;
+
+  /// Settled withdrawals still being watched for a late stale write-back.
+  ///
+  /// Settling on the first confirming poll proves the deduction survived the
+  /// one snapshot that was read — not that no older, still-in-flight tick
+  /// pass will land afterwards and restore it (a pass can run seconds while
+  /// the poll is 1s). Each entry carries the job digest at settle time: a
+  /// treasury climbing back with an unchanged digest cannot be earnings (a
+  /// sale landing always moves a countdown), so it is a restore and the
+  /// intent is re-registered. A changed digest means real landings happened
+  /// meanwhile — accept, possibly wrongly if a restore raced the same pass,
+  /// which is the documented residual. Bounded by age: entries expire after
+  /// [_withdrawWatchPolls] polls rather than accumulating forever.
+  final List<
+      ({
+        String planetId,
+        int withdrawn,
+        int revenueAtDispatch,
+        int jobDigest,
+        int age
+      })> _watchingWithdrawals = [];
+
+  /// Polls a settled withdrawal stays watched. Covers any tick pass that was
+  /// already in flight at settle time: passes are seconds-long, polls are
+  /// 1s, so a stale save lands (or doesn't) well inside the window.
+  static const int _withdrawWatchPolls = 10;
+
+  /// Which jobs were in flight, as one int. A sale landing always moves a
+  /// countdown or removes a finished job, so an unchanged digest across a
+  /// treasury increase rules earnings out.
+  int _jobDigest(Planet planet) {
+    var digest = planet.tradeJobs.length;
+    for (final j in planet.tradeJobs) {
+      digest = Object.hash(digest, j.id, j.unitsRemaining, j.ticksRemaining);
+    }
+    return digest;
+  }
 
   /// Shipments this screen dispatched that the stored universe has not yet
   /// confirmed **landed** — see the reconciliation in [_syncFromDisk].
@@ -178,6 +358,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
 
   static int _fingerprintOf(Planet? p) {
     if (p == null) return 0;
+    // Trade jobs contribute their countdowns, so a landing run repaints the
+    // job rows without anything calling setState when the tick advances them.
+    var jobUnits = 0;
+    var jobTicks = 0;
+    for (final j in p.tradeJobs) {
+      jobUnits += j.unitsRemaining;
+      jobTicks += j.ticksRemaining;
+    }
     return Object.hash(
       p.storedMinerals,
       p.storedOrganics,
@@ -202,6 +390,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
       // repaint apart from the ordering that is already finished.
       p.colonistsInTransit,
       p.colonistTransitTicks,
+      // Same reason, for market orders: revenue lands and countdowns move on
+      // the tick's copy, and the rows must follow without a tap.
+      p.accumulatedRevenue,
+      p.tradeJobs.length,
+      jobUnits,
+      jobTicks,
     );
   }
 
@@ -260,6 +454,11 @@ class _PlanetScreenState extends State<PlanetScreen> {
       await _persist(pending);
       if (_pendingWrite != null) return;
     }
+    final pendingAll = _pendingWriteSectors;
+    if (pendingAll != null) {
+      await _persistAll(pendingAll);
+      if (_pendingWriteSectors != null) return;
+    }
 
     final previousId = _currentSector?.id;
     final List<Sector> fresh;
@@ -312,6 +511,194 @@ class _PlanetScreenState extends State<PlanetScreen> {
         }
       }
       intent.removeWhere(settled.contains);
+      if (rewrote) {
+        if (!mounted) return;
+        _allSectors = fresh;
+        _fingerprint = _fingerprintOf(_resolvePlanetFrom(fresh));
+        setState(() {});
+        return;
+      }
+    }
+
+    // **A withdrawal must survive the same write-back.** Same mechanism as
+    // above, smaller settle signal: the stored treasury dropping below its
+    // pre-withdrawal figure proves the deduction is in the file. Anything at
+    // or above it means a stale snapshot overwrote us (or landed on top of
+    // us), so the fixed amount is subtracted again — never to zero, so a
+    // sale landing in the same window keeps its earnings. Converges because
+    // every tick pass starts from a fresh load: the first pass that starts
+    // after a re-assert carries it, and the next poll settles.
+    //
+    // Settling starts a short watch rather than ending the story (see
+    // [_watchingWithdrawals]): a still-in-flight stale pass can land after
+    // the confirming poll and restore the treasury with no intent left to
+    // catch it.
+    final withdrawals = _unconfirmedWithdrawals;
+    if (withdrawals.isNotEmpty) {
+      var rewrote = false;
+      final settledW =
+          <({String planetId, int withdrawn, int revenueAtDispatch})>[];
+      for (final w in withdrawals) {
+        final stored = _planetById(fresh, w.planetId);
+        // Gone, or the deduction is visible: watch briefly, then let go.
+        if (stored == null || stored.accumulatedRevenue < w.revenueAtDispatch) {
+          settledW.add(w);
+          if (stored != null) {
+            _watchingWithdrawals.add((
+              planetId: w.planetId,
+              withdrawn: w.withdrawn,
+              revenueAtDispatch: w.revenueAtDispatch,
+              jobDigest: _jobDigest(stored),
+              age: 0,
+            ));
+          }
+          continue;
+        }
+        stored.accumulatedRevenue -= w.withdrawn;
+        if (stored.accumulatedRevenue < 0) stored.accumulatedRevenue = 0;
+        final sector = _sectorHolding(fresh, w.planetId);
+        if (sector != null) {
+          await _persist(sector);
+          rewrote = true;
+        }
+      }
+      withdrawals.removeWhere(settledW.contains);
+      if (rewrote) {
+        if (!mounted) return;
+        _allSectors = fresh;
+        _fingerprint = _fingerprintOf(_resolvePlanetFrom(fresh));
+        setState(() {});
+        return;
+      }
+    }
+
+    // The settled-withdrawal watch: a late stale restore re-registers the
+    // intent (the pilot was credited once, at the tap — this only moves the
+    // treasury back down). Entries expire by age so the list cannot grow.
+    if (_watchingWithdrawals.isNotEmpty) {
+      final keep = <({
+        String planetId,
+        int withdrawn,
+        int revenueAtDispatch,
+        int jobDigest,
+        int age
+      })>[];
+      for (final w in _watchingWithdrawals) {
+        final stored = _planetById(fresh, w.planetId);
+        if (stored == null || w.age + 1 >= _withdrawWatchPolls) continue;
+        if (stored.accumulatedRevenue >= w.revenueAtDispatch &&
+            _jobDigest(stored) == w.jobDigest) {
+          // Restored with no landing to explain it: guard again.
+          _unconfirmedWithdrawals.add((
+            planetId: w.planetId,
+            withdrawn: w.withdrawn,
+            revenueAtDispatch: w.revenueAtDispatch,
+          ));
+          continue;
+        }
+        keep.add((
+          planetId: w.planetId,
+          withdrawn: w.withdrawn,
+          revenueAtDispatch: w.revenueAtDispatch,
+          jobDigest: _jobDigest(stored),
+          age: w.age + 1,
+        ));
+      }
+      _watchingWithdrawals
+        ..clear()
+        ..addAll(keep);
+    }
+
+    // Placed-order confirmation: re-dispatch shares a stale snapshot erased.
+    //
+    // Presence is the settle signal — every share's job id in the stored
+    // planet means the write landed. A missing share younger than
+    // [_orderConfirmPolls] polls is re-reserved and re-created under the same
+    // job id (no recharge: the pilot already paid), because no share can
+    // legitimately complete inside the window — one run is at least one
+    // 30-second tick and the window is ~8 seconds — so a missing job is
+    // clobbered, never landed. Past the bound the order is assumed landed
+    // and logged, since re-creating blindly could duplicate goods the tick
+    // already delivered.
+    if (_unconfirmedOrders.isNotEmpty) {
+      var rewrote = false;
+      final keepOrders = <_PendingOrder>[];
+      for (final o in _unconfirmedOrders) {
+        final stored = _planetById(fresh, o.planetId);
+        if (stored == null) continue;
+        final have = {for (final j in stored.tradeJobs) j.id};
+        final missing = [
+          for (final s in o.shares)
+            if (!have.contains(s.jobId)) s
+        ];
+        if (missing.isEmpty) continue;
+        if (o.age + 1 >= _orderConfirmPolls) {
+          ActionLogProvider.global.warning(
+            'Order ${o.orderId} unconfirmed after $_orderConfirmPolls polls — '
+            'assuming its runs landed.',
+          );
+          continue;
+        }
+        final touched = <Sector>[];
+        final homeSector = _sectorHolding(fresh, o.planetId);
+        if (homeSector != null) touched.add(homeSector);
+        for (final m in missing) {
+          final reservation = PlanetTradeService.reserveShare(
+            universe: fresh,
+            share: TradeAllocation(
+              portSectorId: m.portSectorId,
+              units: m.units,
+              hops: 0,
+              ticksPerRun: m.ticksPerRun,
+              unitPrice: m.unitPrice,
+            ),
+            commodity: m.commodity,
+            direction: m.direction,
+            actorFaction: widget.player.faction.name,
+          );
+          if (reservation == null) continue;
+          final job = PlanetTradeService.create(
+            planet: stored,
+            playerId: widget.player.id,
+            portSectorId: m.portSectorId,
+            commodity: m.commodity,
+            direction: m.direction,
+            units: m.units,
+            ticksPerRun: m.ticksPerRun,
+            unitPrice: m.unitPrice,
+            unitsPerRun: PlanetTradeService.freighterHold,
+            orderId: o.orderId,
+            escrowed: reservation.escrowed,
+            jobId: m.jobId,
+          );
+          if (job == null) {
+            PlanetTradeService.releaseReservation(
+              universe: fresh,
+              portSectorId: m.portSectorId,
+              commodity: m.commodity,
+              direction: m.direction,
+              units: m.units,
+              unitPrice: m.unitPrice,
+              escrowed: reservation.escrowed,
+            );
+            continue;
+          }
+          for (final s in fresh) {
+            if (s.id == m.portSectorId && !touched.any((t) => t.id == s.id)) {
+              touched.add(s);
+            }
+          }
+        }
+        o.age++;
+        keepOrders.add(o);
+        if (touched.isNotEmpty) {
+          await _persistAll(touched);
+          rewrote = true;
+        }
+      }
+      _unconfirmedOrders
+        ..clear()
+        ..addAll(keepOrders);
       if (rewrote) {
         if (!mounted) return;
         _allSectors = fresh;
@@ -682,7 +1069,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 final resources = PlanetResourcesCard(
                     planet: planet,
                     cs: cs,
-                    onCollect: (v) => _collectShipment(planet, v));
+                    onSweep: () => _sweepShipment(planet));
                 final defense = PlanetDefenseCard(planet: planet, cs: cs);
                 if (constraints.maxWidth < 560) {
                   return Column(
@@ -798,6 +1185,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
                   );
                 },
               ),
+              // Bulk orders against live port markets. Gated, not disabled:
+              // with the Modules toggle off this whole block is absent.
+              if (widget.planetTradingEnabled) ...[
+                const SizedBox(height: 12),
+                _buildMarketSection(planet, cs),
+              ],
             ],
           ),
         ),
@@ -1187,9 +1580,669 @@ class _PlanetScreenState extends State<PlanetScreen> {
     setState(() => _transferAmounts[type] = max < 1 ? 1 : max);
   }
 
+  // ── Market orders (T5) ─────────────────────────────────────────────
+
+  /// Order sizes per commodity. Steps of 100 from 100: a Citadel tier costs
+  /// tens of thousands, so the ±10 hauling step would be 8,000 taps to the
+  /// same place.
+  final Map<String, int> _marketAmounts = {
+    'minerals': 1000,
+    'organics': 1000,
+    'industrial': 1000,
+  };
+
+  static const _marketCommodities = ['minerals', 'organics', 'industrial'];
+
+  TradePlan _marketPlan(
+          String type, TradeDirection dir, int volume, Planet planet) =>
+      PlanetTradeService.plan(
+        universe: _allSectors,
+        planet: planet,
+        commodity: type,
+        direction: dir,
+        volume: volume,
+      );
+
+  Widget _buildMarketSection(Planet planet, ColorScheme cs) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Market',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Bulk orders against live port markets. The port sends its own '
+              'freighter — you pay credits and time, not cargo space.',
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.4,
+                color: cs.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildTreasuryVault(planet, cs),
+            const SizedBox(height: 8),
+            for (final type in _marketCommodities) ...[
+              _marketRow(type, planet, cs),
+              const SizedBox(height: 6),
+            ],
+            const Divider(height: 16),
+            Text(
+              'Open orders',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (planet.tradeJobs.isEmpty)
+              Text(
+                'No open orders yet.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: cs.onSurface.withValues(alpha: 0.45),
+                ),
+              ),
+            // One row per request, not per port-run: a split order is one
+            // job with one Cancel, so N taps always read as N rows.
+            for (final group in _orderGroups(planet)) ...[
+              _marketOrderRow(planet, group, cs),
+              const SizedBox(height: 6),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The world's unsettled sales, always rendered — even at zero.
+  ///
+  /// Two reasons it is a bordered vault rather than a conditional row. It is
+  /// the same idiom as the Resources card's shipment-pool box (tinted fill,
+  /// header, full-width actions), so a withdrawal reads as moving money that
+  /// is already earned. And it never appears or disappears: the row used to
+  /// pop in the moment the first sale landed, shifting every control below
+  /// it mid-tap — which is the shape most of the "I had to tap twice"
+  /// reports take.
+  Widget _buildTreasuryVault(Planet planet, ColorScheme cs) {
+    final revenue = planet.accumulatedRevenue;
+    final pending = _hasPendingWithdrawal(planet.id);
+    final canTake = revenue > 0 && !pending;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.primary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.account_balance_rounded, size: 14, color: cs.primary),
+              const SizedBox(width: 6),
+              const Text('Treasury',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            revenue > 0
+                ? '${compact(revenue)} cr earned, awaiting collection'
+                : pending
+                    ? 'Confirming last withdrawal…'
+                    : 'No sales collected yet — sell runs land here.',
+            style: TextStyle(
+              fontSize: 11,
+              color: cs.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _miniActionButton('Withdraw', Colors.green, canTake,
+                    () => _withdrawRevenue(planet),
+                    key: const Key('market-withdraw'),
+                    disabledReason: pending
+                        ? 'Confirming last withdrawal…'
+                        : 'No revenue to withdraw yet'),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _miniActionButton('Send to Bank', Colors.teal, canTake,
+                    () => _bankRevenue(planet),
+                    key: const Key('market-bank'),
+                    disabledReason: pending
+                        ? 'Confirming last withdrawal…'
+                        : 'No revenue to bank yet'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _marketRow(String type, Planet planet, ColorScheme cs) {
+    final stored = _storedFor(type, planet);
+    final amount = _marketAmounts[type] ?? 1000;
+    final label = type[0].toUpperCase() + type.substring(1);
+    // A sell cannot promise what the store does not hold: clamp the volume
+    // before planning, so every planned share is creatable.
+    final sellVolume = amount < stored ? amount : stored;
+    final buyPlan = _marketPlan(type, TradeDirection.buy, amount, planet);
+    final sellPlan = sellVolume > 0
+        ? _marketPlan(type, TradeDirection.sell, sellVolume, planet)
+        : null;
+    var buyTotal = 0;
+    for (final s in buyPlan.allocations) {
+      buyTotal += s.units * s.unitPrice;
+    }
+    var sellTotal = 0;
+    if (sellPlan != null) {
+      for (final s in sellPlan.allocations) {
+        sellTotal += s.units * s.unitPrice;
+      }
+    }
+    final canBuy = buyPlan.unitsAllocated > 0 &&
+        widget.player.credits >= buyTotal &&
+        buyTotal > 0;
+    final canSell = sellPlan != null && sellPlan.unitsAllocated > 0;
+    final buyDisabledReason = buyPlan.unitsAllocated <= 0
+        ? 'No port is selling $label right now'
+        : 'Need ${compact(buyTotal)} cr for that order';
+    final sellDisabledReason = sellVolume <= 0
+        ? 'Nothing stored to sell'
+        : 'No port is buying $label right now';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 80,
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface.withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Text(
+                '${compact(stored)} / ${compact(_maxFor(type, planet))}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  color: cs.onSurface.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            _miniStepper(Icons.remove_rounded, () {
+              setState(() {
+                _marketAmounts[type] = (amount - 100).clamp(100, 1 << 30);
+              });
+            }),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                compact(amount),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            _miniStepper(Icons.add_rounded, () {
+              setState(() {
+                _marketAmounts[type] = (amount + 100).clamp(100, 1 << 30);
+              });
+            }),
+            Padding(
+              padding: const EdgeInsets.only(left: 4, right: 2),
+              child: InkWell(
+                onTap: () => _setMarketMax(type, planet),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text(
+                    'Max',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: cs.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const Spacer(),
+            _miniActionButton('Buy', Colors.blue, canBuy, () {
+              _placeMarketOrder(type, TradeDirection.buy, amount, planet);
+            }, key: Key('market-buy-$type'), disabledReason: buyDisabledReason),
+            const SizedBox(width: 4),
+            _miniActionButton('Sell', Colors.orange, canSell, () {
+              _placeMarketOrder(type, TradeDirection.sell, amount, planet);
+            },
+                key: Key('market-sell-$type'),
+                disabledReason: sellDisabledReason),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _marketPreview(
+              buyPlan, buyTotal, sellPlan, sellTotal, sellVolume, _portNames()),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 10,
+            color: cs.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// One honest line per direction: what it costs, who fills it, and what the
+  /// galaxy could not cover. Shown *before* paying, because a paid order is a
+  /// reservation and the player should see the shortfall while it is still
+  /// a quote. Ports are named, not counted: "1 port(s)" says where to look
+  /// without saying what it is called.
+  String _marketPreview(TradePlan buyPlan, int buyTotal, TradePlan? sellPlan,
+      int sellTotal, int sellVolume, Map<int, String> portNames) {
+    String portsOf(TradePlan p) {
+      final names = [
+        for (final a in p.allocations)
+          portNames[a.portSectorId] ?? '#${a.portSectorId}'
+      ];
+      if (names.isEmpty) return '';
+      if (names.length == 1) return ' · ${names.first}';
+      return ' · ${names.first} +${names.length - 1} more';
+    }
+
+    final buy = buyPlan.unitsAllocated <= 0
+        ? 'Buy: no port selling'
+        : 'Buy ${compact(buyPlan.unitsAllocated)} → ${compact(buyTotal)} cr'
+            '${portsOf(buyPlan)}'
+            '${buyPlan.shortfall > 0 ? ' · short ${compact(buyPlan.shortfall)}' : ''}';
+    final sell = sellVolume <= 0
+        ? 'Sell: nothing stored'
+        : sellPlan == null || sellPlan.unitsAllocated <= 0
+            ? 'Sell: no port buying'
+            : 'Sell ${compact(sellPlan.unitsAllocated)} → ${compact(sellTotal)} cr'
+                '${portsOf(sellPlan)}'
+                '${sellPlan.shortfall > 0 ? ' · short ${compact(sellPlan.shortfall)}' : ''}';
+    return '$buy\n$sell';
+  }
+
+  Map<int, String> _portNames() => {
+        for (final s in _allSectors)
+          if (s.port != null) s.id: s.port!.name,
+      };
+
+  /// The most the galaxy will absorb right now (capped by the store for a
+  /// sell), so Max always quotes an order that can actually be placed.
+  void _setMarketMax(String type, Planet planet) {
+    final huge = _marketPlan(type, TradeDirection.buy, 1 << 30, planet);
+    final stored = _storedFor(type, planet);
+    final sellHuge = stored > 0
+        ? _marketPlan(type, TradeDirection.sell, stored, planet)
+        : null;
+    final best = huge.unitsAllocated > (sellHuge?.unitsAllocated ?? 0)
+        ? huge.unitsAllocated
+        : (sellHuge?.unitsAllocated ?? 0);
+    setState(() => _marketAmounts[type] = best < 100 ? 100 : best);
+  }
+
+  /// In-flight jobs grouped by request: one tap on Buy/Sell is one order,
+  /// possibly split across ports. Legacy jobs with no order id group alone.
+  List<_OrderGroup> _orderGroups(Planet planet) {
+    final groups = <_OrderGroup>[];
+    final index = <String, int>{};
+    for (final job in planet.tradeJobs) {
+      final key =
+          job.orderId.isEmpty ? 'job:${job.id}' : 'order:${job.orderId}';
+      final at = index[key];
+      if (at == null) {
+        index[key] = groups.length;
+        groups.add(_OrderGroup(
+          cancelId: job.orderId.isEmpty ? job.id : job.orderId,
+          direction: job.direction,
+          commodity: job.commodity,
+          jobs: [job],
+        ));
+      } else {
+        groups[at].jobs.add(job);
+      }
+    }
+    return groups;
+  }
+
+  /// One request, one row, one Cancel: aggregate units up top, one countdown
+  /// per port-run below (each run has its own cadence, so they cannot share
+  /// a bar), and the slowest run sets the ETA.
+  Widget _marketOrderRow(
+    Planet planet,
+    _OrderGroup group,
+    ColorScheme cs,
+  ) {
+    final isBuy = group.direction == TradeDirection.buy;
+    var total = 0;
+    var delivered = 0;
+    var ticksLeft = 0;
+    for (final job in group.jobs) {
+      total += job.unitsTotal;
+      delivered += job.unitsTotal - job.unitsRemaining;
+      if (job.ticksLeft > ticksLeft) ticksLeft = job.ticksLeft;
+    }
+    final eta = GameClock.estimate(ticksLeft);
+    final commodity =
+        group.commodity[0].toUpperCase() + group.commodity.substring(1);
+    final ports = group.jobs.map((j) => j.portSectorId).toSet().length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              isBuy ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+              size: 12,
+              color: isBuy ? Colors.blue : Colors.orange,
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                '${isBuy ? 'Buy' : 'Sell'} $commodity'
+                '${ports > 1 ? ' · $ports ports' : ' · port #${group.jobs.first.portSectorId}'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                '${compact(delivered)} / ${compact(total)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  color: cs.onSurface.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            _miniActionButton('Cancel', cs.error, true, () {
+              _cancelMarketOrder(planet, group.cancelId);
+            }),
+          ],
+        ),
+        const SizedBox(height: 4),
+        for (final job in group.jobs) ...[
+          _marketRunRow(job, cs),
+          const SizedBox(height: 4),
+        ],
+        Text(
+          eta.isEmpty ? 'arriving' : 'done $eta of play',
+          style: TextStyle(
+            fontSize: 10,
+            color: cs.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// One port-run's countdown: which port, which run of how many, and a bar
+  /// that moves every second without ever claiming a tick that has not landed
+  /// (see [TickProgressBar]).
+  Widget _marketRunRow(TradeJob job, ColorScheme cs) {
+    final currentRun =
+        job.runsDone + 1 > job.runsTotal ? job.runsTotal : job.runsDone + 1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'port #${job.portSectorId} · run $currentRun of ${job.runsTotal}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 10,
+            color: cs.onSurface.withValues(alpha: 0.55),
+          ),
+        ),
+        const SizedBox(height: 2),
+        TickProgressBar(
+          remaining: job.ticksRemaining,
+          total: job.ticksPerRun,
+          secondsPerTick: GameClock.secondsPerTick,
+        ),
+      ],
+    );
+  }
+
+  /// Places a bulk order: one tap is one request, possibly split across
+  /// ports, shown as one row with one Cancel.
+  ///
+  /// Credits move before the write, and the screen repaints before either —
+  /// the same ordering the colonist purchase uses, for the same reason: a
+  /// change made in memory must be visible in memory, and a failed write is
+  /// reported rather than silently reverting the purchase a second later.
+  Future<void> _placeMarketOrder(
+      String type, TradeDirection dir, int amount, Planet planet) async {
+    final home = _currentSector;
+    if (home == null || amount <= 0) return;
+    if (dir == TradeDirection.sell && _storedFor(type, planet) <= 0) return;
+
+    final result = PlanetTradeService.createOrder(
+      planet: planet,
+      universe: _allSectors,
+      playerId: widget.player.id,
+      commodity: type,
+      direction: dir,
+      volume: amount,
+      actorFaction: widget.player.faction.name,
+    );
+    if (result.jobs.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(dir == TradeDirection.buy
+              ? 'No port is selling $type right now.'
+              : 'No port is buying $type right now.'),
+        ),
+      );
+      return;
+    }
+    if (dir == TradeDirection.buy) {
+      if (widget.player.credits < result.spent) {
+        // Affordability is checked before placing, so this is a race with a
+        // concurrent spend rather than a normal path: unwind the whole order
+        // rather than leaving paid-for jobs behind.
+        PlanetTradeService.cancelOrder(planet, _allSectors, result.orderId);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content:
+                  Text('Need ${compact(result.spent)} cr for that order.')),
+        );
+        return;
+      }
+      widget.onPlayerUpdate(widget.player
+          .copyWith(credits: widget.player.credits - result.spent));
+    }
+    // Guard the order until the stored universe confirms it (see
+    // [_unconfirmedOrders]): a tick snapshot taken before it existed would
+    // otherwise erase paid-for jobs without a word.
+    _unconfirmedOrders.add(_PendingOrder(
+      planetId: planet.id,
+      orderId: result.orderId,
+      shares: [
+        for (final j in result.jobs)
+          _PendingShare(
+            jobId: j.id,
+            portSectorId: j.portSectorId,
+            commodity: j.commodity,
+            direction: j.direction,
+            units: j.unitsTotal,
+            ticksPerRun: j.ticksPerRun,
+            unitPrice: j.unitPrice,
+          ),
+      ],
+    ));
+    if (mounted) setState(() {});
+
+    final touched = <Sector>[home];
+    for (final id in result.portSectorIds) {
+      for (final s in _allSectors) {
+        if (s.id == id && s.id != home.id) touched.add(s);
+      }
+    }
+    final wrote = await _persistAll(touched);
+    if (!wrote && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Order placed, but the universe could not be saved — '
+            'it may not survive a restart.',
+          ),
+        ),
+      );
+    }
+    ActionLogProvider.global.trade(
+      '${dir == TradeDirection.buy ? 'Bought' : 'Sold'} '
+      '${compact(result.placedUnits)} $type for ${planet.name} '
+      '(${compact(result.spent)} cr, ${result.jobs.length} run(s))'
+      '${result.shortfall > 0 ? ' · short ${compact(result.shortfall)}' : ''}',
+    );
+  }
+
+  /// Cancels a whole order — every port-run placed by one request.
+  ///
+  /// The port reservations are released, sell goods return to the store, and
+  /// undelivered buy credits come back to the pilot. Delivered runs stay
+  /// delivered on both sides.
+  Future<void> _cancelMarketOrder(Planet planet, String orderId) async {
+    final home = _currentSector;
+    if (home == null) return;
+    // A cancelled order needs no confirmation guard any more.
+    _unconfirmedOrders.removeWhere((o) => o.orderId == orderId);
+    final result = PlanetTradeService.cancelOrder(planet, _allSectors, orderId);
+    if (result.refund > 0) {
+      widget.onPlayerUpdate(widget.player
+          .copyWith(credits: widget.player.credits + result.refund));
+    }
+    if (mounted) setState(() {});
+    final touched = <Sector>[home];
+    for (final id in result.portSectorIds) {
+      for (final s in _allSectors) {
+        if (s.id == id && s.id != home.id) touched.add(s);
+      }
+    }
+    await _persistAll(touched);
+  }
+
+  /// Moves earned sale revenue from the world to the pilot's wallet.
+  ///
+  /// A withdrawal, not a price: the credits were already earned at live port
+  /// prices when the runs landed, so this moves money rather than valuing
+  /// goods — which is why retiring `Collect` (T6) does not contradict it.
+  ///
+  /// Registers an unconfirmed-withdrawal intent first (see
+  /// [_unconfirmedWithdrawals]): without it a tick write-back landing inside
+  /// the persist window restores the treasury and the same credits withdraw
+  /// twice. The pilot is credited exactly once, here, never in the poll.
+  Future<void> _withdrawRevenue(Planet planet) async {
+    await _moveRevenue(planet, toBank: false);
+  }
+
+  /// Moves earned sale revenue from the world into the pilot's Guild account,
+  /// where it earns the usual daily interest.
+  ///
+  /// Same money movement as [_withdrawRevenue] with a different destination:
+  /// the banking deposit convention (`lastInterestTick` stamped only when
+  /// unset, so a first deposit starts the clock without discarding a partial
+  /// day) is mirrored rather than reinvented.
+  Future<void> _bankRevenue(Planet planet) async {
+    await _moveRevenue(planet, toBank: true);
+  }
+
+  Future<void> _moveRevenue(Planet planet, {required bool toBank}) async {
+    final home = _currentSector;
+    if (home == null) return;
+    if (_hasPendingWithdrawal(planet.id)) return;
+    final amount = planet.accumulatedRevenue;
+    if (amount <= 0) return;
+    planet.accumulatedRevenue = 0;
+    _unconfirmedWithdrawals.add((
+      planetId: planet.id,
+      withdrawn: amount,
+      revenueAtDispatch: amount,
+    ));
+    if (toBank) {
+      widget.onPlayerUpdate(widget.player.copyWith(
+        bankBalance: widget.player.bankBalance + amount,
+        lastInterestTick: widget.player.lastInterestTick ?? GameClock.tick,
+      ));
+    } else {
+      widget.onPlayerUpdate(
+          widget.player.copyWith(credits: widget.player.credits + amount));
+    }
+    if (mounted) setState(() {});
+    final wrote = await _persist(home);
+    if (!wrote && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Revenue moved, but the universe could not be saved — '
+            'it may not survive a restart.',
+          ),
+        ),
+      );
+    }
+    ActionLogProvider.global.trade(
+      '${toBank ? 'Banked' : 'Withdrew'} ${compact(amount)} cr trade revenue '
+      'from ${planet.name}',
+    );
+  }
+
   Widget _miniActionButton(
-      String label, Color color, bool enabled, VoidCallback onPressed) {
-    return Material(
+      String label, Color color, bool enabled, VoidCallback onPressed,
+      {Key? key, String? disabledReason}) {
+    final button = Material(
+      key: key,
       color: enabled ? color.withValues(alpha: 0.15) : Colors.transparent,
       borderRadius: BorderRadius.circular(4),
       child: InkWell(
@@ -1209,6 +2262,13 @@ class _PlanetScreenState extends State<PlanetScreen> {
         ),
       ),
     );
+    // A dead button with no reason reads as a broken button. The playtest
+    // report for these exact controls was "nothing happens" — twice, once
+    // for genuinely-disabled buttons whose reason was invisible.
+    if (!enabled && disabledReason != null) {
+      return Tooltip(message: disabledReason, child: button);
+    }
+    return button;
   }
 
   /// Buys colonists from the faction's capital and settles them on the world.
@@ -1918,22 +2978,26 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
   }
 
-  Future<void> _collectShipment(Planet planet, int value) async {
+  /// Sweeps the shipment pool into the working stores, bounded by room.
+  ///
+  /// Free and priceless: the pool is overflow, so moving it pays nothing and
+  /// the credits line is gone with the `Collect` button (T6). Set state
+  /// before the write, like every other purchase-shaped action on this
+  /// screen, so the acknowledgement never depends on the disk landing.
+  Future<void> _sweepShipment(Planet planet) async {
     final sector = _currentSector;
     if (sector == null || planet.pendingTotal <= 0) return;
 
-    final collected = planet.collectShipment();
-    final payout = Planet.shipmentValue(collected);
-    if (payout > 0) {
-      widget.onPlayerUpdate(
-        widget.player.copyWith(credits: widget.player.credits + payout),
-      );
-    }
-    await _persist(sector);
-    ActionLogProvider.global.trade(
-      'Collected ${compact(planet.pendingTotal + collected.values.fold<int>(0, (a, b) => a + b))} units of colony output from ${planet.name} for ${compact(payout)} cr',
-    );
+    final moved = planet.sweepShipmentPool();
+    if (moved.isEmpty) return;
+    final units = moved.values.fold<int>(0, (a, b) => a + b);
     if (mounted) setState(() {});
+    await _persist(sector);
+    ActionLogProvider.global.info(
+      'Swept ${compact(units)} units of pooled output into the stores on '
+      '${planet.name}'
+      '${planet.pendingTotal > 0 ? ' (${compact(planet.pendingTotal)} still pooled)' : ''}',
+    );
   }
 
   // ── Atomic Detonator ─────────────────────────────────────────────

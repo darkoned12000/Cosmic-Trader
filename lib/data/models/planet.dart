@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:cosmic_trader/data/models/faction.dart';
 import 'package:cosmic_trader/data/models/planet_classes.dart';
+import 'package:cosmic_trader/data/models/trade_job.dart';
 import 'package:uuid/uuid.dart';
 
 /// Decodes a persisted faction name, tolerating one that no longer exists.
@@ -108,6 +109,35 @@ class Planet {
 
   /// Ticks left before [colonistsInTransit] joins [population].
   int colonistTransitTicks;
+
+  /// Credits this world has **earned from sales and not yet been withdrawn**.
+  ///
+  /// Mirrors `Port.accumulatedRevenue`, deliberately and down to the name: a port
+  /// already accumulates trade income that its owner collects, so a planet doing
+  /// the same is learnable rather than novel. The player withdraws it from the
+  /// planet screen; an NPC owner's is collected in the tick, exactly as
+  /// `_manageOwnedPorts` does for ports.
+  ///
+  /// **The reason it exists at all** is that the tick may not write a player. It
+  /// loads `players`, but never saves them, and a save would be a snapshot taken
+  /// at the start of the pass — the read-modify-write clobber that ate colonist
+  /// recruits earlier. So the tick credits the *world*, which it owns, and the
+  /// screen moves the money to the *pilot*, which it owns. An int rather than the
+  /// port's double because a planet's income is a whole number of credits from
+  /// rounded sales, with no price multiplier to carry a fraction.
+  int accumulatedRevenue;
+
+  /// Orders this world has placed against ports, in flight.
+  ///
+  /// Lives on the planet because the **world** is the party that ordered: a buy
+  /// fills its store, a sell draws on it. A settled job is removed rather than
+  /// kept as a corpse, so this list only ever holds work still to do.
+  ///
+  /// Built in the initializer list rather than defaulted in the parameter, because
+  /// Dart requires default parameter values to be constant and a mutable list is
+  /// not — and a `const []` fallback in `fromJson` would hand back an unmodifiable
+  /// list, which throws on the first `add`.
+  final List<TradeJob> tradeJobs;
 
   /// Drones, not fighters: ships field drones throughout the game
   /// (`Player.drones`). The old `colonistsFighters` name survived the
@@ -226,6 +256,8 @@ class Planet {
     this.isHomeworld = false,
     this.homeworldOf,
     this.population = 0,
+    this.accumulatedRevenue = 0,
+    List<TradeJob>? tradeJobs,
     this.colonistsInTransit = 0,
     this.colonistTransitTicks = 0,
     this.colonistsMinerals = 0,
@@ -270,7 +302,8 @@ class Planet {
         // produces anything. It also cannot be a mutable default *parameter*,
         // because Dart requires a default parameter value to be constant — hence
         // the initializer list, where a non-constant expression is legal.
-        productionRemainder = productionRemainder ?? <String, double>{};
+        productionRemainder = productionRemainder ?? <String, double>{},
+        tradeJobs = tradeJobs ?? <TradeJob>[];
 
   /// Builds a world from a Genesis Torpedo: empty, unowned, unpopulated.
   ///
@@ -342,6 +375,14 @@ class Planet {
     // them into a population this method just zeroed.
     colonistsInTransit = 0;
     colonistTransitTicks = 0;
+    // Orders die with the world. Leaving them queued would let a destroyed world
+    // still be owed a delivery, and the arrival path would deposit into a store
+    // this method just zeroed.
+    tradeJobs.clear();
+    // The treasury goes with the world. A destroyed colony's earnings are not
+    // something the player can still withdraw, and leaving them would let a
+    // detonated world keep paying out.
+    accumulatedRevenue = 0;
     colonistsMinerals = 0;
     colonistsOrganics = 0;
     colonistsIndustrial = 0;
@@ -389,6 +430,11 @@ class Planet {
       'isHomeworld': isHomeworld,
       'homeworldOf': homeworldOf?.name,
       'population': population,
+      // Only written when non-empty, so a world with no orders adds nothing to a
+      // file that is already ~59MB at 20,000 sectors.
+      if (accumulatedRevenue != 0) 'accumulatedRevenue': accumulatedRevenue,
+      if (tradeJobs.isNotEmpty)
+        'tradeJobs': tradeJobs.map((j) => j.toJson()).toList(growable: false),
       'colonistsInTransit': colonistsInTransit,
       'colonistTransitTicks': colonistTransitTicks,
       'colonistsMinerals': colonistsMinerals,
@@ -452,6 +498,11 @@ class Planet {
       isHomeworld: json['isHomeworld'] as bool? ?? false,
       homeworldOf: _parseFactionClass(json['homeworldOf'] as String?),
       population: json['population'] as int? ?? 0,
+      accumulatedRevenue: json['accumulatedRevenue'] as int? ?? 0,
+      tradeJobs: (json['tradeJobs'] as List?)
+          ?.cast<Map<String, dynamic>>()
+          .map(TradeJob.fromJson)
+          .toList(),
       colonistsInTransit: json['colonistsInTransit'] as int? ?? 0,
       colonistTransitTicks: json['colonistTransitTicks'] as int? ?? 0,
       colonistsMinerals: json['colonistsMinerals'] as int? ?? 0,
@@ -716,29 +767,6 @@ class Planet {
     return (1 - (colonistTransitTicks / total)).clamp(0.0, 1.0);
   }
 
-  /// Where the bar should be **drawn**, which is one tick ahead of
-  /// [colonistTransitProgress].
-  ///
-  /// A display value, and the only place in this model that is allowed to be one.
-  /// [colonistTransitProgress] is the truth but it only moves when a tick lands,
-  /// so a bar drawn from it sits at 0% for the first thirty seconds of a
-  /// two-tick flight and then jumps half its length — which reads as frozen, and
-  /// is what a player reported. Drawing toward the *next* tick instead lets the
-  /// screen animate continuously across the whole flight, and the bar completes
-  /// exactly when the shipment is due.
-  ///
-  /// The trade is explicit: if a tick is late, the bar is already full while the
-  /// shipment is still in the air. It can therefore never be used as a
-  /// completion test — the landing is still decided by [colonistTransitTicks]
-  /// and nothing reads this for state.
-  double get colonistTransitDrawnProgress {
-    if (!hasColonistsInTransit) return 0;
-    final total = colonistTransitTotalTicks;
-    if (total <= 0) return 1;
-    final completed = total - colonistTransitTicks;
-    return ((completed + 1) / total).clamp(0.0, 1.0);
-  }
-
   /// Advances an in-transit shipment by one tick, landing it when it arrives.
   ///
   /// Returns the headcount that landed, so a caller can tell an arrival from a
@@ -826,9 +854,12 @@ class Planet {
   /// and the colonist caps into a ~110x spread between the best and worst
   /// possible colony, which erases planet identity: everything worth having
   /// would end up on one planet type. Level is instead meant to buy **capacity
-  /// and defence**, which scale hard — `maxStorage` and `defenseLevel` are
-  /// currently set once at generation and do not move with level, which is the
-  /// next piece of work (planets.md, phase F). Extraction per colonist stays
+  /// and defence**, which scale hard — and both now do: `levelStorageScale`
+  /// grows storage 200x across the six tiers, and a completed build applies
+  /// `levelDefense` / `levelShield` / `levelArmour`. (This comment used to say
+  /// they "are currently set once at generation and do not move with level,
+  /// which is the next piece of work (planets.md, phase F)" — that work landed;
+  /// phase F is done.) Extraction per colonist stays
   /// close to flat so an Ocean world remains the best food producer and a Lava
   /// world the best mineral source no matter how developed either gets.
   static const Map<int, double> levelDevelopment = {
@@ -1057,35 +1088,29 @@ class Planet {
         equipmentPerDay: achievableMaxPerDayFor('industrial'),
       );
 
-  /// Mid-range unit value per commodity, used to pay out a collected shipment.
+  /// Moves the shipment pool into the working stores, bounded by room.
   ///
-  /// [CommodityRegistry.splitPoint] is the midpoint of the buy/sell spread, so
-  /// it is the neutral price: neither a bargain nor a rip-off. This is a
-  /// placeholder for real planetary supply chains — once a colony can actually
-  /// deliver to a port, the payout should use that port's live buy price with
-  /// the player's standing applied, which is worth much more than a flat
-  /// midpoint. Kept here rather than in the screen so the model's own tests can
-  /// pin it.
-  static const Map<String, double> _shipmentUnitValue = {
-    'minerals': 42.5,
-    'organics': 115.0,
-    'industrial': 230.0,
-    'drones': 10.0,
-  };
-
-  /// Credits owed for a collected shipment.
+  /// The pool is overflow, not a sale: sweeping is free and priceless, which
+  /// is what retires the last invented price on the planet screen (T6 — the
+  /// flat per-unit payout table is deleted, not retuned, exactly like
+  /// `_transferPrices` before it). Anything that does not fit stays pooled.
+  /// Drones sweep like everything else: they are fielded from the store.
   ///
-  /// Drones are paid at their own rate rather than the generic commodity
-  /// midpoint, because a drone is equipment the player already pays to field
-  /// rather than a bulk trade good.
-  static int shipmentValue(Map<String, int> collected) {
-    var total = 0.0;
-    for (final entry in collected.entries) {
-      final unit =
-          _shipmentUnitValue[entry.key] ?? _shipmentUnitValue['minerals']!;
-      total += unit * entry.value;
+  /// Returns what moved per commodity.
+  Map<String, int> sweepShipmentPool() {
+    const commodities = ['minerals', 'organics', 'industrial', 'drones'];
+    final moved = <String, int>{};
+    for (final c in commodities) {
+      final pending = pendingFor(c);
+      if (pending <= 0) continue;
+      final room = capFor(c) - storedFor(c);
+      final take = pending < room ? pending : room;
+      if (take <= 0) continue;
+      _setStored(c, storedFor(c) + take);
+      _setPending(c, pending - take);
+      moved[c] = take;
     }
-    return total.round();
+    return moved;
   }
 
   /// Puts one tick of a commodity somewhere useful.
@@ -1279,6 +1304,29 @@ class Planet {
         _ => 0,
       };
 
+  /// Removes up to [amount] of [commodity] from the **working store** and returns
+  /// what was actually taken.
+  ///
+  /// The public counterpart to [_setStored], which is private. A caller outside
+  /// this file that needs to move goods out of a store — a trade job committing
+  /// its goods at order time — has to go through something, and the alternative
+  /// is a public setter that can write any number, including a negative one.
+  ///
+  /// Clamped at what is there, and **deliberately does not touch the shipment
+  /// pool.** The pool is output awaiting collection, not working stock; drawing a
+  /// trade order from it would let a player sell goods the colony has not finished
+  /// producing into a store. `_takeFrom` (used by the supply bill) does draw from
+  /// both, and that difference is on purpose: the supply bill is a colony feeding
+  /// itself, and this is a sale.
+  int takeStored(String commodity, int amount) {
+    if (amount <= 0) return 0;
+    final have = storedFor(commodity);
+    final taken = amount < have ? amount : have;
+    if (taken <= 0) return 0;
+    _setStored(commodity, have - taken);
+    return taken;
+  }
+
   /// Stored units **plus** the sub-unit production carried but not yet banked.
   ///
   /// **Read-only, and that is load-bearing.** The `mineralOutput`-style getters
@@ -1332,22 +1380,6 @@ class Planet {
       case 'drones':
         pendingDrones = value;
     }
-  }
-
-  /// Empties the shipment pool. The caller pays for the goods; this only
-  /// decides what was owed.
-  Map<String, int> collectShipment() {
-    final collected = <String, int>{
-      if (pendingMinerals > 0) 'minerals': pendingMinerals,
-      if (pendingOrganics > 0) 'organics': pendingOrganics,
-      if (pendingIndustrial > 0) 'industrial': pendingIndustrial,
-      if (pendingDrones > 0) 'drones': pendingDrones,
-    };
-    pendingMinerals = 0;
-    pendingOrganics = 0;
-    pendingIndustrial = 0;
-    pendingDrones = 0;
-    return collected;
   }
 
   /// Colonists currently on a production track. Never exceeds [population].

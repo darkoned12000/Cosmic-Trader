@@ -134,13 +134,27 @@ class ColonistSupply {
   }
 
   /// BFS hops from [sourceSectorId] to [targetSectorId].
+  ///
+  /// **The unreachable clamp used to be dead code.** It guarded on
+  /// `distance(...) <= 0`, and `PathfindingService.distance` returns the sentinel
+  /// **9999** for unreachable — never zero — so the guard never fired. An existing
+  /// but unreachable capital therefore priced colonists at
+  /// `15 x 9999^1.5` = **14,997,750 cr each**, against 624 at the intended
+  /// [unreachableHops] of 12, and 1,000 colonists came to 15 billion credits.
+  ///
+  /// It also meant the *orphan* fallback never engaged for this case, because
+  /// `isOrphan` is about having no capital at all rather than having an
+  /// unreachable one — two different failures with one guard between them.
+  ///
+  /// `findPath` returns null properly, so the check is on that.
   static int hopsBetween(
       List<Sector> sectors, int sourceSectorId, int targetSectorId) {
     if (sourceSectorId == targetSectorId) return 1;
-    final d =
-        PathfindingService.distance(sectors, sourceSectorId, targetSectorId);
-    if (d <= 0) return unreachableHops;
-    return d;
+    final path =
+        PathfindingService.findPath(sectors, sourceSectorId, targetSectorId);
+    if (path == null) return unreachableHops;
+    final d = path.length - 1;
+    return d < 1 ? 1 : d;
   }
 
   /// Credits per colonist at [hops] distance.

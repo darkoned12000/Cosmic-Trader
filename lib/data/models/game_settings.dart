@@ -74,6 +74,14 @@ class GameSettings {
   /// When false, only the default ship is selectable on account creation (others locked behind milestones).
   final bool unlockAllShips;
 
+  /// When true, owned worlds show Buy/Sell market orders in Transfers.
+  ///
+  /// A feature gate rather than equipment: gates in this codebase are plain
+  /// bools on [GameSettings] (`unlockAllShips`, `uiScaleAuto`), while
+  /// `installedModules` is per-ship equipment. Lives behind a toggle in the
+  /// Settings → Modules panel.
+  final bool planetTradingEnabled;
+
   /// Animation speed multiplier for tactical display effects (ping ripple, data scroll).
   final double tacticalDisplaySpeed;
 
@@ -158,6 +166,7 @@ class GameSettings {
     this.resetPlayersOnRegen = true,
     this.deleteAllPlayersOnRegen = false,
     this.unlockAllShips = true,
+    this.planetTradingEnabled = false,
     this.pirateDensity = 0.05,
     this.npcStartingCredits = 10000,
     this.tacticalDisplaySpeed = 0.5,
@@ -263,6 +272,7 @@ class GameSettings {
     bool? resetPlayersOnRegen,
     bool? deleteAllPlayersOnRegen,
     bool? unlockAllShips,
+    bool? planetTradingEnabled,
     double? pirateDensity,
     int? npcStartingCredits,
     double? tacticalDisplaySpeed,
@@ -316,6 +326,7 @@ class GameSettings {
       deleteAllPlayersOnRegen:
           deleteAllPlayersOnRegen ?? this.deleteAllPlayersOnRegen,
       unlockAllShips: unlockAllShips ?? this.unlockAllShips,
+      planetTradingEnabled: planetTradingEnabled ?? this.planetTradingEnabled,
       tacticalDisplaySpeed: tacticalDisplaySpeed ?? this.tacticalDisplaySpeed,
       constructionTimeScale:
           constructionTimeScale ?? this.constructionTimeScale,
@@ -360,6 +371,7 @@ class GameSettings {
       'resetPlayersOnRegen': resetPlayersOnRegen,
       'deleteAllPlayersOnRegen': deleteAllPlayersOnRegen,
       'unlockAllShips': unlockAllShips,
+      'planetTradingEnabled': planetTradingEnabled,
       'anomalyTypes': anomalyTypes,
       'commodityConfigs':
           commodityConfigs.map((k, v) => MapEntry(k, v.toJson())),
@@ -370,6 +382,7 @@ class GameSettings {
       'pirateDensity': pirateDensity,
       'npcStartingCredits': npcStartingCredits,
       'tacticalDisplaySpeed': tacticalDisplaySpeed,
+      'constructionTimeScale': constructionTimeScale,
       'fullscreen': fullscreen,
       'windowScale': windowScale,
       'resolutionWidth': resolutionWidth,
@@ -416,6 +429,7 @@ class GameSettings {
       deleteAllPlayersOnRegen:
           json['deleteAllPlayersOnRegen'] as bool? ?? false,
       unlockAllShips: json['unlockAllShips'] as bool? ?? true,
+      planetTradingEnabled: json['planetTradingEnabled'] as bool? ?? false,
       anomalyTypes: (json['anomalyTypes'] as List?)?.cast<String>() ??
           [
             'Asteroid Field',
@@ -436,6 +450,10 @@ class GameSettings {
       npcStartingCredits: json['npcStartingCredits'] as int? ?? 10000,
       tacticalDisplaySpeed:
           (json['tacticalDisplaySpeed'] as num?)?.toDouble() ?? 0.5,
+      // Absent in every save before it was persisted: a build-speed
+      // preference that reset to Standard on every launch.
+      constructionTimeScale:
+          (json['constructionTimeScale'] as num?)?.toDouble() ?? 1.0,
       fullscreen: json['fullscreen'] as bool? ?? false,
       windowScale: (json['windowScale'] as num?)?.toDouble() ?? 0.75,
       resolutionWidth: json['resolutionWidth'] as int? ?? 1280,

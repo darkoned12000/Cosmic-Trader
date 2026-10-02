@@ -670,6 +670,7 @@ class _GameShellState extends State<GameShell> {
                       player: _player,
                       onPlayerUpdate: _updatePlayer,
                       constructionTimeScale: _settings.constructionTimeScale,
+                      planetTradingEnabled: _settings.planetTradingEnabled,
                       worldCap: _settings.planetsPerSector,
                       onExitToSector: _goToSectorTab,
                     ),
@@ -943,6 +944,8 @@ class _GameShellState extends State<GameShell> {
                             onPlayerUpdate: _updatePlayer,
                             constructionTimeScale:
                                 _settings.constructionTimeScale,
+                            planetTradingEnabled:
+                                _settings.planetTradingEnabled,
                             worldCap: _settings.planetsPerSector,
                             onExitToSector: _goToSectorTab,
                           ),

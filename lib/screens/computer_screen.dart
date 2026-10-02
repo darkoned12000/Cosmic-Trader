@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 import 'package:cosmic_trader/data/models/commodity.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/port.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/services/npc_ai/pathfinding_service.dart';
 import 'package:cosmic_trader/screens/faction_rankings_screen.dart';
 import 'package:cosmic_trader/screens/economy_report_screen.dart';
 import 'package:cosmic_trader/screens/bounty_board_screen.dart';
@@ -361,6 +363,23 @@ class _ComputerScreenState extends State<ComputerScreen> {
     'industrial': 'Industrial',
   };
 
+  /// Hops from the player's sector to every sector, via one BFS pass.
+  ///
+  /// Shared by the report's distance column and the Nearest sort so the two
+  /// cannot disagree. The player's own sector reads 0; unreachable sectors
+  /// are absent (callers render those as "unreachable", sorted last).
+  Map<int, int> _hopsFromPlayer() {
+    final from = widget.player.currentSectorId;
+    final parents = PathfindingService.bfsParents(_sectors, from);
+    final hops = <int, int>{from: 0};
+    for (final s in _sectors) {
+      if (s.id == from) continue;
+      final d = PathfindingService.distanceInTree(parents, s.id);
+      if (d != null) hops[s.id] = d;
+    }
+    return hops;
+  }
+
   List<Sector> _filteredPorts() {
     var ports = _sectors.where((s) => s.hasPort && s.port != null).toList();
 
@@ -379,16 +398,28 @@ class _ComputerScreenState extends State<ComputerScreen> {
     if (_sortBy == 'buy' && _filterCommodity != null) {
       ports = ports.where((s) => s.port!.buys(_filterCommodity!)).toList();
       ports.sort((a, b) {
-        final pa = a.port!.getBuyPrice(_filterCommodity!);
-        final pb = b.port!.getBuyPrice(_filterCommodity!);
+        // Effective, not base: drift, cash, region and scarcity move the
+        // price the player actually pays, and sorting on the base would rank
+        // a discounted port below a listed-cheaper one that costs more.
+        final pa = a.port!.getEffectiveBuyPriceFor(_filterCommodity!);
+        final pb = b.port!.getEffectiveBuyPriceFor(_filterCommodity!);
         return pb.compareTo(pa);
       });
     } else if (_sortBy == 'sell' && _filterCommodity != null) {
       ports = ports.where((s) => s.port!.sells(_filterCommodity!)).toList();
       ports.sort((a, b) {
-        final pa = a.port!.getSellPrice(_filterCommodity!);
-        final pb = b.port!.getSellPrice(_filterCommodity!);
+        final pa = a.port!.getEffectiveSellPriceFor(_filterCommodity!);
+        final pb = b.port!.getEffectiveSellPriceFor(_filterCommodity!);
         return pa.compareTo(pb);
+      });
+    } else if (_sortBy == 'nearest') {
+      final hops = _hopsFromPlayer();
+      ports.sort((a, b) {
+        // Unreachable sorts last; ties break on sector id, not input order.
+        final ha = hops[a.id] ?? 1 << 30;
+        final hb = hops[b.id] ?? 1 << 30;
+        final byHops = ha.compareTo(hb);
+        return byHops != 0 ? byHops : a.id.compareTo(b.id);
       });
     }
 
@@ -397,6 +428,7 @@ class _ComputerScreenState extends State<ComputerScreen> {
 
   Widget _buildPortReport(ThemeData theme, ColorScheme cs) {
     final portSectors = _filteredPorts();
+    final hops = _hopsFromPlayer();
 
     return Scaffold(
       appBar: AppBar(
@@ -430,7 +462,8 @@ class _ComputerScreenState extends State<ComputerScreen> {
                     itemBuilder: (context, index) {
                       final sector = portSectors[index];
                       final port = sector.port!;
-                      return _portReportCard(theme, cs, sector, port);
+                      return _portReportCard(
+                          theme, cs, sector, port, hops[sector.id]);
                     },
                   ),
           ),
@@ -502,8 +535,23 @@ class _ComputerScreenState extends State<ComputerScreen> {
                 child: Row(
                   children: [
                     _sortChip(cs, 'Default', null),
+                    _sortChip(cs, 'Nearest', 'nearest'),
                     _sortChip(cs, 'Best Buy Price', 'buy'),
                     _sortChip(cs, 'Best Sell Price', 'sell'),
+                  ],
+                ),
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 52),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _sortChip(cs, 'Default', null),
+                    _sortChip(cs, 'Nearest', 'nearest'),
                   ],
                 ),
               ),
@@ -578,7 +626,7 @@ class _ComputerScreenState extends State<ComputerScreen> {
   }
 
   Widget _portReportCard(
-      ThemeData theme, ColorScheme cs, Sector sector, Port port) {
+      ThemeData theme, ColorScheme cs, Sector sector, Port port, int? hops) {
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
@@ -610,11 +658,20 @@ class _ComputerScreenState extends State<ComputerScreen> {
                 Expanded(
                   child: Text(
                     port.name,
+                    overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
+                Text(
+                  _hopsLabel(hops),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: cs.onSurface.withValues(alpha: 0.55),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 _classBadge(cs, port.portClass),
               ],
             ),
@@ -632,7 +689,7 @@ class _ComputerScreenState extends State<ComputerScreen> {
                   ),
                 ),
                 SizedBox(
-                  width: 60,
+                  width: 84,
                   child: Text(
                     'Buy',
                     textAlign: TextAlign.right,
@@ -645,7 +702,7 @@ class _ComputerScreenState extends State<ComputerScreen> {
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  width: 60,
+                  width: 84,
                   child: Text(
                     'Sell',
                     textAlign: TextAlign.right,
@@ -663,10 +720,12 @@ class _ComputerScreenState extends State<ComputerScreen> {
                   (c) => Padding(
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
                           child: Text(
                             _commodityLabels[c] ?? c,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: _filterCommodity == c
@@ -676,33 +735,66 @@ class _ComputerScreenState extends State<ComputerScreen> {
                           ),
                         ),
                         SizedBox(
-                          width: 60,
-                          child: Text(
-                            port.buys(c)
-                                ? '${port.getBuyPrice(c).toInt()} cr'
-                                : '-',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color:
-                                  port.buys(c) ? Colors.green.shade400 : null,
-                            ),
+                          width: 84,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                port.buys(c)
+                                    ? '${port.getEffectiveBuyPriceFor(c).toInt()} cr'
+                                    : '-',
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: port.buys(c)
+                                      ? Colors.green.shade400
+                                      : null,
+                                ),
+                              ),
+                              if (port.buys(c))
+                                Text(
+                                  _qtyLabel(port.getDemand(c),
+                                      port.effectiveMaxDemand(c)),
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: cs.onSurface.withValues(alpha: 0.55),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                         const SizedBox(width: 8),
                         SizedBox(
-                          width: 60,
-                          child: Text(
-                            port.sells(c)
-                                ? '${port.getSellPrice(c).toInt()} cr'
-                                : '-',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: port.sells(c) ? Colors.red.shade400 : null,
-                            ),
+                          width: 84,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                port.sells(c)
+                                    ? '${port.getEffectiveSellPriceFor(c).toInt()} cr'
+                                    : '-',
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: port.sells(c)
+                                      ? Colors.red.shade400
+                                      : null,
+                                ),
+                              ),
+                              if (port.sells(c))
+                                Text(
+                                  _qtyLabel(port.getSupply(c),
+                                      port.effectiveMaxSupply(c)),
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: cs.onSurface.withValues(alpha: 0.55),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       ],
@@ -714,6 +806,22 @@ class _ComputerScreenState extends State<ComputerScreen> {
       ),
     );
   }
+
+  /// "here" at the player's sector, "1 hop" / "N hops", "unreachable" off-map.
+  static String _hopsLabel(int? hops) {
+    if (hops == null) return 'unreachable';
+    if (hops <= 0) return 'here';
+    if (hops == 1) return '1 hop';
+    return '$hops hops';
+  }
+
+  /// Live quantity against its effective cap: `50.0K/80.0K`.
+  ///
+  /// The cap is the *effective* one (storage upgrades multiply it), because a
+  /// raw quantity without the ceiling it refills toward says nothing about
+  /// whether the port can absorb an order.
+  static String _qtyLabel(int qty, int cap) =>
+      '${compact(qty)}/${compact(cap)}';
 
   Widget _classBadge(ColorScheme cs, PortClass portClass) {
     final (label, color) = switch (portClass) {

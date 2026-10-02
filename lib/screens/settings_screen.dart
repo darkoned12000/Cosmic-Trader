@@ -110,6 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _resetOnRegen;
   late bool _deleteAllPlayers;
   late bool _unlockAllShips;
+  late bool _planetTradingEnabled;
   double _musicVolume = 0.5;
   double _sfxVolume = 0.7;
   bool _fullscreen = false;
@@ -182,6 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _resetOnRegen = s.resetPlayersOnRegen;
     _deleteAllPlayers = s.deleteAllPlayersOnRegen;
     _unlockAllShips = s.unlockAllShips;
+    _planetTradingEnabled = s.planetTradingEnabled;
     _musicVolume = s.musicVolume;
     _sfxVolume = s.sfxVolume;
     _fullscreen = s.fullscreen;
@@ -275,6 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       resetPlayersOnRegen: _resetOnRegen,
       deleteAllPlayersOnRegen: _deleteAllPlayers,
       unlockAllShips: _unlockAllShips,
+      planetTradingEnabled: _planetTradingEnabled,
       anomalyTypes: widget.currentSettings.anomalyTypes,
       commodityConfigs: _buildCommodityConfigs(),
       initEnergy: int.tryParse(_initEnergyController.text) ?? 1000,
@@ -602,6 +605,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 12),
 
+          // ==================== MODULES ====================
+          _buildModulesSection(theme, cs),
+
+          const SizedBox(height: 12),
+
           // ==================== VIDEO SETTINGS ====================
           VideoSettingsWidget(
             fullscreen: _fullscreen,
@@ -905,6 +913,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Optional gameplay systems, each behind its own gate.
+  ///
+  /// Created for the first one rather than ahead of need: the name promises a
+  /// home for future gates, and the second arrival should think about what
+  /// belongs here before landing. Toggles save immediately, so the gate flips
+  /// live rather than waiting for a universe regen that has nothing to do
+  /// with it.
+  Widget _buildModulesSection(ThemeData theme, ColorScheme cs) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Theme(
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          leading: Icon(Icons.extension_rounded, color: cs.primary),
+          title: Text('Modules',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          children: [
+            CheckboxListTile(
+              value: _planetTradingEnabled,
+              onChanged: (v) {
+                setState(() => _planetTradingEnabled = v ?? false);
+                widget.onSettingsChanged?.call(_buildSettings());
+              },
+              title: const Text('Planet Trading'),
+              subtitle: const Text(
+                'Owned worlds can place bulk Buy/Sell orders against live '
+                'port markets. A port freighter flies the runs over '
+                'several minutes; you pay credits, not cargo space.',
+                style: TextStyle(fontSize: 11),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              controlAffinity: ListTileControlAffinity.leading,
             ),
           ],
         ),

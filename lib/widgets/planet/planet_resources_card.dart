@@ -41,8 +41,8 @@ class PlanetResourceBar extends StatelessWidget {
       // drawn proportionally, so the number beside it was the only place a
       // player could not see how much room a world has left — which matters
       // because a full store spills the surplus into the shipment pool rather
-      // than wasting it, and the player's next decision is whether to collect
-      // or to reassign colonists.
+      // than wasting it, and the player's next decision is whether to sweep
+      // it back or to reassign colonists.
       value: max > 0 ? '$shown/${compact(max)}' : shown,
       percent: max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0,
       color: color,
@@ -50,40 +50,37 @@ class PlanetResourceBar extends StatelessWidget {
   }
 }
 
-/// Output waiting to be collected.
+/// Output waiting to be swept into the stores.
 ///
 /// A colony keeps producing once its working store is full — that surplus is
 /// queued here rather than discarded, so a world nobody has visited in a while
-/// is still earning. Collection pays the midpoint of the commodity spread, which
-/// is deliberately neutral; once colonies can supply an actual port, that payout
-/// should use the port's live buy price and the player's standing, which will be
-/// worth considerably more.
+/// is still earning. Sweeping is free and priceless: it moves goods, never
+/// credits, which is what retired the flat payout table that used to live
+/// here.
+///
+/// The pool is overflow, not a sale — so this panel quotes no price. An
+/// earlier version paid a flat per-unit table here, which gave the same goods
+/// a second price beside the live port markets (and a third beside the old
+/// transfer table). That button is deleted; this one only moves goods.
 class PlanetShipmentPanel extends StatelessWidget {
   const PlanetShipmentPanel({
     super.key,
     required this.planet,
     required this.cs,
-    required this.onCollect,
+    required this.onSweep,
   });
 
   final Planet planet;
   final ColorScheme cs;
 
-  /// Called with the payout when the player presses Collect. The transaction
-  /// itself — crediting the player, clearing the pool, persisting — stays on the
-  /// screen, because it owns the player and the write. This widget only knows how
-  /// to draw the offer.
-  final void Function(int value) onCollect;
+  /// Called when the player presses the sweep. Moving goods needs no amount:
+  /// everything that fits goes. The transaction itself — moving the pool,
+  /// persisting — stays on the screen, because it owns the write. This
+  /// widget only knows how to draw the offer.
+  final void Function() onSweep;
 
   @override
   Widget build(BuildContext context) {
-    final value = Planet.shipmentValue({
-      if (planet.pendingMinerals > 0) 'minerals': planet.pendingMinerals,
-      if (planet.pendingOrganics > 0) 'organics': planet.pendingOrganics,
-      if (planet.pendingIndustrial > 0) 'industrial': planet.pendingIndustrial,
-      if (planet.pendingDrones > 0) 'drones': planet.pendingDrones,
-    });
-
     Widget line(String label, int amount, Color colour) {
       if (amount <= 0) return const SizedBox.shrink();
       return Padding(
@@ -133,9 +130,9 @@ class PlanetShipmentPanel extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: () => onCollect(value),
-              icon: const Icon(Icons.download_rounded, size: 16),
-              label: Text('Collect  ${compact(value)} cr'),
+              onPressed: onSweep,
+              icon: const Icon(Icons.drive_file_move_rounded, size: 16),
+              label: const Text('Move to store'),
               style: FilledButton.styleFrom(
                 backgroundColor: cs.primary,
                 foregroundColor: cs.onPrimary,
@@ -154,12 +151,12 @@ class PlanetResourcesCard extends StatelessWidget {
     super.key,
     required this.planet,
     required this.cs,
-    required this.onCollect,
+    required this.onSweep,
   });
 
   final Planet planet;
   final ColorScheme cs;
-  final void Function(int value) onCollect;
+  final void Function() onSweep;
 
   @override
   Widget build(BuildContext context) {
@@ -214,7 +211,7 @@ class PlanetResourcesCard extends StatelessWidget {
             ),
             if (planet.pendingTotal > 0) ...[
               const SizedBox(height: 12),
-              PlanetShipmentPanel(planet: planet, cs: cs, onCollect: onCollect),
+              PlanetShipmentPanel(planet: planet, cs: cs, onSweep: onSweep),
             ],
           ],
         ),
