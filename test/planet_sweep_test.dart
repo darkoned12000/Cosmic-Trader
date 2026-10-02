@@ -133,6 +133,11 @@ void main() {
       for (final path in [
         'lib/screens/planet_screen.dart',
         'lib/widgets/planet/planet_resources_card.dart',
+        // Added when the market panel was extracted. **A structural guard has to
+        // follow the code it guards**: the sweep is a list of files, so a new one
+        // is uncovered until someone remembers, and nothing fails in the
+        // meantime.
+        'lib/widgets/planet/planet_market_panel.dart',
         'lib/data/models/planet.dart',
       ]) {
         final content = await readLib(path);

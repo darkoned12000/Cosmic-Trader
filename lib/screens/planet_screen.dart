@@ -7,6 +7,8 @@ import 'package:cosmic_trader/widgets/planet/planet_colony_card.dart';
 import 'package:cosmic_trader/widgets/planet/planet_construction_panel.dart';
 import 'package:cosmic_trader/widgets/planet/planet_defense_card.dart';
 import 'package:cosmic_trader/widgets/planet/planet_info_row.dart';
+import 'package:cosmic_trader/widgets/planet/planet_market_panel.dart';
+import 'package:cosmic_trader/widgets/planet/planet_mini_controls.dart';
 import 'package:cosmic_trader/widgets/planet/planet_resources_card.dart';
 import 'package:cosmic_trader/data/models/reputation.dart';
 import 'package:cosmic_trader/data/models/player.dart';
@@ -20,7 +22,6 @@ import 'package:cosmic_trader/services/world_forging.dart';
 import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/planet_trade_service.dart';
 import 'package:cosmic_trader/data/models/trade_job.dart';
-import 'package:cosmic_trader/widgets/shared/progress_bar.dart';
 
 /// One placed market order awaiting confirmation, as data rather than as
 /// live job objects: the poll re-reads the universe into a fresh graph, so
@@ -58,25 +59,6 @@ class _PendingOrder {
   final String orderId;
   final List<_PendingShare> shares;
   int age = 0;
-}
-
-/// One tappable request and the port-runs it split into.
-///
-/// A record would do, but the same four fields are named in three places and
-/// named-record field order is part of the type — one transposed pair is a
-/// compile error in triplicate. A class names them once.
-class _OrderGroup {
-  _OrderGroup({
-    required this.cancelId,
-    required this.direction,
-    required this.commodity,
-    required this.jobs,
-  });
-
-  final String cancelId;
-  final TradeDirection direction;
-  final String commodity;
-  final List<TradeJob> jobs;
 }
 
 class PlanetScreen extends StatefulWidget {
@@ -1202,7 +1184,16 @@ class _PlanetScreenState extends State<PlanetScreen> {
               // with the Modules toggle off this whole block is absent.
               if (widget.planetTradingEnabled) ...[
                 const SizedBox(height: 12),
-                _buildMarketSection(planet, cs),
+                PlanetMarketPanel(
+                  planet: planet,
+                  universe: _allSectors,
+                  credits: widget.player.credits,
+                  treasury: _buildTreasuryVault(planet, cs),
+                  onPlaceOrder: (type, dir, amount) =>
+                      _placeMarketOrder(type, dir, amount, planet),
+                  onCancelOrder: (orderId) =>
+                      _cancelMarketOrder(planet, orderId),
+                ),
               ],
             ],
           ),
@@ -1246,27 +1237,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
     'drones': 10,
   };
 
-  int _storedFor(String type, Planet planet) {
-    switch (type) {
-      case 'minerals':
-        return planet.storedMinerals;
-      case 'organics':
-        return planet.storedOrganics;
-      case 'industrial':
-        return planet.storedIndustrial;
-      case 'drones':
-        return planet.storedDrones;
-      case 'colonists':
-        return planet.population;
-      default:
-        return 0;
-    }
-  }
+  /// Delegates to [PlanetResources] rather than keeping a switch.
+  ///
+  /// The market panel needs the same lookup, and two private copies of a
+  /// commodity switch is how they drift: the `default: 0` branch hides a missing
+  /// case by rendering an empty cell instead of failing.
+  int _storedFor(String type, Planet planet) => planet.storedFor(type);
 
-  int _maxFor(String type, Planet planet) {
-    if (type == 'colonists') return planet.colonistMax;
-    return planet.capFor(type);
-  }
+  int _maxFor(String type, Planet planet) => planet.capacityFor(type);
 
   Widget _buildTransfersSection(Planet planet, ColorScheme cs) {
     const resourceTypes = [
@@ -1480,7 +1458,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
         const SizedBox(height: 4),
         Row(
           children: [
-            _miniStepper(Icons.remove_rounded, () {
+            PlanetMiniStepper(Icons.remove_rounded, () {
               setState(() {
                 _transferAmounts[type] = (amount - 10).clamp(1, max);
               });
@@ -1496,7 +1474,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 ),
               ),
             ),
-            _miniStepper(Icons.add_rounded, () {
+            PlanetMiniStepper(Icons.add_rounded, () {
               // Bounded by whatever can actually move, so the figure is always
               // actionable on at least one button rather than reachable on
               // neither. Colonists have their own ceiling: they cost credits.
@@ -1539,7 +1517,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
               ),
             const Spacer(),
             if (isColonists)
-              _miniActionButton(
+              PlanetMiniButton(
                   'Recruit', Colors.green, canDeposit && depositCost > 0, () {
                 _recruitColonists(type, amount, depositCost, planet);
               })
@@ -1547,11 +1525,11 @@ class _PlanetScreenState extends State<PlanetScreen> {
               // Labels say which way the goods move, because "Dep"/"Wdr" is
               // ambiguous about whether it is the planet or the ship that is
               // being unloaded. The icons carry the same information.
-              _miniActionButton('Unload', Colors.blue, canDeposit, () {
+              PlanetMiniButton('Unload', Colors.blue, canDeposit, () {
                 _depositToPlanet(type, amount, planet);
               }),
               const SizedBox(width: 4),
-              _miniActionButton('Load', Colors.orange, canWithdraw, () {
+              PlanetMiniButton('Load', Colors.orange, canWithdraw, () {
                 _withdrawToShip(type, amount, planet);
               }),
             ],
@@ -1573,16 +1551,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// `lib/widgets/hold_button.dart`, but this is a bare icon rather than a
   /// labelled button, and `HoldButton` is a `SizedBox(height: 36)` with a
   /// `FittedBox` label — wrong shape for a 24px square inside a dense row.
-  Widget _miniStepper(IconData icon, VoidCallback onPressed) {
-    return _HoldRepeatIcon(
-      onPressed: onPressed,
-      child: Container(
-        padding: const EdgeInsets.all(3),
-        child: Icon(icon, size: 14),
-      ),
-    );
-  }
-
   /// Sets a transfer row's amount to everything that can actually move.
   ///
   /// Bounded by the *same* constraint the button will apply, so the number on
@@ -1593,302 +1561,16 @@ class _PlanetScreenState extends State<PlanetScreen> {
     setState(() => _transferAmounts[type] = max < 1 ? 1 : max);
   }
 
-  // ── Market orders (T5) ─────────────────────────────────────────────
-
-  /// Order sizes per commodity. Steps of 100 from 100: a Citadel tier costs
-  /// tens of thousands, so the ±10 hauling step would be 8,000 taps to the
-  /// same place.
-  final Map<String, int> _marketAmounts = {
-    'minerals': 1000,
-    'organics': 1000,
-    'industrial': 1000,
-  };
-
-  static const _marketCommodities = ['minerals', 'organics', 'industrial'];
-
-  TradePlan _marketPlan(
-          String type, TradeDirection dir, int volume, Planet planet) =>
-      PlanetTradeService.plan(
-        universe: _allSectors,
-        planet: planet,
-        commodity: type,
-        direction: dir,
-        volume: volume,
-      );
-
-  Widget _buildMarketSection(Planet planet, ColorScheme cs) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Market',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Bulk orders against live port markets. The port sends its own '
-              'freighter — you pay credits and time, not cargo space.',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.4,
-                color: cs.onSurface.withValues(alpha: 0.6),
-              ),
-            ),
-            const SizedBox(height: 8),
-            _buildTreasuryVault(planet, cs),
-            const SizedBox(height: 8),
-            for (final type in _marketCommodities) ...[
-              _marketRow(type, planet, cs),
-              const SizedBox(height: 6),
-            ],
-            const Divider(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Open orders',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ),
-                // One button rather than one per order: the log line lives in a
-                // 200-entry ring the player may have scrolled past, and a
-                // per-row Report would be a third control on a row that
-                // already carries a Cancel and a countdown bar. The history
-                // belongs to the world, so it is read from the world.
-                _miniActionButton(
-                    'Report',
-                    Colors.teal,
-                    planet.tradeIncidents.isNotEmpty,
-                    () => _showTradeReport(planet),
-                    key: const Key('market-report'),
-                    disabledReason: 'No shipments yet'),
-              ],
-            ),
-            const SizedBox(height: 6),
-            if (planet.tradeJobs.isEmpty)
-              Text(
-                'No open orders yet.',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: cs.onSurface.withValues(alpha: 0.45),
-                ),
-              ),
-            // One row per request, not per port-run: a split order is one
-            // job with one Cancel, so N taps always read as N rows.
-            for (final group in _orderGroups(planet)) ...[
-              _marketOrderRow(planet, group, cs),
-              const SizedBox(height: 6),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// The world's freight ledger: finished orders, then the last
-  /// [Planet.tradeIncidentHistory] resolved runs.
-  ///
-  /// Two sections because they answer two different questions. **Orders** is
-  /// the one a player asks an hour later — "what did that 80,000-mineral order
-  /// actually get me?" — and only `Planet.tradeOrders` holds the totals,
-  /// because the run ledger is truncated to ten entries and an order's early
-  /// runs are long gone by the time it finishes. **Runs** answers "what
-  /// happened just now", with the cause attached.
-  ///
-  /// A plain `Column` inside a `SingleChildScrollView`, deliberately **not** a
-  /// `ListView`: both lists are bounded by construction, so a lazy list would
-  /// buy nothing and cost the lazy-build trap (rows below the fold reporting as
-  /// "missing" in a test because they were never built).
-  Future<void> _showTradeReport(Planet planet) async {
-    final incidents = planet.tradeIncidents.reversed.toList();
-    final orders = planet.tradeOrders.reversed.toList();
-    // Both empty is the only case with nothing to say. Before an order record
-    // existed this was `incidents.isEmpty`, which meant a world that traded and
-    // finished would open to a blank dialog once its ten runs rolled over.
-    if (incidents.isEmpty && orders.isEmpty) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        final dialogCs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          title: const Text('Freight Report', style: TextStyle(fontSize: 18)),
-          content: SizedBox(
-            width: 380,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (orders.isNotEmpty) ...[
-                    _reportHeading(dialogCs, 'Orders'),
-                    for (final o in orders) _reportOrderRow(o, dialogCs),
-                    const SizedBox(height: 4),
-                  ],
-                  if (incidents.isNotEmpty) ...[
-                    _reportHeading(dialogCs, 'Recent runs'),
-                    for (final i in incidents) _reportRunRow(i, dialogCs),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _reportHeading(ColorScheme cs, String label) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(
-          label.toUpperCase(),
-          style: TextStyle(
-            fontSize: 10,
-            letterSpacing: 1.2,
-            fontWeight: FontWeight.w700,
-            color: cs.onSurface.withValues(alpha: 0.5),
-          ),
-        ),
-      );
-
-  /// One finished order: what it was for, what it got, and what went wrong.
-  Widget _reportOrderRow(TradeOrderRecord o, ColorScheme cs) {
-    final clean = o.status == 'COMPLETE';
-    final cancelled = o.status == 'CANCELLED';
-    final tone = clean
-        ? Colors.green.shade400
-        : cancelled
-            ? cs.onSurface.withValues(alpha: 0.5)
-            : cs.error;
-    final verb = o.direction == TradeDirection.buy ? 'Buy' : 'Sell';
-    // The shortfall is split rather than summed: "lost" and "impounded" are
-    // different events and a single figure would hide which one happened,
-    // which is the whole reason the four outcome classes exist.
-    final shortfall = <String>[
-      if (o.unitsLost > 0) '${compact(o.unitsLost)} lost',
-      if (o.unitsSeized > 0) '${compact(o.unitsSeized)} impounded',
-      if (o.unitsCancelled > 0) '${compact(o.unitsCancelled)} cancelled',
-    ].join(' · ');
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                clean
-                    ? Icons.check_circle_rounded
-                    : cancelled
-                        ? Icons.cancel_rounded
-                        : Icons.report_gmailerrorred_rounded,
-                size: 14,
-                color: tone,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '$verb ${compact(o.unitsTotal)} ${o.commodity}'
-                  '${o.ports.length > 1 ? ' · ${o.ports.length} ports' : ''}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 20, top: 1),
-            child: Text(
-              '${o.status} · ${compact(o.unitsDelivered)} delivered'
-              '${shortfall.isEmpty ? '' : ' · $shortfall'}'
-              '${o.runs > 0 ? ' · ${o.runs} runs' : ''}',
-              maxLines: 2,
-              style: TextStyle(fontSize: 11, color: tone),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// One resolved run. The line reads what became of the freight, not whether
-  /// it "succeeded" — four outcomes, and a seizure is a delivery.
-  Widget _reportRunRow(TradeIncident i, ColorScheme cs) {
-    final icon = switch (i.outcome) {
-      TradeRunOutcome.delivered => Icons.check_circle_rounded,
-      TradeRunOutcome.lost => Icons.report_gmailerrorred_rounded,
-      TradeRunOutcome.delayed => Icons.schedule_rounded,
-      TradeRunOutcome.seized => Icons.gavel_rounded,
-    };
-    final tone = switch (i.outcome) {
-      TradeRunOutcome.delivered => Colors.green.shade400,
-      TradeRunOutcome.lost => cs.error,
-      // A diversion costs nothing but patience, so it is not an error tone —
-      // painting it red would train the player to ignore the warning colour.
-      TradeRunOutcome.delayed => Colors.amber.shade400,
-      TradeRunOutcome.seized => cs.error,
-    };
-    final status = switch (i.outcome) {
-      TradeRunOutcome.delivered => 'Delivered',
-      TradeRunOutcome.lost => 'LOST — ${i.cause?.label ?? 'cause unrecorded'}',
-      TradeRunOutcome.delayed => 'DIVERTED — '
-          '${i.cause?.label ?? 'rerouted'} (+${i.delayTicks}t)',
-      TradeRunOutcome.seized => 'PARTIAL — ${compact(i.deliveredUnits)} of '
-          '${compact(i.units)} delivered, ${i.cause?.label ?? 'impounded'}',
-    };
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 14, color: tone),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '${i.direction == TradeDirection.buy ? 'Buy' : 'Sell'} '
-                  '${compact(i.units)} ${i.commodity} '
-                  '→ port #${i.portSectorId}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 20, top: 1),
-            child: Text(
-              status,
-              maxLines: 2,
-              style: TextStyle(fontSize: 11, color: tone),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // ── Market orders (T5-T9) ─────────────────────────────────────────────
+  //
+  // The **quote and the order rows** live in `PlanetMarketPanel`, and the
+  // panel is deliberately the last thing in this file's history to move: three
+  // of the four features added to this card in one cycle would otherwise have
+  // meant moving it twice, and mechanical file surgery is safest on code that
+  // is not also changing behaviour. What stays here is what owns the player's
+  // wallet — placing, cancelling, and the treasury below — because the screen
+  // owns the credits and the write, and a panel that could spend them would be a
+  // second owner of the same money.
 
   /// The world's unsettled sales, always rendered — even at zero.
   ///
@@ -1937,7 +1619,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
           Row(
             children: [
               Expanded(
-                child: _miniActionButton('Withdraw', Colors.green, canTake,
+                child: PlanetMiniButton('Withdraw', Colors.green, canTake,
                     () => _withdrawRevenue(planet),
                     key: const Key('market-withdraw'),
                     disabledReason: pending
@@ -1946,7 +1628,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _miniActionButton('Send to Bank', Colors.teal, canTake,
+                child: PlanetMiniButton('Send to Bank', Colors.teal, canTake,
                     () => _bankRevenue(planet),
                     key: const Key('market-bank'),
                     disabledReason: pending
@@ -1957,482 +1639,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _marketRow(String type, Planet planet, ColorScheme cs) {
-    final stored = _storedFor(type, planet);
-    final amount = _marketAmounts[type] ?? 1000;
-    final label = type[0].toUpperCase() + type.substring(1);
-    // A sell cannot promise what the store does not hold: clamp the volume
-    // before planning, so every planned share is creatable.
-    final sellVolume = amount < stored ? amount : stored;
-    final buyPlan = _marketPlan(type, TradeDirection.buy, amount, planet);
-    final sellPlan = sellVolume > 0
-        ? _marketPlan(type, TradeDirection.sell, sellVolume, planet)
-        : null;
-    var buyTotal = 0;
-    for (final s in buyPlan.allocations) {
-      buyTotal += s.units * s.unitPrice;
-    }
-    var sellTotal = 0;
-    if (sellPlan != null) {
-      for (final s in sellPlan.allocations) {
-        sellTotal += s.units * s.unitPrice;
-      }
-    }
-    final canBuy = buyPlan.unitsAllocated > 0 &&
-        widget.player.credits >= buyTotal &&
-        buyTotal > 0;
-    final canSell = sellPlan != null && sellPlan.unitsAllocated > 0;
-    final buyDisabledReason = buyPlan.unitsAllocated <= 0
-        ? 'No port is selling $label right now'
-        : 'Need ${compact(buyTotal)} cr for that order';
-    final sellDisabledReason = sellVolume <= 0
-        ? 'Nothing stored to sell'
-        : 'No port is buying $label right now';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            SizedBox(
-              width: 80,
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurface.withValues(alpha: 0.7),
-                ),
-              ),
-            ),
-            const Spacer(),
-            Flexible(
-              child: Text(
-                '${compact(stored)} / ${compact(_maxFor(type, planet))}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  color: cs.onSurface.withValues(alpha: 0.5),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            _miniStepper(Icons.remove_rounded, () {
-              setState(() {
-                _marketAmounts[type] =
-                    (amount - 100).clamp(minimumMarketAmount, 1 << 30);
-              });
-            }),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Text(
-                compact(amount),
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ),
-            _miniStepper(Icons.add_rounded, () {
-              setState(() {
-                _marketAmounts[type] =
-                    (amount + 100).clamp(minimumMarketAmount, 1 << 30);
-              });
-            }),
-            Padding(
-              padding: const EdgeInsets.only(left: 4, right: 2),
-              // A menu, not a bare "Max". The two maxima are usually wildly
-              // different — one is bounded by the galaxy's stock and the other
-              // by this world's store — and a single button has to pick one,
-              // so it either fills the field with a number the other button
-              // cannot honour or it guesses wrong half the time. Naming both
-              // directions *and their figures* teaches the asymmetry, which is
-              // the thing that made the old button confusing rather than
-              // merely wrong.
-              child: PopupMenuButton<TradeDirection>(
-                key: Key('market-max-$type'),
-                tooltip: 'Set the maximum order size',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 0),
-                offset: const Offset(0, 18),
-                position: PopupMenuPosition.under,
-                onSelected: (d) => _setMarketMax(type, d, planet),
-                itemBuilder: (ctx) => [
-                  for (final d in TradeDirection.values)
-                    PopupMenuItem<TradeDirection>(
-                      value: d,
-                      height: 30,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            d == TradeDirection.buy
-                                ? 'Max buy  '
-                                : 'Max sell  ',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: d == TradeDirection.buy
-                                  ? Colors.blue
-                                  : Colors.orange,
-                            ),
-                          ),
-                          Text(
-                            // Quoted live, not cached: the two maxima move
-                            // every tick as ports regen and the store fills,
-                            // so a value captured when the row was built
-                            // would be a stale promise.
-                            compact(_marketMaxFor(type, d, planet)),
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontFamily: 'monospace',
-                              color: Theme.of(ctx)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.75),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Max',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: cs.onSurface.withValues(alpha: 0.6),
-                        ),
-                      ),
-                      Icon(Icons.arrow_drop_down_rounded,
-                          size: 14, color: cs.onSurface.withValues(alpha: 0.5)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const Spacer(),
-            _miniActionButton('Buy', Colors.blue, canBuy, () {
-              _placeMarketOrder(type, TradeDirection.buy, amount, planet);
-            }, key: Key('market-buy-$type'), disabledReason: buyDisabledReason),
-            const SizedBox(width: 4),
-            _miniActionButton('Sell', Colors.orange, canSell, () {
-              _placeMarketOrder(type, TradeDirection.sell, amount, planet);
-            },
-                key: Key('market-sell-$type'),
-                disabledReason: sellDisabledReason),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          _marketPreview(
-              buyPlan, buyTotal, sellPlan, sellTotal, sellVolume, _portNames()),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 10,
-            color: cs.onSurface.withValues(alpha: 0.5),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// One honest line per direction: what it costs, who fills it, and what the
-  /// galaxy could not cover. Shown *before* paying, because a paid order is a
-  /// reservation and the player should see the shortfall while it is still
-  /// a quote. Ports are named, not counted: "1 port(s)" says where to look
-  /// without saying what it is called.
-  String _marketPreview(TradePlan buyPlan, int buyTotal, TradePlan? sellPlan,
-      int sellTotal, int sellVolume, Map<int, String> portNames) {
-    String portsOf(TradePlan p) {
-      final names = [
-        for (final a in p.allocations)
-          portNames[a.portSectorId] ?? '#${a.portSectorId}'
-      ];
-      if (names.isEmpty) return '';
-      if (names.length == 1) return ' · ${names.first}';
-      return ' · ${names.first} +${names.length - 1} more';
-    }
-
-    // Per-run loss risk across the order, as a percentage: a chance a run is
-    // intercepted on the way. Shown on the quote so a failure is a risk the
-    // player *accepted* (the design's requirement — a silent loss reads as a
-    // bug) and so splitting a large order into smaller ones is visibly worth
-    // something. `1 - Π(1 - p)` over the order's runs, so it is the chance of
-    // losing at least one run, not per-run.
-    String riskOf(TradePlan p) {
-      if (p.allocations.isEmpty) return '';
-      var survive = 1.0;
-      for (final a in p.allocations) {
-        final runs = (a.units / PlanetTradeService.freighterHold).ceil();
-        for (var r = 0; r < runs; r++) {
-          survive *= 1 - PlanetTradeService.failureChanceForHops(a.hops);
-        }
-      }
-      final pct = ((1 - survive) * 100).round();
-      if (pct <= 0) return '';
-      return ' · $pct% run risk';
-    }
-
-    final buy = buyPlan.unitsAllocated <= 0
-        ? 'Buy: no port selling'
-        : 'Buy ${compact(buyPlan.unitsAllocated)} → ${compact(buyTotal)} cr'
-            '${portsOf(buyPlan)}${riskOf(buyPlan)}'
-            '${buyPlan.shortfall > 0 ? ' · short ${compact(buyPlan.shortfall)}' : ''}';
-    final sell = sellVolume <= 0
-        ? 'Sell: nothing stored'
-        : sellPlan == null || sellPlan.unitsAllocated <= 0
-            ? 'Sell: no port buying'
-            : 'Sell ${compact(sellPlan.unitsAllocated)} → ${compact(sellTotal)} cr'
-                '${portsOf(sellPlan)}${riskOf(sellPlan)}'
-                '${sellPlan.shortfall > 0 ? ' · short ${compact(sellPlan.shortfall)}' : ''}';
-    return '$buy\n$sell';
-  }
-
-  Map<int, String> _portNames() => {
-        for (final s in _allSectors)
-          if (s.port != null) s.id: s.port!.name,
-      };
-
-  /// The most a [direction] order of [type] could actually place right now.
-  ///
-  /// **Direction-specific, and that is the whole point.** The two maxima are
-  /// routinely different by an order of magnitude: buying is capped by what
-  /// ports hold across the galaxy, selling by what this world's stores hold.
-  /// A single "Max" that took the larger of the two — which is what this did —
-  /// put a number in the field that the *other* button could not honour, so
-  /// pressing Max then Sell silently sold less than Max promised. The preview
-  /// line already quoted each side separately, so the player had no way to
-  /// tell the field had been filled for the wrong direction.
-  ///
-  /// Never below [minimumMarketAmount], so Max on an empty market still leaves a
-  /// placeable order rather than zero.
-  int _marketMaxFor(String type, TradeDirection direction, Planet planet) {
-    final stored = _storedFor(type, planet);
-    if (direction == TradeDirection.sell) {
-      if (stored <= 0) return minimumMarketAmount;
-      // Capped by the store: a sell cannot promise goods the world does not
-      // have, so an over-large volume would plan shares the order then cannot
-      // create.
-      final plan = _marketPlan(type, TradeDirection.sell, stored, planet);
-      final max = plan.unitsAllocated;
-      return max < minimumMarketAmount ? minimumMarketAmount : max;
-    }
-    final plan = _marketPlan(type, TradeDirection.buy, 1 << 30, planet);
-    final max = plan.unitsAllocated;
-    return max < minimumMarketAmount ? minimumMarketAmount : max;
-  }
-
-  void _setMarketMax(String type, TradeDirection direction, Planet planet) {
-    final max = _marketMaxFor(type, direction, planet);
-    setState(() => _marketAmounts[type] = max);
-  }
-
-  /// Smallest order the amount field will hold. Also the floor every "max"
-  /// falls back to, so an empty market leaves a placeable number rather than 0.
-  static const int minimumMarketAmount = 100;
-
-  /// In-flight jobs grouped by request: one tap on Buy/Sell is one order,
-  /// possibly split across ports. Legacy jobs with no order id group alone.
-  List<_OrderGroup> _orderGroups(Planet planet) {
-    final groups = <_OrderGroup>[];
-    final index = <String, int>{};
-    for (final job in planet.tradeJobs) {
-      final key =
-          job.orderId.isEmpty ? 'job:${job.id}' : 'order:${job.orderId}';
-      final at = index[key];
-      if (at == null) {
-        index[key] = groups.length;
-        groups.add(_OrderGroup(
-          cancelId: job.orderId.isEmpty ? job.id : job.orderId,
-          direction: job.direction,
-          commodity: job.commodity,
-          jobs: [job],
-        ));
-      } else {
-        groups[at].jobs.add(job);
-      }
-    }
-    return groups;
-  }
-
-  /// One request, one row, one Cancel: aggregate units up top, one countdown
-  /// per port-run below (each run has its own cadence, so they cannot share
-  /// a bar), and the slowest run sets the ETA.
-  Widget _marketOrderRow(
-    Planet planet,
-    _OrderGroup group,
-    ColorScheme cs,
-  ) {
-    final isBuy = group.direction == TradeDirection.buy;
-    var total = 0;
-    var delivered = 0;
-    var lost = 0;
-    var seized = 0;
-    var ticksLeft = 0;
-    for (final job in group.jobs) {
-      total += job.unitsTotal;
-      // `unitsDelivered`, not `unitsTotal - unitsRemaining`: the latter counts
-      // a lost run as delivered, so an order that lost its only run read
-      // "5.0K / 10.0K" while the store gained nothing. A counter that
-      // overstates delivery is worse than no counter.
-      delivered += job.unitsDelivered;
-      lost += job.unitsLost;
-      seized += job.unitsSeized;
-      if (job.ticksLeft > ticksLeft) ticksLeft = job.ticksLeft;
-    }
-    final eta = GameClock.estimate(ticksLeft);
-    final commodity =
-        group.commodity[0].toUpperCase() + group.commodity.substring(1);
-    final ports = group.jobs.map((j) => j.portSectorId).toSet().length;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              isBuy ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
-              size: 12,
-              color: isBuy ? Colors.blue : Colors.orange,
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(
-                '${isBuy ? 'Buy' : 'Sell'} $commodity'
-                '${ports > 1 ? ' · $ports ports' : ' · port #${group.jobs.first.portSectorId}'}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                // Shortfall is named, not silently subtracted: the player needs
-                // to see that the gap between "of" and "delivered" has a name,
-                // and the Report says which one. Lost and impounded are
-                // reported separately because they are different events —
-                // pirates and customs call for different decisions — and a
-                // single "LOST" for both would tell the player their goods were
-                // destroyed when most of them arrived.
-                '${compact(delivered)} / ${compact(total)}'
-                '${lost > 0 ? ' · ${compact(lost)} LOST' : ''}'
-                '${seized > 0 ? ' · ${compact(seized)} HELD' : ''}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  fontWeight: lost > 0 || seized > 0 ? FontWeight.bold : null,
-                  color: lost > 0 || seized > 0
-                      ? cs.error
-                      : cs.onSurface.withValues(alpha: 0.5),
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            _miniActionButton('Cancel', cs.error, true, () {
-              _cancelMarketOrder(planet, group.cancelId);
-            }),
-          ],
-        ),
-        if (lost > 0 || seized > 0) ...[
-          const SizedBox(height: 2),
-          _lostNotice(cs, lost, seized),
-        ],
-        const SizedBox(height: 4),
-        for (final job in group.jobs) ...[
-          _marketRunRow(job, cs),
-          const SizedBox(height: 4),
-        ],
-        Text(
-          eta.isEmpty ? 'arriving' : 'done $eta of play',
-          style: TextStyle(
-            fontSize: 10,
-            color: cs.onSurface.withValues(alpha: 0.5),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// The standing warning under an order that has come up short.
-  ///
-  /// Always present once anything is gone rather than a transient flash: the
-  /// count is on the order until it completes, and a marker that appeared for
-  /// one tick and vanished is a thing the player would not have read.
-  Widget _lostNotice(ColorScheme cs, int lost, int seized) {
-    final parts = <String>[
-      if (lost > 0) '${compact(lost)} destroyed',
-      if (seized > 0) '${compact(seized)} held by customs',
-    ];
-    return Row(
-      children: [
-        Icon(Icons.warning_amber_rounded, size: 11, color: cs.error),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Text(
-            '${parts.join(' · ')} — see Report for the cause',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: cs.error,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// One port-run's countdown: which port, which run of how many, and a bar
-  /// that moves every second without ever claiming a tick that has not landed
-  /// (see [TickProgressBar]).
-  Widget _marketRunRow(TradeJob job, ColorScheme cs) {
-    final currentRun =
-        job.runsDone + 1 > job.runsTotal ? job.runsTotal : job.runsDone + 1;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'port #${job.portSectorId} · run $currentRun of ${job.runsTotal}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 10,
-            color: cs.onSurface.withValues(alpha: 0.55),
-          ),
-        ),
-        const SizedBox(height: 2),
-        TickProgressBar(
-          remaining: job.ticksRemaining,
-          total: job.ticksPerRun,
-          secondsPerTick: GameClock.secondsPerTick,
-        ),
-      ],
     );
   }
 
@@ -2619,39 +1825,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
       '${toBank ? 'Banked' : 'Withdrew'} ${compact(amount)} cr trade revenue '
       'from ${planet.name}',
     );
-  }
-
-  Widget _miniActionButton(
-      String label, Color color, bool enabled, VoidCallback onPressed,
-      {Key? key, String? disabledReason}) {
-    final button = Material(
-      key: key,
-      color: enabled ? color.withValues(alpha: 0.15) : Colors.transparent,
-      borderRadius: BorderRadius.circular(4),
-      child: InkWell(
-        onTap: enabled ? onPressed : null,
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'monospace',
-              color: enabled ? color : color.withValues(alpha: 0.3),
-            ),
-          ),
-        ),
-      ),
-    );
-    // A dead button with no reason reads as a broken button. The playtest
-    // report for these exact controls was "nothing happens" — twice, once
-    // for genuinely-disabled buttons whose reason was invisible.
-    if (!enabled && disabledReason != null) {
-      return Tooltip(message: disabledReason, child: button);
-    }
-    return button;
   }
 
   /// Buys colonists from the faction's capital and settles them on the world.
@@ -3885,63 +3058,6 @@ class _DetonationSequenceState extends State<_DetonationSequence>
           },
         ),
       ),
-    );
-  }
-}
-
-/// A bare icon button that fires once on press and repeats while held.
-///
-/// Mirrors `lib/widgets/hold_button.dart`'s timing (400ms before the first
-/// repeat, 80ms between) but takes a [child] instead of a label, because these
-/// sit as 24px squares inside a dense table row where a 36px labelled button
-/// would not fit and a `FittedBox` label is pointless on a `+` glyph.
-class _HoldRepeatIcon extends StatefulWidget {
-  final VoidCallback onPressed;
-  final Widget child;
-
-  const _HoldRepeatIcon({required this.onPressed, required this.child});
-
-  @override
-  State<_HoldRepeatIcon> createState() => _HoldRepeatIconState();
-}
-
-class _HoldRepeatIconState extends State<_HoldRepeatIcon> {
-  static const _delay = Duration(milliseconds: 400);
-  static const _interval = Duration(milliseconds: 80);
-
-  Timer? _timer;
-
-  void _start() {
-    widget.onPressed();
-    _timer = Timer(_delay, () {
-      _timer = Timer.periodic(_interval, (_) {
-        if (!mounted) {
-          _stop();
-          return;
-        }
-        widget.onPressed();
-      });
-    });
-  }
-
-  void _stop() {
-    _timer?.cancel();
-    _timer = null;
-  }
-
-  @override
-  void dispose() {
-    _stop();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTapDown: (_) => _start(),
-      onTapUp: (_) => _stop(),
-      onTapCancel: _stop,
-      child: widget.child,
     );
   }
 }

@@ -2119,3 +2119,40 @@ class LevelUpCost {
   const LevelUpCost(this.requiredColonists, this.requiredMinerals,
       this.requiredOrganics, this.requiredIndustrial);
 }
+
+/// Typed access to a resource by name, for the UI layers that drive rows from
+/// a string key.
+///
+/// One source on purpose. The planet screen and the market panel both render
+/// resource rows keyed by commodity name, and this started as a private method
+/// on the screen — which meant the panel needed its own copy the moment it was
+/// extracted. Two copies of a commodity switch drift: the `default: 0` branch is
+/// what hides it, because a missing case reads as an empty cell rather than as an
+/// error.
+extension PlanetResources on Planet {
+  /// Units of [type] currently in stores. `colonists` is a population, not a
+  /// store, and the transfer rows rely on that reading.
+  int storedFor(String type) {
+    switch (type) {
+      case 'minerals':
+        return storedMinerals;
+      case 'organics':
+        return storedOrganics;
+      case 'industrial':
+        return storedIndustrial;
+      case 'drones':
+        return storedDrones;
+      case 'colonists':
+        return population;
+      default:
+        return 0;
+    }
+  }
+
+  /// The ceiling for [type]. Colonists are capped by the level gate rather than
+  /// by a store.
+  int capacityFor(String type) {
+    if (type == 'colonists') return colonistMax;
+    return capFor(type);
+  }
+}

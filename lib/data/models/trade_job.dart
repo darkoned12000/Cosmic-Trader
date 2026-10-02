@@ -252,9 +252,16 @@ class TradeJob {
   /// `unitsLost + unitsSeized > unitsTotal`, and a *negative* delivered figure
   /// is a worse lie than a wrong positive one — it would render as a store that
   /// owes the player goods.
-  int get unitsDelivered =>
-      (unitsTotal - unitsRemaining - unitsLost - unitsSeized)
-          .clamp(0, unitsTotal);
+  int get unitsDelivered => (unitsTotal -
+          unitsRemaining -
+          unitsLost -
+          unitsSeized)
+      .clamp(0, unitsTotal)
+      // `int.clamp` is declared to return `num`, so without this the getter is
+      // `num` and every `someInt += job.unitsDelivered` in the UI fails to
+      // compile. Casting once here beats six casts at the call sites, and the
+      // value is an integer by construction.
+      .toInt();
 
   /// Units the player paid for and does not have, either way.
   ///
