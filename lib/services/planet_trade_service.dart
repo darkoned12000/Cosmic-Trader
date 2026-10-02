@@ -514,6 +514,9 @@ class PlanetTradeService {
               seizedUnits: seizedUnits,
               delayTicks: delayTicks,
               insuredUnits: insuredUnits,
+              jobId: job.id,
+              insurance: job.insurance,
+              premiumPaid: job.premiumPaid,
             ),
           );
 
@@ -621,6 +624,19 @@ class PlanetTradeService {
     job.escrowedReleased += slice;
   }
 
+  /// What the order's cover cost, counting each share once.
+  ///
+  /// Groups by [TradeIncident.jobId] rather than summing. Legacy incidents
+  /// carry no job id and all collapse into one bucket, which is harmless: they
+  /// predate cover, so every one of them has a premium of zero.
+  static int _premiumFor(List<TradeIncident> runs) {
+    final seen = <String, int>{};
+    for (final r in runs) {
+      seen.putIfAbsent(r.jobId, () => r.premiumPaid);
+    }
+    return seen.values.fold<int>(0, (a, b) => a + b);
+  }
+
   /// Writes a finished order into the world's history.
   ///
   /// Totals come from the **incident ledger**, not from the jobs: by the time
@@ -651,6 +667,13 @@ class PlanetTradeService {
       unitsLost: runs.fold<int>(0, (a, r) => a + r.lostUnits),
       unitsSeized: runs.fold<int>(0, (a, r) => a + r.seizedUnits),
       runs: runs.length,
+      insurance: first.insurance,
+      // **Each share counted once.** `premiumPaid` is a per-share figure held
+      // on every run of that share, so a plain sum would multiply it by the run
+      // count — an eight-run order would report eight times what it paid. The
+      // distinct-share grouping is the whole reason the incident carries
+      // `jobId`.
+      premium: _premiumFor(runs),
       ports: runs.map((r) => r.portSectorId).toSet().toList(growable: false),
     ));
     while (planet.tradeOrders.length > Planet.tradeOrderHistory) {

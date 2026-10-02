@@ -807,6 +807,7 @@ existing planet phases. T7 and T8 are deferred by decision, not by dependency.
 | **T8** | **Four outcome classes.** Destroyed / delayed / seized / delivered, and the reservation accounting each implies. | Medium | T7 | **DONE.** The cause→outcome rule lives on the enum, so weights and consequences cannot drift. Zero-weight causes are a promise kept by arithmetic |
 | **T9** | **Order history.** A finished order keeps its totals after its jobs are gone. | Small | T8 | **DONE.** Bounded at ten per world; a split order records **one** order naming every port it touched |
 | **T10** | **Freight cover.** A per-order premium, quoted beside the run risk, indemnifying destroyed runs. | Medium | T8 | **DONE.** Indemnity, not prevention; the premium is derived from the order's own risk so a short route is free to insure; seizures are excluded |
+| **T10b** | **Cover is visible everywhere it applies.** Policy on the open-order row and in the Report, premium on the record. | Small | T10 | **DONE.** The order record is rebuilt from incidents, so the incident carries the share's policy and premium |
 | **T11** | **Convoy escorts / manual port choice / cost-based routing.** | Large | T8-T10 | Deferred by decision. See the note above |
 
 **A job row needs a per-run countdown, not just a run count.** A run is minutes
@@ -2969,3 +2970,50 @@ strategic version by accident.
   green. It now counts occurrences, so a rename cannot quietly satisfy it
   either. **A structural guard that names a symbol has to distinguish where the
   symbol appears.**
+
+### T10b — an order row that does not say it is covered is a row that lies
+
+Cover existed on the order but nowhere the player could read it: the open-order
+row showed what was lost and never that most of it was coming back, and the
+Report showed outcomes without the policy. Three surfaces now name it.
+
+- **The open-order row carries a shield and the level.** A shield glyph alone
+  answers *is this insured* and not *how much*, and those are different questions
+  — a half-covered loss is still a loss. The badge sits **before** the delivered
+  counter so the row reads `what · cover · how it is going` and the count stays
+  the last thing the eye lands on.
+- **The Report names the policy on the header line**, not the status line: the
+  policy was a property of the order when it was placed, while everything on the
+  second line is the outcome. Mixing them buries what was bought among what
+  happened.
+- **The premium is on the finished record.** It appeared once — in the quote,
+  before payment — and then nowhere at all, which reads as having been free.
+- **The run line names the level too.** "5.0K back" reads as a full refund under
+  a half policy, and a run ledger that overstates the player's position is the
+  exact defect the order row's counter had two phases earlier.
+
+#### The order record is rebuilt from incidents, so the premium needed a de-duplication
+
+`closeOrder` computes everything from the incident ledger, because the jobs are
+gone by then. That means the **policy and the premium have to survive on the
+incident** — `orderId` was already there for precisely this reason.
+
+And the premium is a **per-share** figure stamped on **every run of that share**,
+so a plain sum multiplies it by the run count: an order that paid 10,000 would
+report 40,000, and the Report would show the player paying four times the quoted
+price. The record groups by `jobId` and counts each share once. The guard asserts
+both directions — the record equals what was charged, **and** the naive sum is
+demonstrably larger — because a premium assertion that passes because both
+numbers are small is not a premium assertion.
+
+#### Two guards that could not fail
+
+- **"An uncovered order shows no shield" ran while no order existed.** The
+  assertion was placed before any order was created, so it passed for the wrong
+  reason; injecting "badge on every row" left it green. It now places an
+  uncovered order *first* and asserts the absence against a row that exists.
+- **The phone-width check could not see the badge at all** — its fixture only
+  traded minerals with a short name and no sell side, so the covered sell it
+  tried to place was never created and the finder found nothing. The fixture now
+  stocks and trades industrial as well, leaving the minerals figures untouched
+  because the Max guard asserts those exact maxima.

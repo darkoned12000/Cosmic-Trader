@@ -612,6 +612,12 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
     ColorScheme cs,
   ) {
     final isBuy = group.direction == TradeDirection.buy;
+    // One policy per order, so one marker: every share of a request is created
+    // with the same coverage, and reading it off the first share is not a
+    // shortcut — it is the same value on all of them. A *split* order that mixed
+    // policies would have to say so here; `createOrder` cannot produce one, and
+    // this is the line that would have to change if it could.
+    final cover = group.jobs.first.insurance;
     var total = 0;
     var delivered = 0;
     var lost = 0;
@@ -654,6 +660,11 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
                     const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
               ),
             ),
+            if (cover != TradeInsurance.none) ...[
+              const SizedBox(width: 4),
+              _coverBadge(cover,
+                  group.jobs.fold<int>(0, (a, j) => a + j.premiumPaid), cs),
+            ],
             const SizedBox(width: 4),
             Flexible(
               child: Text(
@@ -703,6 +714,40 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
           ),
         ),
       ],
+    );
+  }
+
+  /// The cover an in-flight order was bought with.
+  ///
+  /// **A shield glyph alone would answer "is this insured" and not "how much"**,
+  /// and those are different questions — a half-covered loss is still a loss. So
+  /// the level is spelled out, and the tooltip carries the sentence a player
+  /// actually wants: what was paid, and what that buys.
+  ///
+  /// Placed *before* the delivered counter rather than after it, so the row
+  /// reads `what · cover · how it is going` — and so the count stays the last
+  /// thing the eye lands on, which is the number the player is watching.
+  Widget _coverBadge(TradeInsurance cover, int premium, ColorScheme cs) {
+    return Tooltip(
+      message: '${cover.label} cover'
+          '${premium > 0 ? ' — ${compact(premium)} cr paid' : ''}'
+          '\nIndemnifies destroyed freight. Customs seizures are not covered.',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.shield_rounded, size: 11, color: Colors.teal),
+          const SizedBox(width: 2),
+          Text(
+            cover.label.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+              color: Colors.teal,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

@@ -870,6 +870,108 @@ void _t8OutcomeClasses() {
         expect(legacy.premiumPaid, 0);
       });
 
+      test('an order record remembers its policy and what the cover cost', () {
+        // Two facts the player cannot recover from anywhere else. The row shows
+        // the policy while the order is open; the moment it closes, the only
+        // thing that still exists is the record — and before this, a premium
+        // appeared once in a quote and then nowhere at all, which reads as having
+        // been free.
+        final (planet, universe) = route(hops: 2);
+        final placed = PlanetTradeService.createOrder(
+          planet: planet,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 20000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.half,
+        );
+        expect(placed.premium, greaterThan(0));
+        settle(planet, universe, _rng);
+
+        expect(planet.tradeOrders, hasLength(1));
+        final rec = planet.tradeOrders.single;
+        expect(rec.insurance, TradeInsurance.half);
+        expect(rec.premium, placed.premium,
+            reason: 'the record must carry exactly what was charged');
+      });
+
+      test('a split order does not charge the cover once per run', () {
+        // **The trap this guards.** `premiumPaid` is a per-*share* figure stamped
+        // on every *run* of that share, so the record has to de-duplicate by job
+        // id. A plain sum multiplies the premium by the run count — an order that
+        // paid 10,000 would report 40,000, and the Report would show the player
+        // paying four times the price they were quoted.
+        final (planet, universe) = route(hops: 2);
+        final placed = PlanetTradeService.createOrder(
+          planet: planet,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 20000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.full,
+        );
+        // More than one run, or the multiplier cannot show up at all.
+        expect(placed.jobs.single.runsTotal, greaterThan(1),
+            reason: 'the fixture must have several runs');
+        final runs = placed.jobs.single.runsTotal;
+        settle(planet, universe, _rng);
+
+        final rec = planet.tradeOrders.single;
+        expect(rec.runs, runs, reason: 'every run should be in the ledger');
+        expect(rec.premium, placed.premium);
+        // And the naive sum really would have been wrong — so the guard is not
+        // passing because both numbers happen to be small.
+        final naive =
+            planet.tradeIncidents.fold<int>(0, (a, i) => a + i.premiumPaid);
+        expect(naive, greaterThan(placed.premium));
+      });
+
+      test('the split-order premium is counted once per share, not per order',
+          () {
+        // The same de-duplication across a **split** order, where two shares each
+        // carry their own slice of the premium.
+        final (planet, universe) = route(hops: 1);
+        final near = universe.lastWhere((s) => s.port != null);
+        const shelf = 4000;
+        near.port = near.port!.copyWith(
+          supply: const {'minerals': shelf},
+          maxSupply: const {'minerals': shelf},
+        );
+        universe.add(Sector(
+          id: 9,
+          name: 'Other',
+          x: 9,
+          y: 9,
+          warpRoutes: const [1],
+          pirateCount: 0,
+          port: near.port!.copyWith(
+            name: 'Second',
+            supply: const {'minerals': shelf},
+            maxSupply: const {'minerals': shelf},
+          ),
+        ));
+        final placed = PlanetTradeService.createOrder(
+          planet: planet,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 6000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.half,
+        );
+        expect(placed.jobs.length, greaterThan(1));
+        settle(planet, universe, _rng);
+
+        final rec = planet.tradeOrders.single;
+        expect(rec.premium, placed.premium);
+        expect(rec.insurance, TradeInsurance.half);
+      });
+
       test('the shell drains the indemnity every tick', () async {
         // A source scan, which is normally the wrong tool — and the right one here,
         // for a structural fact: that the credit is settled somewhere at all. No

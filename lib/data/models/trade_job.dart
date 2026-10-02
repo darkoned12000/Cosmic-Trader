@@ -417,6 +417,9 @@ class TradeIncident {
     this.seizedUnits = 0,
     this.delayTicks = 0,
     this.insuredUnits = 0,
+    this.jobId = '',
+    this.insurance = TradeInsurance.none,
+    this.premiumPaid = 0,
   }) : id = id ?? const Uuid().v4();
 
   final String id;
@@ -464,6 +467,23 @@ class TradeIncident {
   /// money, and no way to connect them.
   final int insuredUnits;
 
+  /// Which share this run belonged to.
+  ///
+  /// Not needed to read a run, and load-bearing for one thing: the order's
+  /// premium is a **per-share** figure, so reconstructing it after the jobs are
+  /// gone means counting each share once, and the share is only identifiable by
+  /// id. Summing `premiumPaid` across runs instead would multiply it by the run
+  /// count — an eight-run order would report eight times what it paid.
+  final String jobId;
+
+  /// The cover this share was bought with. Order-level, so every run of an order
+  /// carries the same value.
+  final TradeInsurance insurance;
+
+  /// What this **share** cost to insure. Constant across the share's runs, which
+  /// is precisely why it must be de-duplicated by [jobId] rather than summed.
+  final int premiumPaid;
+
   /// Units that made it to the world.
   int get deliveredUnits => outcome == TradeRunOutcome.delivered
       ? units
@@ -490,6 +510,9 @@ class TradeIncident {
         'seizedUnits': seizedUnits,
         'delayTicks': delayTicks,
         'insuredUnits': insuredUnits,
+        'jobId': jobId,
+        'insurance': insurance.name,
+        'premiumPaid': premiumPaid,
       };
 
   factory TradeIncident.fromJson(Map<String, dynamic> json) {
@@ -538,6 +561,9 @@ class TradeIncident {
           : 0,
       delayTicks: (json['delayTicks'] as num?)?.toInt() ?? 0,
       insuredUnits: (json['insuredUnits'] as num?)?.toInt() ?? 0,
+      jobId: json['jobId'] as String? ?? '',
+      insurance: TradeInsurance.fromName(json['insurance'] as String?),
+      premiumPaid: (json['premiumPaid'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -567,6 +593,8 @@ class TradeOrderRecord {
     this.revenue = 0,
     this.spend = 0,
     this.runs = 0,
+    this.insurance = TradeInsurance.none,
+    this.premium = 0,
     List<int>? ports,
   })  : orderId = orderId ?? const Uuid().v4(),
         ports = ports ?? const <int>[];
@@ -596,6 +624,14 @@ class TradeOrderRecord {
   /// Runs it took, delivered and not.
   final int runs;
 
+  /// Cover this order was bought with. The player paid a premium at placement
+  /// and, without this, nothing durable ever said so — the premium vanished from
+  /// the screen the moment the quote changed and never appeared again anywhere.
+  final TradeInsurance insurance;
+
+  /// Credits the premium cost, summed over the order's shares.
+  final int premium;
+
   /// Every port it was split across, nearest first.
   final List<int> ports;
 
@@ -623,6 +659,8 @@ class TradeOrderRecord {
         'revenue': revenue,
         'spend': spend,
         'runs': runs,
+        'insurance': insurance.name,
+        'premium': premium,
         'ports': ports,
       };
 
@@ -643,6 +681,8 @@ class TradeOrderRecord {
         revenue: (json['revenue'] as num?)?.toInt() ?? 0,
         spend: (json['spend'] as num?)?.toInt() ?? 0,
         runs: (json['runs'] as num?)?.toInt() ?? 0,
+        insurance: TradeInsurance.fromName(json['insurance'] as String?),
+        premium: (json['premium'] as num?)?.toInt() ?? 0,
         ports: (json['ports'] as List?)
             ?.map((e) => (e as num).toInt())
             .toList(growable: false),

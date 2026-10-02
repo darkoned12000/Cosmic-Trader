@@ -101,7 +101,12 @@ Port _sellingPort() => Port(
 /// coincide, a direction-blind "Max" is indistinguishable from a correct one —
 /// so the fixture has to make the two answers disagree.
 List<Sector> _twoSidedUniverse({int storedMinerals = 20000}) {
-  final planet = _ownedWorld()..storedMinerals = storedMinerals;
+  // Industrial as well as minerals, so a row can be given a **long** commodity
+  // name for the phone-width check. The minerals figures are untouched, because
+  // the Max guard asserts those exact maxima.
+  final planet = _ownedWorld()
+    ..storedMinerals = storedMinerals
+    ..storedIndustrial = 20000;
   return [
     Sector(
         id: 1,
@@ -117,7 +122,11 @@ List<Sector> _twoSidedUniverse({int storedMinerals = 20000}) {
         y: 0,
         warpRoutes: const [1],
         hasPort: true,
-        port: _sellingPort()),
+        port: _sellingPort().copyWith(
+          sellPrices: const {'minerals': 50, 'industrial': 44},
+          supply: const {'minerals': 50000, 'industrial': 60000},
+          maxSupply: const {'minerals': 80000, 'industrial': 90000},
+        )),
     Sector(
         id: 3,
         name: 'Buyer',
@@ -128,12 +137,12 @@ List<Sector> _twoSidedUniverse({int storedMinerals = 20000}) {
         port: Port(
           name: 'Buyer',
           portClass: PortClass.free,
-          buyPrices: const {'minerals': 60},
+          buyPrices: const {'minerals': 60, 'industrial': 58},
           sellPrices: const {},
           supply: const {},
-          demand: const {'minerals': 8000},
+          demand: const {'minerals': 8000, 'industrial': 9000},
           maxSupply: const {},
-          maxDemand: const {'minerals': 8000},
+          maxDemand: const {'minerals': 8000, 'industrial': 9000},
           portCredits: 1000000,
           desiredCredits: 1000000,
         )),
@@ -755,6 +764,158 @@ void main() {
     await tester.pumpAndSettle();
     final after = await store.loadUniverse();
     expect(after.first.planets.single.tradeJobs, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an open order says it is covered, and at what level',
+      (WidgetTester tester) async {
+    // The reported gap: a covered order looked identical to an uncovered one, so
+    // the row said what was lost and never said that most of it was coming back.
+    final store = FaithfulUniverse(_universe());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    final reloaded = await store.loadUniverse();
+
+    // An **uncovered** order shows no shield. The first version of this assertion
+    // ran while no order existed at all, so it could not fail — and injection
+    // proved it by putting the badge on every row. A shield on everything is as
+    // uninformative as none.
+    PlanetTradeService.createOrder(
+      planet: reloaded.first.planets.single,
+      universe: reloaded,
+      playerId: 'p1',
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      volume: 4000,
+      actorFaction: 'trader',
+    );
+    await store.saveUniverse(reloaded);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.shield_rounded), findsNothing,
+        reason: 'an uncovered order must not claim cover');
+    PlanetTradeService.createOrder(
+      planet: reloaded.first.planets.single,
+      universe: reloaded,
+      playerId: 'p1',
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      volume: 10000,
+      actorFaction: 'trader',
+      insurance: TradeInsurance.half,
+    );
+    await store.saveUniverse(reloaded);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    // The **level**, not merely that it is insured: a half-covered loss is still
+    // a loss, and a shield glyph cannot say which.
+    expect(find.byIcon(Icons.shield_rounded), findsOneWidget);
+    // Scoped to the badge, because `HALF` also appears on the policy selector
+    // above — and an unscoped `findsOneWidget` here would be asserting something
+    // false about correct code. The row's own shield is the outlined-vs-rounded
+    // distinction: the selector uses `shield_outlined`.
+    final badge = find
+        .ancestor(
+          of: find.byIcon(Icons.shield_rounded),
+          matching: find.byType(Row),
+        )
+        .first;
+    expect(find.descendant(of: badge, matching: find.text('HALF')),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the Report carries the policy and the premium after it closes',
+      (WidgetTester tester) async {
+    final store = FaithfulUniverse(_universe());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    final reloaded = await store.loadUniverse();
+    final placed = PlanetTradeService.createOrder(
+      planet: reloaded.first.planets.single,
+      universe: reloaded,
+      playerId: 'p1',
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      volume: 10000,
+      actorFaction: 'trader',
+      insurance: TradeInsurance.full,
+    );
+    expect(placed.premium, greaterThan(0));
+    for (var i = 0;
+        i < 20 && reloaded.first.planets.single.tradeJobs.isNotEmpty;
+        i++) {
+      PlanetTradeService.advanceAll(reloaded, rng: _rng);
+    }
+    await store.saveUniverse(reloaded);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    final report = find.byKey(const Key('market-report'));
+    await tester.scrollUntilVisible(report, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(report);
+    await tester.pumpAndSettle();
+
+    // The premium is the figure a player cannot otherwise recover: it appears in
+    // the quote before payment and, without the record, nowhere afterwards.
+    expect(find.textContaining('cover cost'), findsOneWidget);
+    expect(find.textContaining('cr'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a covered order row still fits a 430px phone',
+      (WidgetTester tester) async {
+    // The badge is a **third** fixed-width item between two flexible ones on a row
+    // that was already tight. Overflow here is invisible until you render it —
+    // `Expanded` absorbs the shortfall, so nothing fails, the name wraps to one
+    // character per line, and the card grows instead. So: measure.
+    tester.view.physicalSize = const Size(430 * 3, 900 * 3);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final store = FaithfulUniverse(_twoSidedUniverse());
+    UniverseStorage.instanceForTest = store;
+    await _pumpMarket(tester,
+        enabled: true, player: _player(), onUpdate: (_) {});
+
+    final reloaded = await store.loadUniverse();
+    PlanetTradeService.createOrder(
+      planet: reloaded.first.planets.single,
+      universe: reloaded,
+      playerId: 'p1',
+      commodity: 'industrial',
+      direction: TradeDirection.sell,
+      volume: 4000,
+      actorFaction: 'trader',
+      insurance: TradeInsurance.full,
+    );
+    await store.saveUniverse(reloaded);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    final badge = find
+        .ancestor(
+          of: find.byIcon(Icons.shield_rounded),
+          matching: find.byType(Row),
+        )
+        .first;
+    await tester.scrollUntilVisible(badge, 200);
+    await tester.pumpAndSettle();
+    // No `RenderFlex` overflow anywhere on the screen.
+    expect(tester.takeException(), isNull);
+    // And the name has not been squeezed to a vertical column of characters.
+    final name = tester.getRect(find.textContaining('Sell Industrial').first);
+    expect(name.height, lessThan(30),
+        reason: 'a collapsed column is a wrap, not an overflow');
     expect(tester.takeException(), isNull);
   });
 }

@@ -125,6 +125,32 @@ Widget _orderRow(TradeOrderRecord o, ColorScheme cs) {
                     const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ),
+            // The policy, on the **header** line rather than the status line: it
+            // was a property of the order when it was placed, while everything on
+            // the second line is the outcome. Mixing them buries what was bought
+            // among what happened.
+            if (o.insurance != TradeInsurance.none)
+              Tooltip(
+                message: '${o.insurance.label} cover'
+                    '${o.premium > 0 ? ' — ${compact(o.premium)} cr paid' : ''}',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.shield_rounded,
+                        size: 12, color: Colors.teal.shade300),
+                    const SizedBox(width: 2),
+                    Text(
+                      o.insurance.label.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                        color: Colors.teal.shade300,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
         Padding(
@@ -132,7 +158,11 @@ Widget _orderRow(TradeOrderRecord o, ColorScheme cs) {
           child: Text(
             '${o.status} · ${compact(o.unitsDelivered)} delivered'
             '${shortfall.isEmpty ? '' : ' · $shortfall'}'
-            '${o.runs > 0 ? ' · ${o.runs} runs' : ''}',
+            '${o.runs > 0 ? ' · ${o.runs} runs' : ''}'
+            // What the cover cost, on the order that carries it. Without this the
+            // premium appears once — in the quote, before payment — and then
+            // nowhere at all, which reads as having been free.
+            '${o.premium > 0 ? ' · cover cost ${compact(o.premium)} cr' : ''}',
             maxLines: 2,
             style: TextStyle(fontSize: 11, color: tone),
           ),
@@ -163,8 +193,11 @@ Widget _runRow(TradeIncident i, ColorScheme cs) {
     TradeRunOutcome.delivered => 'Delivered',
     TradeRunOutcome.lost => 'LOST — ${i.cause?.label ?? 'cause unrecorded'}'
         // Cover paid back is named here as well as in the log line: the log is a
-        // 200-entry ring, and this is the record the player comes back to.
-        '${i.insuredUnits > 0 ? ' · cover returned ${compact(i.insuredUnits)}' : ''}',
+        // 200-entry ring, and this is the record the player comes back to. The
+        // **level** is named too — "5.0K back" reads as a full refund under a half
+        // policy, and a run ledger that overstates the player's position is the
+        // exact defect the order row's counter had.
+        '${i.insuredUnits > 0 ? ' · ${i.insurance.label} cover returned ${compact(i.insuredUnits)}' : ''}',
     TradeRunOutcome.delayed => 'DIVERTED — '
         '${i.cause?.label ?? 'rerouted'} (+${i.delayTicks}t)',
     TradeRunOutcome.seized => 'PARTIAL — ${compact(i.deliveredUnits)} of '
