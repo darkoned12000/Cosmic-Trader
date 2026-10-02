@@ -233,6 +233,21 @@ void _t8OutcomeClasses() {
       }
     }
 
+    /// A plan only — no reservation, no job. The premium guards are about
+    /// arithmetic over a plan, and placing an order to get one would make the
+    /// fixture depend on the reservation path too.
+    TradePlan planFor(
+        (Planet, List<Sector>) r, TradeDirection dir, int volume) {
+      final (planet, universe) = r;
+      return PlanetTradeService.plan(
+        universe: universe,
+        planet: planet,
+        commodity: 'minerals',
+        direction: dir,
+        volume: volume,
+      );
+    }
+
     test('every cause declares a non-delivered outcome', () {
       // The rule lives on the enum so the weights and the consequence cannot
       // drift apart — a reroute that also destroyed the cargo would be a lie in
@@ -413,7 +428,7 @@ void _t8OutcomeClasses() {
         expect(job.escrowedReleased, lessThan(escrowed));
         expect(job.escrowOutstanding, escrowed - job.escrowedReleased);
         // Measured from **after** the reservation, which had already debited the
-        // port: comparing against the pre-order figure reads as a 630,000-credit
+        // port: comparing against the pre-order figure reads as a whole-escrow
         // hole when it is the slice correctly going back.
         expect(r.portSector.port!.portCredits,
             closeTo(creditsAfterOrder + job.escrowedReleased, 0.001));
@@ -439,7 +454,6 @@ void _t8OutcomeClasses() {
         // Exact in both directions. A double refund shows as credits *above* the
         // starting figure, which is why this is an equality and not a bound.
         expect(r.portSector.port!.portCredits, r.creditsBefore);
-        // All of it, across the two releases — not the escrow plus a slice.
         expect(job.escrowedReleased, job.escrowed);
         expect(job.escrowOutstanding, 0);
         // Sanity on the fixture: the order really did move money, so the equality
@@ -612,6 +626,276 @@ void _t8OutcomeClasses() {
             'seizedUnits': 999,
           }).deliveredUnits,
           0);
+    });
+
+    group('T10 freight cover', () {
+      test('the premium is derived from the order\'s own risk', () {
+        // Same coverage, two routes: a near port and a far one. If cover were a
+        // flat rate these would be equal, and the player would have no reason to
+        // read the distance as the thing worth paying for.
+        final near = planFor(route(hops: 1), TradeDirection.buy, 4000);
+        final far = planFor(route(hops: 4), TradeDirection.buy, 4000);
+        expect(PlanetTradeService.orderRiskFraction(near),
+            lessThan(PlanetTradeService.orderRiskFraction(far)));
+        expect(PlanetTradeService.premiumFor(near, TradeInsurance.full),
+            lessThan(PlanetTradeService.premiumFor(far, TradeInsurance.full)));
+        // No cover, no premium — and no risk, no cost. A same-sector run cannot be
+        // lost, so insuring it must be free or the premium is lying about the risk.
+        final sameSector = planFor(
+            route(hops: 0, port: PortClass.free), TradeDirection.buy, 4000);
+        expect(PlanetTradeService.orderRiskFraction(sameSector), 0.0);
+        expect(
+            PlanetTradeService.premiumFor(sameSector, TradeInsurance.full), 0);
+      });
+
+      test(
+          'the premium covers more than the expected loss, or it is not a policy',
+          () {
+        // At exactly the expected loss a policy is a fair bet with no edge and no
+        // reason to exist. This pins the *relationship* rather than the number, so
+        // a retune of the margin does not break it and a margin of 0 does.
+        final plan = planFor(route(hops: 4), TradeDirection.buy, 10000);
+        var value = 0;
+        for (final a in plan.allocations) {
+          value += a.units * a.unitPrice;
+        }
+        final risk = PlanetTradeService.orderRiskFraction(plan);
+        expect(risk, greaterThan(0.0));
+        final premium =
+            PlanetTradeService.premiumFor(plan, TradeInsurance.full);
+        expect(premium, greaterThan((value * risk).round()));
+        // And coverage scales the premium monotonically, so Half is never dearer
+        // than Full — the obvious relation, and one a bad table could invert.
+        final none = PlanetTradeService.premiumFor(plan, TradeInsurance.none);
+        final half = PlanetTradeService.premiumFor(plan, TradeInsurance.half);
+        expect(none, 0);
+        expect(half, lessThan(premium));
+        expect(half, greaterThan(0));
+      });
+
+      test('cover pays out on a destroyed run, in the right currency', () {
+        // A **buy** is indemnified in credits: the pilot prepaid for goods that no
+        // longer exist.
+        // **Not** `place()`: that helper already places an order, and the second
+        // one below would then resolve *after* it — or, on a sell, never be created
+        // at all because the store was already drained. Either way the guard would
+        // read the uninsured job's incident and pass on `insuredUnits == 0`. That is
+        // exactly what happened: fault injection passed against this test with the
+        // payout deleted.
+        final (planet, universe) = route(anomaly: true);
+        final placed = PlanetTradeService.createOrder(
+          planet: planet,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 4000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.full,
+        );
+        final job = placed.jobs.single;
+        expect(job.insurance, TradeInsurance.full);
+        expect(job.premiumPaid, greaterThan(0));
+
+        final before = PlanetTradeService.indemnityOwed['p1'] ?? 0;
+        final run = resolve(planet, universe, _LastCauseRandom());
+        expect(run.outcome, TradeRunOutcome.lost);
+        expect(run.insuredUnits, run.units,
+            reason: 'full cover returns the whole destroyed run');
+        // **The tally is owed, not paid**: the tick resolves runs and must never
+        // write a player, so the credit is queued for the shell to drain.
+        expect(PlanetTradeService.takeIndemnityFor('p1') - before,
+            run.units * job.unitPrice);
+        expect(planet.storedMinerals, 0);
+        // Nothing was deposited: a buy's indemnity is credits, not goods, and
+        // putting them in the store would double-count the loss as a delivery.
+        expect(planet.storedMinerals, 0);
+      });
+
+      test('a sell is indemnified in GOODS, not revenue', () {
+        // The price was never the world's to collect. Paying out the sale value
+        // would be paying for a sale that did not happen, and it would make a sell
+        // strictly better than a buy.
+        final (sell, universe) = route(anomaly: true, stock: 4000);
+        final placed = PlanetTradeService.createOrder(
+          planet: sell,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.sell,
+          volume: 4000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.full,
+        );
+        // The fixture has to actually place, or the payout branch is never reached
+        // and every assertion below reads zero against zero.
+        expect(placed.jobs, hasLength(1));
+        expect(placed.jobs.single.isInsured, isTrue);
+        final run = resolve(sell, universe, _LastCauseRandom());
+        expect(run.outcome, TradeRunOutcome.lost);
+        // The goods come back to the store...
+        expect(sell.storedMinerals, run.insuredUnits);
+        // ...and no credits are owed, because nothing was ever sold.
+        expect(PlanetTradeService.takeIndemnityFor('p1'), 0);
+        expect(sell.accumulatedRevenue, 0);
+      });
+
+      test('cover does NOT pay on a seizure', () {
+        // The one exclusion that gives the policy a decision in it. Customs is a
+        // legal consequence of the route; a policy that covered it would be a flat
+        // refund with a premium attached.
+        final (r, universe) = route(port: PortClass.federal);
+        PlanetTradeService.createOrder(
+          planet: r,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 4000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.full,
+        );
+        final run = resolve(r, universe, _LastCauseRandom());
+        expect(run.outcome, TradeRunOutcome.seized);
+        expect(run.insuredUnits, 0);
+        expect(PlanetTradeService.takeIndemnityFor('p1'), 0);
+      });
+
+      test('an uncovered order behaves exactly as before', () {
+        // The default has to be a genuine no-op, or every existing order silently
+        // gains a benefit. `none` means coverage 0, so the payout branch is dead.
+        final r = place(route(anomaly: true), direction: TradeDirection.buy);
+        final placed = PlanetTradeService.createOrder(
+          planet: r.planet,
+          universe: r.universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 4000,
+          actorFaction: 'trader',
+        );
+        expect(placed.premium, 0);
+        expect(placed.jobs.single.premiumPaid, 0);
+        expect(placed.jobs.single.isInsured, isFalse);
+        final run = resolve(r.planet, r.universe, _LastCauseRandom());
+        expect(run.outcome, TradeRunOutcome.lost);
+        expect(run.insuredUnits, 0);
+        expect(PlanetTradeService.takeIndemnityFor('p1'), 0);
+      });
+
+      test('a split order pays one premium, split exactly across its shares',
+          () {
+        // Per-share pricing would make the cost depend on how the planner happened
+        // to split the order, so two identical orders could cost different amounts
+        // for the same cover. The parts must sum to the whole, including rounding.
+        final (planet, universe) = route(hops: 1);
+        final near = universe.lastWhere((s) => s.port != null);
+        const shelf = 4000;
+        near.port = near.port!.copyWith(
+          supply: const {'minerals': shelf},
+          maxSupply: const {'minerals': shelf},
+        );
+        universe.add(Sector(
+          id: 9,
+          name: 'Other',
+          x: 9,
+          y: 9,
+          warpRoutes: const [1],
+          pirateCount: 0,
+          port: near.port!.copyWith(
+            name: 'Second',
+            supply: const {'minerals': shelf},
+            maxSupply: const {'minerals': shelf},
+          ),
+        ));
+        final placed = PlanetTradeService.createOrder(
+          planet: planet,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 6000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.full,
+        );
+        expect(placed.jobs.length, greaterThan(1));
+        expect(placed.premium, greaterThan(0));
+        // The invariant: the shares' premiums sum to the order's, to the credit.
+        expect(placed.jobs.fold<int>(0, (a, j) => a + j.premiumPaid),
+            placed.premium);
+        expect(placed.jobs.every((j) => j.insurance == TradeInsurance.full),
+            isTrue);
+      });
+
+      test('the indemnity tally drains, and only for its own pilot', () {
+        // Two facts in one: draining is destructive (a second read is zero), and
+        // the pot is keyed by player. A shared pot would credit whichever pilot
+        // happened to render next.
+        PlanetTradeService.indemnityOwed['a'] = 500;
+        PlanetTradeService.indemnityOwed['b'] = 700;
+        expect(PlanetTradeService.takeIndemnityFor('a'), 500);
+        expect(PlanetTradeService.takeIndemnityFor('a'), 0,
+            reason:
+                'a read that does not drain pays the same refund every poll');
+        expect(PlanetTradeService.takeIndemnityFor('b'), 700);
+        expect(PlanetTradeService.indemnityOwed, isEmpty);
+        expect(PlanetTradeService.takeIndemnityFor('nobody'), 0);
+      });
+
+      test('cover survives a reload', () {
+        final (planet, universe) = route(hops: 2);
+        PlanetTradeService.createOrder(
+          planet: planet,
+          universe: universe,
+          playerId: 'p1',
+          commodity: 'minerals',
+          direction: TradeDirection.buy,
+          volume: 4000,
+          actorFaction: 'trader',
+          insurance: TradeInsurance.half,
+        );
+        final back = Planet.fromJson(planet.toJson()).tradeJobs.single;
+        expect(back.insurance, TradeInsurance.half);
+        expect(back.isInsured, isTrue);
+        expect(back.premiumPaid, greaterThan(0));
+        // A pre-cover save reads as uncovered, which is the honest reading: the
+        // order was placed when cover did not exist.
+        final legacy = TradeJob.fromJson(const {
+          'playerId': 'p1',
+          'planetId': 'w1',
+          'portSectorId': 2,
+          'unitsTotal': 100,
+        });
+        expect(legacy.insurance, TradeInsurance.none);
+        expect(legacy.premiumPaid, 0);
+      });
+
+      test('the shell drains the indemnity every tick', () async {
+        // A source scan, which is normally the wrong tool — and the right one here,
+        // for a structural fact: that the credit is settled somewhere at all. No
+        // behaviour test can see the *absence* of a call, and a refund that is
+        // counted and never paid is exactly that: correct arithmetic that silently
+        // vanishes, with no error anywhere.
+        //
+        // Driving `GameShell` would be the alternative, and it is a large fixture
+        // for a one-line question. Same shape and same precedent as
+        // `gravity_wiring_test.dart`.
+        final file = await _File('lib/screens/game_shell.dart').readAsString();
+        expect(file, contains('takeIndemnityFor'),
+            reason:
+                'nothing credits the pilot, so a refund is computed and lost');
+        // **Called, not merely declared.** The first version asserted
+        // `contains('_applyFreightIndemnity()')`, which the *definition* satisfies
+        // on its own — so commenting out the call site left it green. Fault
+        // injection is the only reason that is known. Counting occurrences is the
+        // cheapest way to say "a declaration and a call", and the count is
+        // asserted rather than the string so a rename cannot quietly satisfy it.
+        expect('_applyFreightIndemnity()'.allMatches(file).length,
+            greaterThanOrEqualTo(2),
+            reason: 'the drain must be declared *and* called from the tick');
+        // And the shell must not touch the tally directly — one place owns it.
+        expect(file, isNot(contains('indemnityOwed')));
+      });
     });
   });
 }

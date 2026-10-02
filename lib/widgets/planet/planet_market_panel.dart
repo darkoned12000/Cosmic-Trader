@@ -49,8 +49,8 @@ class PlanetMarketPanel extends StatefulWidget {
   final int credits;
 
   /// Places an order. The screen charges the credits and writes.
-  final void Function(String type, TradeDirection direction, int amount)
-      onPlaceOrder;
+  final void Function(String type, TradeDirection direction, int amount,
+      TradeInsurance cover) onPlaceOrder;
 
   /// Cancels every share of one request. The screen refunds and writes.
   final void Function(String orderId) onCancelOrder;
@@ -75,6 +75,16 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
   };
 
   static const _marketCommodities = ['minerals', 'organics', 'industrial'];
+
+  /// How much cover the **next** order is bought with.
+  ///
+  /// One control for the card rather than one per commodity row. It is a policy,
+  /// not a per-order quantity: a player who wants cover wants it on the next
+  /// thing they buy, and three identical tri-state controls down the side of the
+  /// card would be three answers to one question. Per-row would also put three
+  /// different premiums on screen at once, which is a comparison nobody asked
+  /// for and cannot act on.
+  TradeInsurance _cover = TradeInsurance.none;
 
   /// Smallest order the amount field holds, and the floor every "max" falls back
   /// to, so an empty market leaves a placeable number rather than zero.
@@ -122,6 +132,8 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
             ),
             const SizedBox(height: 8),
             widget.treasury,
+            const SizedBox(height: 8),
+            _coverRow(cs),
             const SizedBox(height: 8),
             for (final type in _marketCommodities) ...[
               _marketRow(type, planet, cs),
@@ -175,6 +187,93 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
     );
   }
 
+  /// The cover policy, as one row of three.
+  ///
+  /// `SegmentedButton` rather than a dropdown: three options, all of them
+  /// relevant on every order, and a dropdown would hide the choice behind a tap
+  /// to discover that there are three. Each chip carries what it means —
+  /// `HALF` is "half of what is lost", not "half off" — because the difference
+  /// between the two readings is the whole purchase.
+  Widget _coverRow(ColorScheme cs) {
+    return Row(
+      children: [
+        Icon(Icons.shield_outlined, size: 12, color: cs.onSurface),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            'Freight cover',
+            style: TextStyle(
+              fontSize: 10,
+              color: cs.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+        ),
+        for (final level in TradeInsurance.values)
+          Padding(
+            padding: const EdgeInsets.only(left: 3),
+            child: _coverChip(level, cs),
+          ),
+      ],
+    );
+  }
+
+  Widget _coverChip(TradeInsurance level, ColorScheme cs) {
+    final selected = _cover == level;
+    // A zero-risk route is free to insure, and saying so is the point: it is
+    // what teaches that the premium is priced off *this* order's distance.
+    final free = level != TradeInsurance.none && _nearestPlanRisk() == 0.0;
+    final label = switch (level) {
+      TradeInsurance.none => 'NONE',
+      TradeInsurance.half => 'HALF',
+      TradeInsurance.full => 'FULL',
+    };
+    return InkWell(
+      key: Key('market-cover-${level.name}'),
+      onTap: () => setState(() => _cover = level),
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: selected
+              ? Colors.teal.withValues(alpha: 0.2)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color:
+                selected ? Colors.teal : cs.onSurface.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Text(
+          free ? '$label · FREE' : label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'monospace',
+            color: selected ? Colors.teal : cs.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The lowest risk on the card right now, used only to decide whether the
+  /// FREE badge is honest.
+  ///
+  /// Cheap and honest, but note what it is *not*: the premium is still priced
+  /// per row from that row's own plan. A badge is a hint about the cheapest
+  /// route on screen, not a promise about the order being placed.
+  double _nearestPlanRisk() {
+    var lowest = 1.0;
+    for (final type in _marketCommodities) {
+      final plan = _plan(type, TradeDirection.buy, _marketAmounts[type] ?? 1000,
+          widget.planet);
+      if (plan.allocations.isEmpty) continue;
+      final risk = PlanetTradeService.orderRiskFraction(plan);
+      if (risk < lowest) lowest = risk;
+    }
+    return lowest;
+  }
+
   Widget _marketRow(String type, Planet planet, ColorScheme cs) {
     final stored = planet.storedFor(type);
     final amount = _marketAmounts[type] ?? 1000;
@@ -196,16 +295,30 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
         sellTotal += s.units * s.unitPrice;
       }
     }
+    // The premium is priced from the **same** risk figure the quote prints, so
+    // the two can never disagree — and the buy button is gated on the sum, since
+    // cover you cannot afford is not cover.
+    final buyPremium = PlanetTradeService.premiumFor(buyPlan, _cover);
+    final sellPremium =
+        sellPlan == null ? 0 : PlanetTradeService.premiumFor(sellPlan, _cover);
     final canBuy = buyPlan.unitsAllocated > 0 &&
-        widget.credits >= buyTotal &&
+        widget.credits >= buyTotal + buyPremium &&
         buyTotal > 0;
-    final canSell = sellPlan != null && sellPlan.unitsAllocated > 0;
+    // **Cover is charged on a sell too**, so a pilot who cannot pay the premium
+    // must be told why rather than discovering it as a refund.
+    final canSell = sellPlan != null &&
+        sellPlan.unitsAllocated > 0 &&
+        widget.credits >= sellPremium;
     final buyDisabledReason = buyPlan.unitsAllocated <= 0
         ? 'No port is selling $label right now'
-        : 'Need ${compact(buyTotal)} cr for that order';
+        : buyPremium > widget.credits - buyTotal
+            ? 'Need ${compact(buyTotal + buyPremium)} cr including cover'
+            : 'Need ${compact(buyTotal + buyPremium)} cr for that order';
     final sellDisabledReason = sellVolume <= 0
         ? 'Nothing stored to sell'
-        : 'No port is buying $label right now';
+        : sellPremium > widget.credits
+            ? 'Not enough credits for the cover premium'
+            : 'No port is buying $label right now';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -346,11 +459,11 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
             ),
             const Spacer(),
             PlanetMiniButton('Buy', Colors.blue, canBuy, () {
-              widget.onPlaceOrder(type, TradeDirection.buy, amount);
+              widget.onPlaceOrder(type, TradeDirection.buy, amount, _cover);
             }, key: Key('market-buy-$type'), disabledReason: buyDisabledReason),
             const SizedBox(width: 4),
             PlanetMiniButton('Sell', Colors.orange, canSell, () {
-              widget.onPlaceOrder(type, TradeDirection.sell, amount);
+              widget.onPlaceOrder(type, TradeDirection.sell, amount, _cover);
             },
                 key: Key('market-sell-$type'),
                 disabledReason: sellDisabledReason),
@@ -358,8 +471,8 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
         ),
         const SizedBox(height: 2),
         Text(
-          _marketPreview(
-              buyPlan, buyTotal, sellPlan, sellTotal, sellVolume, _portNames()),
+          _marketPreview(buyPlan, buyTotal, sellPlan, sellTotal, sellVolume,
+              _portNames(), buyPremium, sellPremium),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -376,8 +489,15 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
   /// reservation and the player should see the shortfall while it is still
   /// a quote. Ports are named, not counted: "1 port(s)" says where to look
   /// without saying what it is called.
-  String _marketPreview(TradePlan buyPlan, int buyTotal, TradePlan? sellPlan,
-      int sellTotal, int sellVolume, Map<int, String> portNames) {
+  String _marketPreview(
+      TradePlan buyPlan,
+      int buyTotal,
+      TradePlan? sellPlan,
+      int sellTotal,
+      int sellVolume,
+      Map<int, String> portNames,
+      int buyPremium,
+      int sellPremium) {
     String portsOf(TradePlan p) {
       final names = [
         for (final a in p.allocations)
@@ -388,37 +508,34 @@ class _PlanetMarketPanelState extends State<PlanetMarketPanel> {
       return ' · ${names.first} +${names.length - 1} more';
     }
 
-    // Per-run loss risk across the order, as a percentage: a chance a run is
-    // intercepted on the way. Shown on the quote so a failure is a risk the
-    // player *accepted* (the design's requirement — a silent loss reads as a
-    // bug) and so splitting a large order into smaller ones is visibly worth
-    // something. `1 - Π(1 - p)` over the order's runs, so it is the chance of
-    // losing at least one run, not per-run.
+    // The order's loss risk, from the **service** — it used to be computed here,
+    // and the premium is priced from the same figure, so two copies would be two
+    // chances for the cover to be sold against a different risk than the one on
+    // screen.
     String riskOf(TradePlan p) {
-      if (p.allocations.isEmpty) return '';
-      var survive = 1.0;
-      for (final a in p.allocations) {
-        final runs = (a.units / PlanetTradeService.freighterHold).ceil();
-        for (var r = 0; r < runs; r++) {
-          survive *= 1 - PlanetTradeService.failureChanceForHops(a.hops);
-        }
-      }
-      final pct = ((1 - survive) * 100).round();
+      final pct = (PlanetTradeService.orderRiskFraction(p) * 100).round();
       if (pct <= 0) return '';
       return ' · $pct% run risk';
+    }
+
+    // The premium, on the same line as the risk it is priced from, so the
+    // relationship is visible: cover costs roughly twice the chance it removes.
+    String coverOf(int premium) {
+      if (_cover == TradeInsurance.none || premium <= 0) return '';
+      return ' · cover ${compact(premium)} cr';
     }
 
     final buy = buyPlan.unitsAllocated <= 0
         ? 'Buy: no port selling'
         : 'Buy ${compact(buyPlan.unitsAllocated)} → ${compact(buyTotal)} cr'
-            '${portsOf(buyPlan)}${riskOf(buyPlan)}'
+            '${portsOf(buyPlan)}${riskOf(buyPlan)}${coverOf(buyPremium)}'
             '${buyPlan.shortfall > 0 ? ' · short ${compact(buyPlan.shortfall)}' : ''}';
     final sell = sellVolume <= 0
         ? 'Sell: nothing stored'
         : sellPlan == null || sellPlan.unitsAllocated <= 0
             ? 'Sell: no port buying'
             : 'Sell ${compact(sellPlan.unitsAllocated)} → ${compact(sellTotal)} cr'
-                '${portsOf(sellPlan)}${riskOf(sellPlan)}'
+                '${portsOf(sellPlan)}${riskOf(sellPlan)}${coverOf(sellPremium)}'
                 '${sellPlan.shortfall > 0 ? ' · short ${compact(sellPlan.shortfall)}' : ''}';
     return '$buy\n$sell';
   }

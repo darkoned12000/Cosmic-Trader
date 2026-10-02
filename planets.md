@@ -806,7 +806,7 @@ existing planet phases. T7 and T8 are deferred by decision, not by dependency.
 | **T7b** | **A loss must be visible, named and countable.** Per-run ledger, per-job delivered/lost, a Report. | Medium | T7 | **DONE.** The counter could not lie: delivered/lost/remaining partition the order exactly, and the guard asserts the *number*, not the marker beside it |
 | **T8** | **Four outcome classes.** Destroyed / delayed / seized / delivered, and the reservation accounting each implies. | Medium | T7 | **DONE.** The cause→outcome rule lives on the enum, so weights and consequences cannot drift. Zero-weight causes are a promise kept by arithmetic |
 | **T9** | **Order history.** A finished order keeps its totals after its jobs are gone. | Small | T8 | **DONE.** Bounded at ten per world; a split order records **one** order naming every port it touched |
-| **T10** | **Insurance.** Per-order premium quoted beside the run risk, covering lost runs. | Medium | T8 | Open. With all four classes shipped there is finally something for a policy to *select* |
+| **T10** | **Freight cover.** A per-order premium, quoted beside the run risk, indemnifying destroyed runs. | Medium | T8 | **DONE.** Indemnity, not prevention; the premium is derived from the order's own risk so a short route is free to insure; seizures are excluded |
 | **T11** | **Convoy escorts / manual port choice / cost-based routing.** | Large | T8-T10 | Deferred by decision. See the note above |
 
 **A job row needs a per-run countdown, not just a run count.** A run is minutes
@@ -2902,3 +2902,70 @@ truncated to ten entries and a sixteen-run order's early runs are long gone.
   **copied**: both move units into `player.cargo` and respect `maxCargo`
 - `lib/widgets/sector_view_widgets/sector_interaction_panel.dart` — one of the two
   **call sites** of `ScanService`, plus the planet detail dialog
+
+### T10 — freight cover, for a feature the player uses as a time saver
+
+The framing decision came first: **planetary trade is a convenience system**, not
+a strategic one — "I do not want to haul 80,000 minerals myself" — and the
+citadel levels that would give trade a second axis are not settled. That answer
+changed three decisions, and getting any of them wrong would have built the
+strategic version by accident.
+
+- **Indemnity, not prevention.** Cover refunds a run that is destroyed; it does
+  not make runs safer. If it lowered the failure chance instead, the `N% run
+  risk` the player accepted would no longer be the risk they got, and the quote
+  would have to recompute itself with the premium attached. A number that changes
+  meaning when you buy something is a number nobody can reason about.
+- **The premium is derived from the order's own risk**, not a flat rate:
+  `orderRisk × coverage × 1.6`. Two consequences, both wanted — a same-sector
+  order (0% risk) is **free** to insure, and a long haul is expensive, so the
+  premium is itself a statement about the route. A flat rate would overcharge
+  short runs and make cover a bargain on exactly the routes where the player most
+  needs to think.
+- **Seizure is not covered.** Customs is a legal consequence of the route, not an
+  accident of the transit. That single exclusion is what gives the policy
+  anything to decide; cover both and it is a flat refund with a premium attached.
+- **One premium per order, split across its shares by face value.** Per-share
+  pricing would make the cost depend on how the planner happened to split the
+  order, so two identical orders could cost different amounts for the same cover.
+  The shares' premiums sum to the order's, to the credit.
+- **A buy is indemnified in credits, a sell in goods.** The pilot prepaid for
+  goods that no longer exist. A sell gets its cargo back, *not* the revenue it
+  would have earned — the price was never the world's to collect, and paying it
+  out would be paying for a sale that never happened. The premium itself is a
+  credit cost in **both** directions: one path, one visible line, and netting it
+  off a sell's proceeds would hide the price of cover on the one order where the
+  player is watching credits go *up*.
+- **`orderRiskFraction` moved into the service.** The `1 - Π(1-p)` arithmetic
+  lived in the market panel's quote line, and the premium is priced from the same
+  figure. Two copies would be two chances for cover to be sold against a
+  different risk than the one on screen — and the player could not tell, because
+  the quote would still read correctly.
+- **The refund is a tally the shell drains**, keyed by player id, because the
+  tick resolves runs and must never write a player. It is drained in
+  `GameShell.onTickComplete`, **not** in the planet screen's refresh loop: a
+  player who places a big insured order and then flies to the galaxy map would
+  never reopen the Planet tab, and the tally would sit unpaid forever with nothing
+  on screen saying why.
+
+#### Three guards that could not fail, and what they had in common
+
+- **A fixture that placed the order it was measuring a different one from.** Three
+  of the cover guards called `place()` — which *already places an order* — and
+  then placed a second, insured one. On a sell the store was already drained, so
+  the insured order was never created and every assertion read the uninsured job's
+  incident: `insuredUnits == 0`, and "full cover returns the whole run" passed.
+  Fault injection deleted the payout outright and the suite stayed green. **Check
+  whether the fixture can satisfy the condition before trusting a guard that says
+  it does.**
+- **A disabled button is not the same as an order that was refused.** The first
+  Buy-gating guard tapped the button and asserted no order was placed — which the
+  screen's own affordability check guarantees, live button or not. It now reads
+  the control's `enabled` and its `disabledReason`, which is the thing the panel
+  actually promises.
+- **A source scan can match a declaration instead of a call.** The shell-drain
+  guard asserted `contains('_applyFreightIndemnity()')`, and the method's own
+  signature satisfies that on its own — commenting out the call site left it
+  green. It now counts occurrences, so a rename cannot quietly satisfy it
+  either. **A structural guard that names a symbol has to distinguish where the
+  symbol appears.**

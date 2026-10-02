@@ -29,7 +29,9 @@ import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/game_tick_service.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_goal.dart';
 import 'package:cosmic_trader/services/npc_ai/npc_ai_service.dart';
+import 'package:cosmic_trader/core/number_format.dart';
 import 'package:cosmic_trader/services/energy_service.dart';
+import 'package:cosmic_trader/services/planet_trade_service.dart';
 import 'package:cosmic_trader/widgets/combat_screen.dart';
 import 'package:cosmic_trader/widgets/equalizer_widget.dart';
 import 'package:cosmic_trader/widgets/hud_strip.dart';
@@ -78,6 +80,7 @@ class _GameShellState extends State<GameShell> {
       _reloadNpcs();
       _applySolarRecharge();
       _applyColonyReputation();
+      _applyFreightIndemnity();
     };
     _tickService.onTickError = (error) {
       debugPrint('[GameShell] Tick error: $error');
@@ -165,6 +168,27 @@ class _GameShellState extends State<GameShell> {
     if (mounted) {
       ActionLogProvider.global
           .info('Colony work completed — reputation +$owed');
+    }
+  }
+
+  /// Credits owed back for insured runs that were destroyed.
+  ///
+  /// Drained here, on **every** tick, rather than in the planet screen's refresh
+  /// loop. The obvious place — next to the order it concerns — is the wrong one:
+  /// a player who places a big insured order and then flies to the galaxy map
+  /// would never open the Planet tab again, and the tally would sit unpaid
+  /// forever with nothing on screen saying why. The shell is always mounted and
+  /// always has the player, so it is the only place a credit can be settled
+  /// without the player having to look at the right screen.
+  ///
+  /// Keyed by player id in the service, so a second player cannot collect it.
+  void _applyFreightIndemnity() {
+    final owed = PlanetTradeService.takeIndemnityFor(_player.id);
+    if (owed == 0) return;
+    _updatePlayer(_player.copyWith(credits: _player.credits + owed));
+    if (mounted) {
+      ActionLogProvider.global
+          .info('Freight cover paid out — ${compact(owed)} cr returned');
     }
   }
 

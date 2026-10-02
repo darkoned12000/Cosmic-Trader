@@ -1189,8 +1189,8 @@ class _PlanetScreenState extends State<PlanetScreen> {
                   universe: _allSectors,
                   credits: widget.player.credits,
                   treasury: _buildTreasuryVault(planet, cs),
-                  onPlaceOrder: (type, dir, amount) =>
-                      _placeMarketOrder(type, dir, amount, planet),
+                  onPlaceOrder: (type, dir, amount, insurance) =>
+                      _placeMarketOrder(type, dir, amount, planet, insurance),
                   onCancelOrder: (orderId) =>
                       _cancelMarketOrder(planet, orderId),
                 ),
@@ -1649,8 +1649,8 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// the same ordering the colonist purchase uses, for the same reason: a
   /// change made in memory must be visible in memory, and a failed write is
   /// reported rather than silently reverting the purchase a second later.
-  Future<void> _placeMarketOrder(
-      String type, TradeDirection dir, int amount, Planet planet) async {
+  Future<void> _placeMarketOrder(String type, TradeDirection dir, int amount,
+      Planet planet, TradeInsurance insurance) async {
     final home = _currentSector;
     if (home == null || amount <= 0) return;
     if (dir == TradeDirection.sell && _storedFor(type, planet) <= 0) return;
@@ -1663,6 +1663,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
       direction: dir,
       volume: amount,
       actorFaction: widget.player.faction.name,
+      insurance: insurance,
     );
     if (result.jobs.isEmpty) {
       if (!mounted) return;
@@ -1675,23 +1676,25 @@ class _PlanetScreenState extends State<PlanetScreen> {
       );
       return;
     }
-    if (dir == TradeDirection.buy) {
-      if (widget.player.credits < result.spent) {
-        // Affordability is checked before placing, so this is a race with a
-        // concurrent spend rather than a normal path: unwind the whole order
-        // rather than leaving paid-for jobs behind.
-        PlanetTradeService.cancelOrder(planet, _allSectors, result.orderId);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content:
-                  Text('Need ${compact(result.spent)} cr for that order.')),
-        );
-        return;
-      }
-      widget.onPlayerUpdate(widget.player
-          .copyWith(credits: widget.player.credits - result.spent));
+    // The premium is a credit cost in **both** directions. One path, one visible
+    // line, and it is the same currency as everything else on this screen. The
+    // alternative — quietly netting it off a sell's proceeds — would hide the
+    // price of cover on exactly the order where the player is watching credits
+    // go *up*.
+    final due = result.spent + result.premium;
+    if (widget.player.credits < due) {
+      // Affordability is checked before placing, so this is a race with a
+      // concurrent spend rather than a normal path: unwind the whole order
+      // rather than leaving paid-for jobs behind.
+      PlanetTradeService.cancelOrder(planet, _allSectors, result.orderId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Need ${compact(due)} cr for that order.')),
+      );
+      return;
     }
+    widget.onPlayerUpdate(
+        widget.player.copyWith(credits: widget.player.credits - due));
     // Guard the order until the stored universe confirms it (see
     // [_unconfirmedOrders]): a tick snapshot taken before it existed would
     // otherwise erase paid-for jobs without a word.

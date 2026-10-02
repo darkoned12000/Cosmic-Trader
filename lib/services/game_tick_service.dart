@@ -458,11 +458,20 @@ class GameTickService {
               case TradeRunOutcome.delivered:
                 break;
               case TradeRunOutcome.lost:
+                // Whether cover paid out belongs in the same line as the loss. A
+                // silent payout is as bad as a silent loss: the player sees a
+                // warning, then credits they did not earn, and has no way to
+                // connect the two — which is exactly the "it credits, but why"
+                // report this whole feature exists to prevent.
+                final covered = entry.insuredUnits > 0
+                    ? ' Cover returned ${compact(entry.insuredUnits)} of it'
+                        '${entry.direction == TradeDirection.buy ? ' in credits' : ' to stores'}.'
+                    : '';
                 log.warning(
                   'Freight lost: ${compact(entry.units)} '
                   '${entry.job.commodity} bound for $where — '
-                  '${entry.cause?.label ?? 'lost in transit'}. '
-                  'The $verb order continues; these units are gone.',
+                  '${entry.cause?.label ?? 'lost in transit'}.'
+                  '$covered The $verb order continues.',
                 );
               case TradeRunOutcome.delayed:
                 log.info(

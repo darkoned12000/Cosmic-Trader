@@ -161,7 +161,10 @@ Widget _runRow(TradeIncident i, ColorScheme cs) {
   };
   final status = switch (i.outcome) {
     TradeRunOutcome.delivered => 'Delivered',
-    TradeRunOutcome.lost => 'LOST — ${i.cause?.label ?? 'cause unrecorded'}',
+    TradeRunOutcome.lost => 'LOST — ${i.cause?.label ?? 'cause unrecorded'}'
+        // Cover paid back is named here as well as in the log line: the log is a
+        // 200-entry ring, and this is the record the player comes back to.
+        '${i.insuredUnits > 0 ? ' · cover returned ${compact(i.insuredUnits)}' : ''}',
     TradeRunOutcome.delayed => 'DIVERTED — '
         '${i.cause?.label ?? 'rerouted'} (+${i.delayTicks}t)',
     TradeRunOutcome.seized => 'PARTIAL — ${compact(i.deliveredUnits)} of '

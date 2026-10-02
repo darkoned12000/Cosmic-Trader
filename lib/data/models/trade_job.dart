@@ -138,6 +138,22 @@ class TradeJob {
   /// Units of this share still owed back to the port's reservation.
   int get escrowOutstanding => math.max(0, (escrowed ?? 0) - escrowedReleased);
 
+  /// What this order is indemnified for. Fixed at creation, like the price.
+  TradeInsurance insurance = TradeInsurance.none;
+
+  /// Credits charged for [insurance] at order time, in both directions.
+  ///
+  /// Stored rather than recomputed on payout because the premium is a function
+  /// of the **order's risk**, which is a function of the hops and run count as
+  /// they were when the order was placed — and the universe is re-parsed every
+  /// tick, so a later recalculation could read a different route. A premium that
+  /// drifts from the quote the player accepted is worse than no premium at all.
+  int premiumPaid = 0;
+
+  /// Whether this share carries any cover. Read more often than the enum
+  /// comparison, because the payout branch keys on it.
+  bool get isInsured => insurance != TradeInsurance.none;
+
   /// Ticks left in the current run.
   int ticksRemaining;
 
@@ -207,6 +223,8 @@ class TradeJob {
         'unitsLost': unitsLost,
         'unitsSeized': unitsSeized,
         'escrowedReleased': escrowedReleased,
+        'insurance': insurance.name,
+        'premiumPaid': premiumPaid,
         'ticksRemaining': ticksRemaining,
       };
 
@@ -239,7 +257,11 @@ class TradeJob {
       // a save that predates losses has lost nothing.
       ..unitsLost = (json['unitsLost'] as num?)?.toInt() ?? 0
       ..unitsSeized = (json['unitsSeized'] as num?)?.toInt() ?? 0
-      ..escrowedReleased = (json['escrowedReleased'] as num?)?.toInt() ?? 0;
+      ..escrowedReleased = (json['escrowedReleased'] as num?)?.toInt() ?? 0
+      // Absent in every pre-insurance save, and `none` is the correct reading: an
+      // order placed before cover existed was not covered.
+      ..insurance = TradeInsurance.fromName(json['insurance'] as String?)
+      ..premiumPaid = (json['premiumPaid'] as num?)?.toInt() ?? 0;
   }
 
   /// Units that actually reached the world.
@@ -269,6 +291,34 @@ class TradeJob {
   /// reporting it as one figure is why the row can say "5.0K short" without the
   /// player caring whether pirates or customs took it.
   int get unitsShortfall => unitsLost + unitsSeized;
+}
+
+/// How much of a lost run an order is indemnified for, bought at order time.
+///
+/// **Indemnity, not prevention.** Insurance refunds a run that is destroyed; it
+/// does not make the run safer. That distinction is the whole design: if it
+/// lowered the failure chance instead, the `N% run risk` the player accepted
+/// would no longer be the risk they got, and the quote would have to recompute
+/// itself with the premium attached. A number that changes meaning when you buy
+/// something is a number nobody can reason about.
+enum TradeInsurance {
+  none('None', 0.0),
+  half('Half', 0.5),
+  full('Full', 1.0);
+
+  const TradeInsurance(this.label, this.coverage);
+
+  final String label;
+
+  /// Fraction of a destroyed run's units that comes back. Never covers a
+  /// [TradeRunOutcome.seized] run: customs is a legal consequence of the
+  /// route, not an accident of the transit, and covering it would make the
+  /// policy a flat 100% refund with a premium attached. That one exclusion is
+  /// what gives the choice anything to decide.
+  final double coverage;
+
+  static TradeInsurance fromName(String? name) => TradeInsurance.values
+      .firstWhere((i) => i.name == name, orElse: () => TradeInsurance.none);
 }
 
 /// Which way goods move for a [TradeJob].
@@ -366,6 +416,7 @@ class TradeIncident {
     this.cause,
     this.seizedUnits = 0,
     this.delayTicks = 0,
+    this.insuredUnits = 0,
   }) : id = id ?? const Uuid().v4();
 
   final String id;
@@ -404,6 +455,15 @@ class TradeIncident {
   /// Extra ticks bought, for a [TradeRunOutcome.delayed] run. Zero otherwise.
   final int delayTicks;
 
+  /// Units an insurer paid back on a [TradeRunOutcome.lost] run. Zero otherwise,
+  /// and **zero on a seizure by design** — customs is a legal consequence of the
+  /// route, not an accident of the transit.
+  ///
+  /// Recorded because a credit that arrives without an explanation is the thing
+  /// this whole ledger exists to prevent: the player would see a warning, then
+  /// money, and no way to connect them.
+  final int insuredUnits;
+
   /// Units that made it to the world.
   int get deliveredUnits => outcome == TradeRunOutcome.delivered
       ? units
@@ -429,6 +489,7 @@ class TradeIncident {
         'cause': cause?.name,
         'seizedUnits': seizedUnits,
         'delayTicks': delayTicks,
+        'insuredUnits': insuredUnits,
       };
 
   factory TradeIncident.fromJson(Map<String, dynamic> json) {
@@ -476,6 +537,7 @@ class TradeIncident {
               .clamp(0, (json['units'] as num?)?.toInt() ?? 0)
           : 0,
       delayTicks: (json['delayTicks'] as num?)?.toInt() ?? 0,
+      insuredUnits: (json['insuredUnits'] as num?)?.toInt() ?? 0,
     );
   }
 }

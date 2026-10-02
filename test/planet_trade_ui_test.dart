@@ -11,6 +11,7 @@ import 'package:cosmic_trader/data/models/trade_job.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/planet_screen.dart';
 import 'package:cosmic_trader/services/planet_trade_service.dart';
+import 'package:cosmic_trader/widgets/planet/planet_mini_controls.dart';
 import 'package:cosmic_trader/widgets/shared/progress_bar.dart';
 import 'support/storage_fakes.dart';
 
@@ -688,6 +689,72 @@ void main() {
     await tester.tap(report);
     await tester.pumpAndSettle();
     expect(find.textContaining('PARTIAL —'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the Buy button refuses an order whose cover it cannot afford',
+      (WidgetTester tester) async {
+    // **The control's promise, not the handler's.** The panel quotes the premium
+    // in the price line, so a button that ignored it would *look* right and let
+    // the order through; the screen's own affordability check would then unwind
+    // it with a snackbar a moment later. Two numbers for one order, and only the
+    // visible one is the player's.
+    final store = FaithfulUniverse(_twoSidedUniverse());
+    UniverseStorage.instanceForTest = store;
+
+    // **Derived from the fixture, not typed.** The threshold is "enough for the
+    // goods, not enough for the goods plus cover", and a hand-written credit
+    // figure sits inside a narrow band between two prices that move whenever the
+    // economy is retuned — which is how a bound outlives the fixture it was
+    // measured against. The price is read off the same plan the button reads.
+    final universe = await store.loadUniverse();
+    final probe = PlanetTradeService.plan(
+      universe: universe,
+      planet: universe.first.planets.single,
+      commodity: 'minerals',
+      direction: TradeDirection.buy,
+      volume: 1000,
+    );
+    var goods = 0;
+    for (final a in probe.allocations) {
+      goods += a.units * a.unitPrice;
+    }
+    expect(goods, greaterThan(0));
+    expect(PlanetTradeService.premiumFor(probe, TradeInsurance.full),
+        greaterThan(0),
+        reason: 'cover must cost something, or this fixture proves nothing');
+
+    await _pumpMarket(tester,
+        enabled: true, player: _player(credits: goods), onUpdate: (_) {});
+
+    final cover = find.byKey(const Key('market-cover-full'));
+    await tester.scrollUntilVisible(cover, 200);
+    await tester.pumpAndSettle();
+    await tester.tap(cover);
+    await tester.pumpAndSettle();
+
+    // The quote names what the cover costs, so the disabled button is explicable.
+    expect(find.textContaining('cover'), findsWidgets);
+
+    final buy = find.byKey(const Key('market-buy-minerals'));
+    await tester.scrollUntilVisible(buy, 200);
+    await tester.pumpAndSettle();
+    // **The button's own state**, not the outcome. Tapping it and finding no
+    // order proves nothing: the screen's own affordability check unwinds the
+    // order a moment later, so a *live* button produces the same empty universe.
+    // Only the control's `enabled` distinguishes the two.
+    final button = tester.widget<PlanetMiniButton>(buy);
+    expect(button.enabled, isFalse,
+        reason: 'cover the pilot cannot afford must disable the button');
+    // And it says why, because a dead button with no reason reads as a broken
+    // one — the playtest report these controls already produced once.
+    expect(button.disabledReason, contains('including cover'));
+
+    // Nothing is placed, and the tap is inert rather than throwing.
+    await tester.tap(buy, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    final after = await store.loadUniverse();
+    expect(after.first.planets.single.tradeJobs, isEmpty);
     expect(tester.takeException(), isNull);
   });
 }

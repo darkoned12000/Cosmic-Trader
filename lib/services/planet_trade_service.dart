@@ -89,6 +89,96 @@ class PlanetTradeService {
     return (failureChanceBase + failureChancePerHop * hops).clamp(0.0, 1.0);
   }
 
+  /// Credits owed per pilot for insured runs that were destroyed, drained by
+  /// the shell.
+  ///
+  /// **A tally, not a write.** The tick resolves runs and has no player, and the
+  /// one rule about tick-driven money is that the tick must not write one — the
+  /// read-modify-write window that ate colonist recruits. So the service counts,
+  /// the tick leaves it here, and the shell drains it and credits the pilot —
+  /// the same split the citadel-completion reward uses.
+  ///
+  /// Keyed by **player id** rather than faction, because unlike a reputation
+  /// award the indemnity belongs to the pilot who placed the order and to nobody
+  /// else; a single shared pot would credit whichever player happened to render
+  /// next.
+  static final Map<String, int> indemnityOwed = {};
+
+  /// Takes and clears what is owed to [playerId].
+  ///
+  /// Draining rather than reading is load-bearing. A getter that only reads
+  /// would let the same refund be credited on every poll for as long as the app
+  /// ran, which is the per-tick-getter trap in a new costume: the number looks
+  /// right and the side effect is the bug.
+  static int takeIndemnityFor(String playerId) {
+    final owed = indemnityOwed.remove(playerId) ?? 0;
+    return owed;
+  }
+
+  /// Chance that at least one run of [plan] is lost: `1 - Π(1 - p)`.
+  ///
+  /// **One rule, in the service.** This arithmetic used to live in the market
+  /// panel's quote line, and insurance needs the same figure to price itself. Two
+  /// copies of a probability is two chances for the premium to be priced off a
+  /// different risk than the one the player was shown — and the player would
+  /// have no way to tell, because the quote would still read correctly.
+  static double orderRiskFraction(TradePlan plan) {
+    var survive = 1.0;
+    for (final a in plan.allocations) {
+      final runs = (a.units / freighterHold).ceil();
+      for (var r = 0; r < runs; r++) {
+        survive *= 1 - failureChanceForHops(a.hops);
+      }
+    }
+    return (1 - survive).clamp(0.0, 1.0);
+  }
+
+  /// How much the house charges over the expected loss.
+  ///
+  /// One constant, so the two coverage tiers cannot disagree about what cover
+  /// costs — a per-tier table is a second place for the margin to drift, and the
+  /// relationship the player can see ("risk 2%, cover 3%") is worth more than
+  /// tuning each tier separately.
+  ///
+  /// Deliberately not 1.0. At exactly the expected loss a policy is a fair bet
+  /// with no edge and no reason to exist; this is the player's money to lose
+  /// either way, so the premium has to be worth paying for the peace of mind.
+  static const double insuranceMargin = 1.6;
+
+  /// Credits to buy [insurance] on [plan], 0 when uncovered.
+  ///
+  /// **Derived from the order's own risk rather than a flat rate.** Two
+  /// consequences, both wanted: a same-sector order (0% risk) is free to insure,
+  /// which is honest and teaches the risk system, and a long haul is expensive,
+  /// so the premium is itself a statement about the route. A flat rate would
+  /// overcharge short runs and make cover a bargain on exactly the routes where
+  /// the player most needs to think.
+  ///
+  /// The premium is quoted against the order's **face value**, in both
+  /// directions: for a sell that is the revenue the world would have earned.
+  static int premiumFor(TradePlan plan, TradeInsurance insurance) {
+    if (insurance == TradeInsurance.none || plan.allocations.isEmpty) return 0;
+    var value = 0;
+    for (final a in plan.allocations) {
+      value += a.units * a.unitPrice;
+    }
+    final fraction =
+        orderRiskFraction(plan) * insurance.coverage * insuranceMargin;
+    return (value * fraction).round();
+  }
+
+  /// What an insurer pays back for [units] destroyed on an insured [job].
+  ///
+  /// Returns credits for a **buy** — the pilot prepaid for goods that no longer
+  /// exist — and **units** for a sell, because indemnity restores the asset, not
+  /// the market price. A seller whose cargo is destroyed gets their minerals
+  /// back, not the credits they would have earned: the price was never theirs to
+  /// collect, and paying it out would be paying for a sale that did not happen.
+  static int indemnityUnits(TradeJob job, int units) {
+    if (!job.isInsured) return 0;
+    return (units * job.insurance.coverage).round();
+  }
+
   /// How much weight each cause carries on a route, so a loss can explain
   /// *itself*.
   ///
@@ -267,6 +357,7 @@ class PlanetTradeService {
         int deliveredUnits,
         int seizedUnits,
         int delayTicks,
+        int insuredUnits,
         TradeRunOutcome outcome,
         TradeFailureCause? cause,
         TradeDirection direction
@@ -279,6 +370,7 @@ class PlanetTradeService {
       int deliveredUnits,
       int seizedUnits,
       int delayTicks,
+      int insuredUnits,
       TradeRunOutcome outcome,
       TradeFailureCause? cause,
       TradeDirection direction
@@ -312,6 +404,7 @@ class PlanetTradeService {
           var deliveredUnits = units;
           var seizedUnits = 0;
           var delayTicks = 0;
+          var insuredUnits = 0;
 
           if (!failed) {
             _applyLanding(planet, job, units);
@@ -364,6 +457,25 @@ class PlanetTradeService {
               case TradeRunOutcome.lost:
                 job.unitsLost += units;
                 deliveredUnits = 0;
+                // Indemnity, on the **lost** branch only. A seizure is not
+                // covered: customs is a legal consequence of the route, not an
+                // accident of the transit, and a policy that paid out on both
+                // would be a flat refund with a premium attached.
+                insuredUnits = indemnityUnits(job, units);
+                if (insuredUnits > 0) {
+                  if (job.direction == TradeDirection.buy) {
+                    // The pilot prepaid for goods that no longer exist. Owed, not
+                    // paid: see [indemnityOwed].
+                    indemnityOwed[job.playerId] =
+                        (indemnityOwed[job.playerId] ?? 0) +
+                            insuredUnits * job.unitPrice;
+                  } else {
+                    // A sell is indemnified in **goods**, not revenue: the price
+                    // was never the world's to collect, and paying it out would
+                    // be paying for a sale that never happened.
+                    planet.deposit(job.commodity, insuredUnits);
+                  }
+                }
                 // The reservation slice comes back to the port. Previously the
                 // whole thing stayed consumed, which leaked on every loss: the
                 // world lost the goods, the port lost the demand slot *and* the
@@ -401,6 +513,7 @@ class PlanetTradeService {
               cause: cause,
               seizedUnits: seizedUnits,
               delayTicks: delayTicks,
+              insuredUnits: insuredUnits,
             ),
           );
 
@@ -417,6 +530,7 @@ class PlanetTradeService {
             deliveredUnits: deliveredUnits,
             seizedUnits: seizedUnits,
             delayTicks: delayTicks,
+            insuredUnits: insuredUnits,
             outcome: outcome,
             cause: cause,
             direction: job.direction,
@@ -694,6 +808,7 @@ class PlanetTradeService {
     String orderId,
     List<TradeJob> jobs,
     int spent,
+    int premium,
     int placedUnits,
     int shortfall,
     List<int> portSectorIds,
@@ -705,6 +820,7 @@ class PlanetTradeService {
     required TradeDirection direction,
     required int volume,
     required String actorFaction,
+    TradeInsurance insurance = TradeInsurance.none,
   }) {
     final clamped = direction == TradeDirection.sell
         ? (volume < planet.storedFor(commodity)
@@ -722,7 +838,24 @@ class PlanetTradeService {
     final touched = <int>{};
     var spent = 0;
     var placedUnits = 0;
-    for (final share in planResult.allocations) {
+
+    // One premium for the **order**, split across its shares by face value.
+    //
+    // Per-share pricing would make the total depend on how the planner happened
+    // to split it — two identical orders split differently would cost different
+    // amounts for the same cover, which is the kind of thing a player notices and
+    // cannot explain. The last share takes the rounding remainder so the parts
+    // always sum to the whole.
+    final premiumTotal = premiumFor(planResult, insurance);
+    var planValue = 0;
+    for (final a in planResult.allocations) {
+      planValue += a.units * a.unitPrice;
+    }
+    var premiumAllocated = 0;
+
+    final shares = planResult.allocations;
+    for (var shareIndex = 0; shareIndex < shares.length; shareIndex++) {
+      final share = shares[shareIndex];
       final reservation = reserveShare(
         universe: universe,
         share: share,
@@ -759,6 +892,15 @@ class PlanetTradeService {
         );
         continue;
       }
+      final isLastShare = shareIndex == shares.length - 1;
+      job.insurance = insurance;
+      job.premiumPaid = isLastShare
+          ? premiumTotal - premiumAllocated
+          : (premiumTotal *
+                  (share.units * share.unitPrice) /
+                  (planValue <= 0 ? 1 : planValue))
+              .round();
+      premiumAllocated += job.premiumPaid;
       spent += reservation.value;
       placedUnits += share.units;
       touched.add(share.portSectorId);
@@ -768,6 +910,7 @@ class PlanetTradeService {
       orderId: orderId,
       jobs: jobs,
       spent: spent,
+      premium: premiumTotal,
       placedUnits: placedUnits,
       shortfall: clamped - placedUnits,
       portSectorIds: touched.toList(),
