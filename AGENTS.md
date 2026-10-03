@@ -34,7 +34,17 @@ player-avatar.md`) name the document rather than linking it, so those need no ch
   NPC repopulation, invasion mechanics, image pools, 6-phase implementation plan). Its "Current
   State" section tracks what has been implemented so far (phase 1 mostly done; colony automation
   and invasion combat outstanding).
-- `faction-lore-update.md` — Narrative/lore expansion. Adds a unifying mystery ("The Fracture",
+- `faction-lore-update.md` — Narrative/lore expansion.
+- `citadel-info.md` — **A reference snapshot of citadel/planet levelling as built**,
+  written to be handed to another model for design proposals: the six tiers, the
+  cost and build-time tables, exactly what a tier grants, the production triangle
+  and all ten class tables, storage, the supply bill, and the known gaps. It
+  documents the shipped system, not a proposal — see `planets.md` for the design
+  narrative. **It leads with a warning that there are two citadel systems and only
+  one is live** (`planet_classes.dart` holds a dead, sourced `citadelAbilities`
+  table describing six classic TradeWars tier abilities that nothing reads; the
+  shipped tables are a separate set in `planet.dart`), so a proposal built from it
+  cannot silently assume those abilities exist. Adds a unifying mystery ("The Fracture",
   Cycle 435) to tie the three playable factions into a shared history, replacing the current
   Empire-vs-Mystics-vs-Merchants archetype framing.
 
