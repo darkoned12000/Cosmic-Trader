@@ -1,12 +1,22 @@
-# Citadel & Planet Levelling — as built
+# Citadel & Planet Levelling — reference and open design brief
 
-A reference snapshot of the levelling and production systems, taken from the code
-on the `planet-econ` branch. It exists to be handed to another model for
-proposals, so every figure below is one the reader can verify against the file
-named beside it.
+This document exists to be handed to a model for **design review**, so it is
+split deliberately:
 
-**Read this first.** There are two citadel systems in the codebase and only one
-of them is live. See [§11](#11-the-two-systems-warning).
+- **Part I is verified ground truth.** Every figure is checkable against the file
+  named beside it. Treat it as fact about what the code does today.
+- **Part II is one reviewer's opinion**, each claim carrying the evidence it
+  rests on. React to it; do not inherit it.
+- **Part III is constraints** — derived rules that a proposal must not quietly
+  undo. These are not preferences.
+- **Part IV is what already exists to build on**, which is the part a reviewer is
+  least likely to find unaided.
+- **Part V is twelve numbered questions.** Answering by number is more useful
+  than more feature ideas.
+
+The reason for the hard split: a document that mixes shipped rules with proposals
+gets its opinions read as requirements, and that is the specific failure this
+project keeps paying for (see §13).
 
 | Section | File the claims come from |
 |---|---|
@@ -14,10 +24,14 @@ of them is live. See [§11](#11-the-two-systems-warning).
 | Production triangle, class tables | `lib/data/models/planet_classes.dart` |
 | Per-tick pass | `lib/services/planet_production_service.dart` |
 | World generation | `lib/data/models/universe_generator.dart` |
-| Live tuning | `lib/data/models/planet_classes.dart` (`PlanetClassTuning`) |
+| Port defence + combat engine | `lib/data/models/port_defense_config.dart`, `lib/services/npc_ai/port_combat_service.dart` |
+| Trade jobs (T1–T10b) | `lib/data/models/trade_job.dart`, `lib/services/planet_trade_service.dart` |
 | Full design narrative | `planets.md` |
 
 ---
+---
+
+# Part I — As built
 
 ## 1. The six tiers
 
@@ -60,7 +74,7 @@ priced at `15 × hops^1.5` credits from your faction's own homeworld, plus the
 energy for one shipment regardless of size — so batching pays, and a distant
 empire is a fuel problem as well as a money one. This makes the 4→5 and 5→6 gates
 shopping trips whose difficulty depends on where your faction's capital happens
-to be. See [§10](#10-known-gaps-worth-filling-first).
+to be. See §11.
 
 ---
 
@@ -92,7 +106,7 @@ implementation each.
 
 ## 4. What a tier grants — the complete list
 
-Applied by `Planet._applyLevelGrants()` when a build completes. **Nothing else in
+Applied by `Planet._applyLevelGrants()` on build completion. **Nothing else in
 the model changes with level.**
 
 | Level | Defence | Shield | Armour (max hull) | Storage × | Population cap × | Development × |
@@ -141,7 +155,7 @@ This is the heart of what a colony *is*. Three workforce tracks:
 `colonistsMinerals`, `colonistsOrganics`, `colonistsIndustrial`.
 
 **Drones are derived, not staffed.** There is no drone track and no drone
-stepper; see [§5.3](#53-drones).
+stepper; see §5.3.
 
 Per product: `colonistsPerUnit`, `maxColonists`, `storageCap`.
 
@@ -277,8 +291,7 @@ The current rule:
   never punished for being unable to grow the drawn commodity.
 
 **Nothing dies.** An unpaid bill is *reported* — a supply warning chip and a
-`storesEmpty` flag — not inflicted. This is the third derived-not-fixed balance in
-this model, after the storage floor and the level-scaled population cap.
+`storesEmpty` flag — not inflicted.
 
 Production lands **before** upkeep is charged, so a colony that farms its own
 food stands still rather than spiralling.
@@ -289,7 +302,7 @@ food stands still rather than spiralling.
 
 | Field | Range | Notes |
 |---|---|---|
-| `productionEfficiency` | `0.5`–`1.5` uniform, rounded to 1 dp, rolled at generation | **Never displayed anywhere.** Roughly half of all generated worlds start below 1.0. See §10. |
+| `productionEfficiency` | `0.5`–`1.5` uniform, rounded to 1 dp, rolled at generation | **Never displayed anywhere.** Roughly half of all generated worlds start below 1.0. |
 | `productionRemainder` | per-track fraction | Carries sub-unit output between ticks. Persisted. Without it a track yielding 0.03/tick banks nothing, ever. |
 | `supplyTimer` | 0–2,879 | Persisted. |
 | `level` | 1–6 | |
@@ -308,8 +321,6 @@ ticks/hour, 2,880/day. Nothing in the colony path may use `DateTime.now()`.
 screen and Settings editor resolve through `specFor`, which merges any saved
 override over the default.
 
-The split is the point:
-
 - A player can edit **values** — ratios, caps, build times.
 - The player **cannot** edit the **rules**. The half-maximum optimum is computed,
   not a field, and the fighter ceiling is derived from output. So a customised
@@ -319,35 +330,7 @@ The split is the point:
 
 ---
 
-## 10. Known gaps, worth filling first
-
-Ordered by cost-to-value, not by importance to the design.
-
-1. **`productionEfficiency` is invisible and halves output on ~half of all
-   worlds.** A `[0.5, 1.5)` roll at generation, never surfaced in any UI. A player
-   comparing two identical Terran colonies finds one produces half as much with no
-   explanation and no way to act on it. This is the cheapest high-value fix on the
-   list — one label on the colony card.
-2. **The 4→5 and 5→6 gates need purchasing**, and purchase is priced by distance
-   from your faction's capital. Levelling pace is therefore gated on geography the
-   player did not choose. Natural population growth is the real fix and is
-   acknowledged as outstanding.
-3. **Levelling has no effect on freight or trade.** The trade planner reads
-   nothing about the world — not its level, its type, or its storage. A level-6
-   Citadel and a level-1 Outpost have identical freight capability, so citadel
-   development affects the *economy* only through raw output and storage.
-4. **Level 6 buys no additional defence level.** 5→6 is shield and armour only,
-   which makes the final tier's headline less legible than the one below it.
-5. **Invasion and combat are stubs.** The planet screen's Attack action writes to
-   the action log only. Defence, shield and armour are modelled but nothing
-   currently attacks a colony.
-6. **Homeworlds are not citadel-linked.** `RepopulationService` drives ship spawn
-   cadence from the homeworld flag, not from citadel level, so a player's capital
-   and their best-developed world are unrelated.
-
----
-
-## 11. The two-systems warning
+## 10. The two-systems warning
 
 **`planet_classes.dart` contains a second, dead citadel system.** Nothing in
 `lib/` reads any of it:
@@ -365,14 +348,14 @@ implemented:
 |---|---|
 | 1 | Citadel — defenseless. Treasury, overnight, planet transporter available; fighters will not defend and the world can be taken by anyone who lands. |
 | 2 | **Combat computer** — fighters stationed on the planet now defend, at 3:1. Can be set to send fighters into the sector at 2:1. |
-| 3 | **Quasar cannon** — fires at anything entering the sector, anything landing, or both. Burns fuel ore; 1 ore per 1 damage atmospheric, 3 per 1 sector-firing. Bypassable by photon missile unless planetary shielding covers it. |
+| 3 | **Quasar cannon** — fires on anything landing, entering the sector, or both. Burns fuel ore; 1 ore per 1 damage atmospheric, 3 per 1 sector-firing. Bypassable by photon missile unless planetary shielding covers it. |
 | 4 | **Planetary transwarp drive** — move this world to any sector where you have dropped a fighter, 400 ore per sector jumped. |
 | 5 | **Planetary shielding system** — planetary shields must be destroyed before invasion, 20 damage each. Ten ship shields make one planetary shield. |
 | 6 | **Planetary interdictor generator** — makes it difficult for an enemy to retreat from the sector. Similar to a tractor beam. |
 
-Meanwhile the **live** levelling is the completely separate set of tables in
-`planet.dart` described in §1–§4, which grants storage, population cap,
-development, defence level, shield and armour — none of the above abilities.
+The **live** levelling is the completely separate set of tables in `planet.dart`
+(Part I §1–§4), which grants storage, population cap, development, defence level,
+shield and armour — none of the above abilities.
 
 So: two sources of truth, one wired. Any design work has to decide which it is
 extending. The prose table is a ready-made source of six *distinct* tier
@@ -381,21 +364,354 @@ identities, which the current numeric tables do not have — every level is
 
 ---
 
-## 12. Design intent, for context
+## 11. Known gaps
 
-The stated goal for the levelling curve is that level buys **capacity and
-defence**, and buys them **hard**, while per-colonist extraction stays close to
-flat. That is deliberate: a steeper development curve compounds with type
-multipliers and population caps into a ~110× spread and erases planet identity —
-everything worth having would end up on one planet type. An Ocean world should
-remain the best food producer and a Lava world the best mineral source no matter
-how developed either gets.
+Ordered by cost-to-value, not by importance to the design.
 
-Consequences worth respecting in any proposal:
+1. **`productionEfficiency` is invisible and halves output on ~half of all
+   worlds.** A player comparing two identical Terran colonies finds one produces
+   half as much with no explanation and no way to act on it. The cheapest
+   high-value fix on the list — one label on the colony card.
+2. **The 4→5 and 5→6 gates need purchasing**, and purchase is priced by distance
+   from your faction's capital. Levelling pace is gated on geography the player
+   did not choose. Natural population growth is the real fix.
+3. **Levelling has no effect on freight or trade.** The trade planner reads
+   nothing about the world — not its level, its type, or its storage. A level-6
+   Citadel and a level-1 Outpost have identical freight capability.
+4. **Level 6 buys no additional defence level.** 5→6 is shield and armour only,
+   which makes the final tier's headline less legible than the one below it.
+5. **Invasion and combat are stubs.** The planet screen's Attack action writes to
+   the action log only. Defence, shield and armour are modelled but nothing
+   currently attacks a colony — see §IV.1, which changes the cost estimate.
+6. **Homeworlds are not citadel-linked.** `RepopulationService` drives ship spawn
+   cadence from the homeworld flag, not from citadel level, so a player's capital
+   and their best-developed world are unrelated.
 
-- Anything that makes one type dominant at high level works against this.
-- The **storage floor** and **level-scaled population cap** are both derived
-  rules, not tuned numbers. Replacing either with a flat figure reintroduces the
-  bug they were built to fix.
-- The **half-maximum optimum** is the second such rule. It cannot become a stored
-  value.
+---
+---
+
+# Part II — Analysis and proposals
+
+> Everything below is **opinion**, offered so a reviewer has something to react
+> to rather than re-deriving it. Each claim names the evidence it rests on.
+
+## A. The biggest reframe: invasion combat is nearly built already
+
+The instinct is that invasion is a large project because nothing can currently
+attack a colony. That is true and misleading: **a complete, live, turn-based
+defence-combat system already exists — for ports.**
+
+| Existing | Detail |
+|---|---|
+| `PortDefenseConfig` | Per-level 0–4 table: shield capacity, firepower, and a `PortSpecialAbility` (counter-attack, shield regen, EMP burst, all-abilities) |
+| `port_combat_service.dart` | 282 lines of turn-based resolution, loot, surrender |
+| `port_combat_screen.dart` | 1,214 lines of working combat UI |
+| The integration point | `PortCombatService` reads defender stats through `PortDefenseConfig.defenseStats(int level)` — a pure function of an int |
+
+The decisive detail is the last row: **the defender's stats are already
+parameterised by a single integer on a 0–4 scale**, and `Planet.levelDefense` is
+already on exactly that scale. A planet already has `defenseLevel`, `shield` and
+`hull` — the three things a port defender has.
+
+So invasion is not a project; it is a port. The Attack button exists; what it
+needs is a defender built from the planet and handed to an engine that already
+runs. That is a fraction of the cost usually budgeted, and it argues for wiring
+the Combat Computer ability much earlier than any tier table would suggest —
+because every later military ability depends on invasion existing first.
+
+Caveat: this is an argument about the *defender* half. The attacker side — who
+invades, on what authority, with what garrison — is still unbuilt, and the NPC AI
+has no goal that targets a planet at all (`raidPort` is ports only).
+
+## B. Supply Lines: the best idea here, and the wrong order
+
+The strongest proposal in the previous review is a standing lane between sibling
+worlds in a sector, paying off a design promise already written into
+`sector.dart` ("the complementarity loop — an Ocean feeding a Lava … only feels
+good when the worlds are adjacent"). The code confirms that comment exists, and
+nothing implements it.
+
+Two corrections:
+
+**It is not a small lift, and "reuse TradeJob" is half true.** A `TradeJob`
+carries a port reservation, an escrow, a price, a run-risk roll, four outcome
+classes, an incident ledger, an order record and an insurance premium. A supply
+lane needs **none** of those — no port, no price, no risk, no cover. What it
+shares with a trade job is a *scheduler* (cadence, hold size, run length), not a
+system. Building it by copying `TradeJob` will produce the wrong shape.
+
+**Its economics are uncosted, and they are large.** Free intra-sector lanes mean
+goods move without touching a port, so port demand and supply stop mattering
+between sector-mates — and the entire trade-job feature (nearest-port planning,
+split orders, run risk, freight cover) becomes an edge case for anyone who
+develops a sector properly. That may be a *good* design. But it is a paradigm
+shift, and it should be sequenced as one rather than as the cheap first win.
+
+Suggested safety valves, if it is built: lanes move **surplus above a
+player-set reserve** (reusing the storage-overflow concept), carry a throughput
+cap, and carry one commodity each. Without a reserve, a Barren world with an
+organics lane is an infinite faucet that trivialises the supply bill entirely.
+
+## C. Tier count versus tier identity
+
+The complaint that tiers have no identities is right. Doubling the table to ten is
+one answer and the most expensive one: `levelUpCosts`, every grant table, the
+level-up preview, the construction panel and the Planet Guide's *generated* tables
+are all currently indexed to six. Four of the ten would be extrapolated numeric
+grants nobody has designed — which walks into the exact problem being complained
+about.
+
+The cheaper answer is **specialisation rather than more tiers**: keep six tiers
+and all six numeric tables, and at tier 4+ let the world choose **one of three**
+tier-appropriate abilities. Six rows of numbers, eighteen identities, and the
+player *chooses* rather than accumulates.
+
+It also solves the endgame-rarity problem without tiers 7–10. A choice feels
+irreversible; a grind eventually completes. "I picked Quasar, so I can never have
+Transwarp" is rarer than "I got to tier 9 eventually".
+
+## D. The missing axis is type × level, not more tiers
+
+What the two existing systems do:
+
+- The triangle made **type** matter for *output*.
+- Levelling made **level** matter for *capacity*.
+
+Neither made **type matter for identity**. `levelUpCosts`, `levelDefense`,
+`levelStorageScale` and every other grant table are keyed on level alone, so a
+tier-4 Lava Citadel and a tier-4 Terran Citadel receive identical benefits. All
+ten types share one citadel table.
+
+This is where a "ten distinct identities" ambition is already half-spent, with
+**zero new tiers** — a modifier on the grant table rather than a second table. An
+ore-fed Volcanic quasar burns its own surplus; a Barren world's supply charter is
+the reason it exists at all.
+
+It also interacts with Part III: type-flavored abilities *reinforce* planet
+identity rather than spending it.
+
+## E. Tier 1 undefended, and the absence of any loss state
+
+The most interesting line in the dead ability table is level 1: *"defenseless …
+the world can be taken by anyone who lands."* The previous review kept tier 1 as a
+safe no-op.
+
+Right now nothing can land, so that line is inert. The moment invasion exists, it
+turns a first colony into a genuinely vulnerable thing — and it gives levelling
+teeth, because a taken world can come back at a **lower tier**.
+
+This is the largest playability gap in the whole system and it is not in the
+proposal: a six-tier treadmill where you can never lose anything is a progression
+chart, not a story. Loss is what would make the defence number mean something,
+and the defence number currently means nothing because nothing reads it.
+
+## F. Make the citadel attract, not only repel
+
+Four of the five live-able abilities in the dead table are **reactive** —
+prevent theft, prevent invasion, prevent retreat. Only one (transwarp) is
+initiative-taking. That is a pattern, and it argues for more identities about what
+a world *does* rather than what it prevents.
+
+Related: the gap between "my planet is big" and "my faction is powerful" is real.
+The bridge is that a developed world should change the galaxy's *behaviour toward
+it* — NPC traders route through sectors with developed worlds, immigrants arrive
+where there is demand, faction missions target them. That would also make citadel
+level legible **from the galaxy map**, which is currently uniform brown dots, and
+is the cheapest high-emotion change available.
+
+## G. What I agree with from the previous review, and would keep
+
+- **Adopt the dead ability table rather than reinvent tier flavour.** It is
+  sourced, written, and unused. Re-deriving six identities when six are already on
+  disk is waste.
+- **New power should come from new *kinds* of leverage, never from juiced
+  ratios.** See Part III — this codebase has now paid for that lesson three times.
+- **The endgame must be steeper than a linear extension.** Tiers that matter
+  should be rare, and rarity should come from choice or cost, not from a longer
+  bar.
+- **Colonist growth needs fixing before any gate gets much higher.** The geography
+  tax worsens with every tier added, and it is a small, independent change — it
+  does not need the tier table extended first, and bundling them makes a modest
+  change look like a risky one.
+
+## H. Where I think the previous review was wrong
+
+- **Survey Commission (rerolling `productionEfficiency`) fights the stated
+  constraint.** Efficiency is a type-relative multiplier on capped figures. A
+  Volcanic world going 0.5 → 1.3 is less volcanic. The framing is elegant, but it
+  needs a *band*, not the full 0.5–1.5 range, or it spends exactly the identity
+  the design is protecting.
+- **Sector Influence is three features in one name.** "NPC spawn weighting,
+  reputation gain, or pricing nudges" are three separate designs. Reputation gain
+  collides with a deed table that already encodes hostility splits; pricing nudges
+  collide with a standing-price multiplier that already feeds effective prices.
+  It is not a tier ability until it is three tickets.
+- **Combat Computer at tier 2** is well-motivated but mis-sequenced *as written*:
+  it says invasion becomes cheap, when in truth it makes invasion *possible*.
+  Every later military ability depends on the system existing, which argues for
+  building it before the tier table, not inside it.
+
+---
+---
+
+# Part III — Constraints a proposal must not undo
+
+These are not preferences. Each is a derived rule that exists because a tuned
+number could not serve the case, and the failure it fixed has already happened.
+
+1. **The half-maximum production optimum is computed, not a field.** It cannot
+   become a stored or tunable value, or a customised world can break production
+   entirely.
+2. **The storage floor (one game day of output) is derived, not tuned.** A flat
+   per-type cap cannot serve a colony of a hundred and one of two million.
+3. **The population cap is level-scaled, not flat.** A flat cap and a rising colonist
+   gate were mutually unsatisfiable — seven of ten types could never reach Citadel.
+4. **Per-colonist extraction stays close to flat across levels.** A steeper
+   `levelDevelopment` compounds with type multipliers and caps into a ~110× spread
+   and erases planet identity. New tier power must therefore be new *kinds* of
+   leverage, not larger ratios.
+5. **One clock.** `GameClock.tick` is the only game time. A `DateTime.now()` in a
+   gameplay path is a bug even when it looks right.
+6. **Anything that makes one planet type dominant at high level works against the
+   whole design.** Ocean should stay the best food producer and Lava the best
+   mineral source however developed either gets.
+
+---
+
+# Part IV — What already exists to build on
+
+The part a reviewer is least likely to find unaided.
+
+### IV.1 Port defence and combat — a complete system, for ports
+
+| Level | Shield capacity | Firepower | Special ability | Shield regen | EMP drain |
+|---|---|---|---|---|---|
+| 0 | 500 | 30 | none | — | — |
+| 1 | 1,000 | 60 | none | — | — |
+| 2 | 2,000 | 120 | counter-attack | — | — |
+| 3 | 3,500 | 200 | shield regen | 5% | — |
+| 4 | 6,000 | 300 | all abilities | 5% | 15% |
+
+Plus a 282-line resolution service and a 1,214-line combat screen. A port defender
+is `PortDefenseConfig.defenseStats(defenseLevel)` — see Part II.A.
+
+### IV.2 The trade-job system (T1–T10b, shipped this cycle)
+
+`PlanetTradeService` + `TradeJob` provide: pure planning over a universe,
+nearest-first port selection with splitting, a tick-driven run cadence scaled by
+hops, port reservations with escrow and proportional release, four outcome
+classes (delivered / lost / delayed / seized) with contextual causes, a bounded
+per-world incident ledger, per-order history, and per-order freight cover priced
+from the order's own risk.
+
+**Relevant to supply lanes:** the scheduler is reusable; the accounting half is
+not (see Part II.B). **Relevant to levelling:** the planner currently reads
+nothing about the planet (§11.3), so tier-gated freight is a clean addition —
+which makes it the natural "second axis" if the planet market is ever meant to be
+strategic rather than convenient.
+
+### IV.3 Pathfinding
+
+`PathfindingService.bfsParents` / `distanceInTree` — id-keyed BFS shortest path,
+already called by the trade planner. Anything measured in hops (transwarp cost,
+convoy reach, influence radius, colonist pricing) has this to build on.
+
+### IV.4 Destruction, and gravity
+
+`Planet.destroy()` clears every subsystem a world owns — stores, population,
+orders, incidents, order history, build timers — and removes it from the sector.
+Any loss mechanic (§Part II.E) gets its cleanup for free, and gets it *correctly*:
+a destroyed world leaves no ghost timers, no owed deliveries and no revenue.
+
+### IV.5 Reputation and its deed table
+
+`ReputationActions` encodes hostility splits, kill-vs-bounty distinctions and
+standing caps in one table. Anything that wants "developing a world earns
+standing" should be a **row in that table**, not a new multiplier — the split
+between "hostile" and "peaceful" is already load-bearing for combat AI decisions.
+
+### IV.6 Homeworlds and repopulation
+
+`RepopulationService` already gates ship production on homeworld control, and
+`ColonistSupply` already prices colonists by distance from the faction's own
+capital using real engine-aware warp costs. Any "develop your capital" idea
+attaches to an existing, correct system rather than inventing one.
+
+### IV.7 What does *not* exist
+
+- **No NPC goal attacks a planet.** `raidPort` targets ports only.
+- **No garrison model.** `Planet.defenseLevel` is written by the tier table and
+  displayed; nothing consumes it in a combat calculation.
+- **No natural population growth.**
+- **No freight, planetary demand, or manual port selection** — the trade planner
+  has no player-facing port choice at all.
+
+---
+---
+
+# Part V — Open questions
+
+Answering by number is worth more than more feature ideas. Each is a real fork.
+
+1. **Tier count.** More tiers, or a specialisation choice at 4+? (Part II.C — and
+   note the migration cost of every table currently indexed to six.)
+2. **Loss.** Should a colony be losable at all? If a world is taken, does it drop
+   a tier, lose its garrison, lose its build progress, or something else? What is
+   recoverable? (Part II.E — currently nothing is.)
+3. **Type × level.** Should tier grants vary by planet type? If so, how does it
+   stay legible in the UI without a 10×6 matrix?
+4. **Supply lanes.** What reserve and throughput? Does the port economy survive
+   free intra-sector movement, or does a lane need a price? (Part II.B.)
+5. **Efficiency reroll.** Band or full range? Does it violate the type-identity
+   constraint, and if so is that acceptable at one tier? (Part II.H.)
+6. **Sector influence.** Split into three separate designs — reputation, pricing
+   and spawn weighting have different risk profiles. Which is worth doing?
+7. **Faction-gated capability.** Should the most galaxy-scale abilities (transwarp,
+   interdictor) be gated on the world being a **capital**, rather than on the
+   world reaching a tier? That makes developing your capital matter at the faction
+   level and stops every mature world becoming a strategic weapon.
+8. **Attraction vs repulsion.** Should a developed world attract visitors — NPC
+   trade routing, immigration, faction missions? Or stay purely defensive?
+   (Part II.F.)
+9. **The second economy axis.** If not tiers, where does it live: tier-gated
+   freight capacity, planetary demand/supply, manual port choice, or cost-based
+   routing? (Currently the planet market has exactly one player decision: volume.)
+10. **Endgame rarity.** What should the capstone cost, and what is the target
+    number of worlds in a galaxy that hold it? A number, not an adjective.
+11. **Colonist growth.** What rate, and does natural growth break the supply bill
+    or make the store floor's "ignored world" pressure disappear?
+12. **Legibility.** What is the smallest change that makes a citadel's tier visible
+    **outside** the planet screen — galaxy map, sector view, scan report? A level-6
+    world currently looks like a level-1 one from every distance.
+
+---
+---
+
+# Part VI — Why this document is split the way it is
+
+Recorded because the pattern keeps recurring and is worth naming.
+
+The most expensive defect in this project's recent history was **signs in
+user-facing text**. A detonation line said "your notoriety **rises**" — written
+against a one-direction scale, and after that scale was made signed it became the
+loudest possible lie on screen, telling a player they were becoming *more popular*
+for blowing up a planet. The number was right. The sentence was not.
+
+The same shape appears in code, and this document is an attempt not to repeat it:
+
+- A help screen drifted from its model in eight places, none of which broke
+  anything — a documented mechanic, a "scanner module" that does not exist, a
+  column count that was off by one so every value was labelled one column to the
+  left, and a hand-typed figure that was wrong by a factor of 2,880 while the guard
+  covered two of its three numbers.
+- A guard described a mechanism the code did not use: a comment credited a
+  `continue` with enforcing a promise that the arithmetic already enforced, and
+  deleting the line changed nothing.
+- A test asserted a marker *appears* while the number it annotated was free to lie,
+  because the marker was driven by a different field.
+
+So: **Part I is what the code does. Part II is what one person thinks about it.
+Part III is what must not change. Keeping them in separate sections is the whole
+point** — a reviewer reading Part I as requirements is reading it correctly, and a
+reviewer reading Part II as requirements is being misled by the document rather
+than by the design.

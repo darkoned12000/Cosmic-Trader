@@ -37,16 +37,22 @@ player-avatar.md`) name the document rather than linking it, so those need no ch
 - `faction-lore-update.md` — Narrative/lore expansion. Adds a unifying mystery ("The Fracture",
   Cycle 435) to tie the three playable factions into a shared history, replacing the current
   Empire-vs-Mystics-vs-Merchants archetype framing.
-- `citadel-info.md` — **A reference snapshot of citadel/planet levelling as built**,
-  written to be handed to another model for design proposals: the six tiers, the
-  cost and build-time tables, exactly what a tier grants, the production triangle
-  and all ten class tables, storage, the supply bill, and the known gaps. It
-  documents the shipped system, not a proposal — see `planets.md` for the design
-  narrative. **It leads with a warning that there are two citadel systems and only
-  one is live** (`planet_classes.dart` holds a dead, sourced `citadelAbilities`
-  table describing six classic TradeWars tier abilities that nothing reads; the
-  shipped tables are a separate set in `planet.dart`), so a proposal built from it
-  cannot silently assume those abilities exist.
+- `citadel-info.md` — **Reference and open design brief for planet levelling**,
+  written to be handed to another model for review. Deliberately split into six
+  parts so a reviewer cannot mistake an opinion for a rule: **Part I** is verified
+  ground truth (tiers, costs, build time, what a tier grants, the production
+  triangle, all ten class tables, storage, the supply bill, known gaps) and every
+  figure is checkable against the file named in the header; **Part II** is opinion
+  with evidence attached; **Part III** is the derived rules a proposal must not
+  undo; **Part IV** is what already exists to build on — the one a reviewer is
+  least likely to find unaided, including the finding that **invasion combat is
+  nearly built already** because `PortDefenseConfig` + `PortCombatService` give a
+  working 0–4 turn-based defence system whose defender stat lookup is a pure
+  function of an int, which is exactly what `Planet.levelDefense` already is;
+  **Part V** is twelve numbered questions to answer; **Part VI** records why the
+  document is split. **It also warns that there are two citadel systems and only
+  one is live** — `planet_classes.dart` holds a dead, sourced `citadelAbilities`
+  table describing six classic TradeWars abilities nothing reads.
 
 **Complete, in `docs/`:**
 - `docs/player-avatar.md` — Player avatar system design. **Art direction is settled: portraits are
