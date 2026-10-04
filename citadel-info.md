@@ -13,6 +13,10 @@ split deliberately:
   least likely to find unaided.
 - **Part V is twelve numbered questions.** Answering by number is more useful
   than more feature ideas.
+- **Part VII is the merged synthesis** of two independent reviews, what they got
+  right and wrong, and the consolidated direction. **Start there to decide**; read
+  the earlier parts for how it got there. Part VIII records the status of each Part
+  V question, including the ones now answered.
 
 The reason for the hard split: a document that mixes shipped rules with proposals
 gets its opinions read as requirements, and that is the specific failure this
@@ -651,6 +655,11 @@ attaches to an existing, correct system rather than inventing one.
 
 # Part V — Open questions
 
+> **Several of these are now answered.** A second review was carried out and
+> merged; see **Part VII** for the synthesis and **Part VIII** for the status of
+> each question below. The questions are left as originally asked, because the
+> record of what was open is itself the evidence for what got decided.
+
 Answering by number is worth more than more feature ideas. Each is a real fork.
 
 1. **Tier count.** More tiers, or a specialisation choice at 4+? (Part II.C — and
@@ -715,3 +724,302 @@ Part III is what must not change. Keeping them in separate sections is the whole
 point** — a reviewer reading Part I as requirements is reading it correctly, and a
 reviewer reading Part II as requirements is being misled by the document rather
 than by the design.
+---
+---
+
+# Part VII — Second review, and the merged position
+
+A second, independent review was carried out against this document. This part
+compresses what it proposed, records where the two reviews agree and disagree,
+states where it is better than the first review (two concessions are due), and
+consolidates a single direction.
+
+**If you are deciding, read this part.** Parts I–VI are the record of how it got
+here; Part VIII is the status of each open question.
+
+## VII.1 What the second review proposed
+
+Compressed; the full text is not reproduced.
+
+- **A verb ladder as the organising principle.** Higher levels unlock new
+  *verbs*, not larger numbers: Claim → Defend → Project → Move → Fortify →
+  Control. `Level 1: I can establish a foothold … Level 6: this planet changes how
+  the surrounding sector works.`
+- **Restore the six classic abilities** at levels 1–6, in the order they already
+  occupy in the dead table — treasury/transporter, Combat Computer, Quasar,
+  Transwarp, Shielding, Interdictor.
+- **A planetary cannon that consumes ore**, so a Lava world supplies its own
+  ammunition. Explicitly framed as the type × level interaction the system is
+  missing.
+- **A fighter garrison drawn from the derived drone output**, with a player-set
+  mode: Planet Defence / Sector Defence / Reserve. No new subsystem — a different
+  rule about where existing fighters are committed.
+- **Layered defence** — planetary shield → planetary defence → armour → the world
+  itself — surfaced on a dedicated defence screen.
+- **Integrity % and damage states instead of tier loss.** Healthy / Damaged /
+  Besieged / Captured / Ruined, with level left intact and a separate combat
+  variable taking the damage.
+- **A captured Citadel** transfers ownership plus stores and infrastructure, but
+  arrives damaged: shield down, modules disabled, supply routes severed, defences
+  reset, and the owner rebuilds.
+- **Doctrine chosen at level 4** — Fortress, Logistics, Industrial, Agricultural,
+  Commercial — each granting *capabilities* (freight capacity, faster cadence,
+  construction efficiency) rather than production percentages.
+- **Module slots at level 4+** (1 / 2 / 3 slots) with category limits, so a
+  level-6 world might hold one military, one economic and one logistics module.
+- **Supply routes gated by level** — 1 at level 4, 2 at 5, 3 at 6 — each with a
+  player-set reserve it will not ship below.
+- **Legibility**: tier glyphs on the galaxy map, and a north-star acceptance test
+  (a player looks at the map and sees "that Ocean Citadel is feeding three
+  colonies").
+- **Planet Roles** as UI metadata a player assigns.
+- **Planetary Services and Citadel permissions** — other players docking,
+  trading, refuelling, repairing — plus a **Capital Citadel** distinct from a
+  normal one.
+- **A five-phase build order**, ending with transwarp last.
+
+## VII.2 Where both reviews independently agree
+
+Five points of convergence, which is stronger evidence than either argument
+alone:
+
+1. **Keep six tiers.** Neither review extended the table to 10+. The first
+   called ten the most expensive answer to the identity problem; the second
+   proposed the same and went further, proposing to *restructure* 4+.
+2. **Specialisation over more tiers.** Both reach for a choice at 4+ rather than a
+   longer bar. The second also proposes module slots on top of a Doctrine, which
+   is a third layer of the same idea.
+3. **Adopt the dead ability table rather than reinvent tier flavour.** It is
+   sourced, written, and unused.
+4. **New power as new kinds of leverage, never as juiced ratios.** Both reviews
+   state it as the governing rule, independently, having read the same §III.
+5. **The endgame must be rarer than a linear extension**, with rarity coming
+   from choice or cost rather than a longer bar.
+
+## VII.3 Where the second review is better — two concessions
+
+**1. Integrity replaces tier loss. The first review's Part II.E is withdrawn on
+its specific mechanism.** It proposed that a taken world comes back at a lower
+tier. That is worse design and worse engineering: it conflates *progression* with
+*condition*, so a bad fight un-does hours of play, and level and combat state can
+disagree. Integrity as a separate variable is cleaner, composes far better with
+capture (a captured Citadel arrives damaged rather than de-titled), and lets the
+tier table stay a permanent achievement.
+
+What survives from II.E is the reason it was proposed: **there is no loss state at
+all**, and without one the defence number means nothing because nothing reads it.
+Integrity fixes that without the punishment.
+
+**2. The verb ladder is a better organising principle than anything in the first
+review.** Part II was a list of gaps; this is a *shape*, and it is the sentence a
+player could repeat to a friend. It also answers the identity complaint more
+cleanly than the first review's specialisation suggestion, because it is about
+what you can *do*.
+
+Also adopted, verbatim, as the design principle at the top of the planet system —
+it is sharper than the first review's phrasing:
+
+> **Level buys capability, capacity and strategic leverage — not raw extraction.**
+
+## VII.4 Where the second review is wrong, or contradicts itself
+
+**Multi-stage combat undoes the second review's own best insight.** It proposes
+five sequential stages (approach → orbital → shield → citadel → ground), and
+pre-empts the objection with "you don't necessarily need five separate combat
+engines." That is the wrong instinct and it costs the review its strongest asset.
+The reason invasion is cheap is that it is **one** engine with a parameterised
+defender (Part II.A). Layers belong *inside* one combat — a shield pool, then
+fighters, then ground — not as five encounters with five sets of state.
+
+**Transwarp is scheduled at level 4 and reserved for Capitals.** The tier table
+puts Transwarp at level 4; the Capital Citadel section makes "advanced transwarp"
+capital-only. Both cannot ship. This is the most consequential unresolved item in
+either review, for the reasons in VII.5.
+
+**Planet Roles and Doctrine are the same mechanic twice.** Both are "declare what
+this world is for." Two systems with one job, arriving in one document, will
+disagree — which is this project's signature failure. Roles should be the
+*display* of a Doctrine.
+
+**Scale.** Integrity, damage states, multi-stage combat, Doctrine, module slots,
+services, permissions and Capital Citadels is seven interlocking new systems
+where any two can produce a bug. This project's documented failure mode is
+specifically *interlocking state that disagrees* — the trade write-clobber, the
+production remainder, the escrow slice — and every one of these writes to a world
+the tick owns and that each screen holds a private copy of.
+
+## VII.5 Transwarp's real cost, which both reviews understated
+
+Both mention pathfinding and "sector collision stability" in a line. The
+concrete items:
+
+- **Sectors cap at three worlds** (`planetsPerSector = 3`, enforced by a
+  `worldCap` the tick applies). A transwarping world arriving at a full sector has
+  nowhere to land, and gravity's over-stack clock would react to it immediately.
+- **Every screen holds its own copy of the universe** and re-reads from disk
+  roughly once a second. A world that changes sector mid-build carries
+  `constructionTicksRemaining`, live trade jobs and a freight ledger across the
+  move.
+- **`PathfindingService` BFS is already load-bearing** for trade planning,
+  colonist pricing, convoy reach and influence radius. All four shift when a
+  planet moves, and every one of them has cached results to invalidate.
+
+This deserves its own design note before it is scheduled, not a line in a phase
+list.
+
+## VII.6 Two cross-cutting questions neither review caught
+
+**1. Gating freight behind citadel level turns the shipped trade system into a
+late unlock.** `freighterHold` is a flat 5,000 units and is the only thing that
+determines how many runs an order takes. Both reviews put "increased freight
+capacity" and "faster trade cadence" into a Doctrine or module. The consequence
+neither states: a player who has reached level 4 now has a strictly better
+planet for a mechanic that was previously universal, and a player who has not
+spent hours per planet levelling cannot use the feature at its intended rate.
+
+That is a **progression decision about an existing feature**, not a new one, and
+it interacts with the framing the project already settled on: the planet market is
+a **time saver** for now, not a strategic system. Adding a citadel gate to it
+converts it to the latter without anyone deciding to.
+
+**2. The colonist gate is the precondition for most of the content, and it is the
+mechanic both reviews flagged as broken.** Level 5 needs 15,000 colonists and
+level 6 needs 50,000; colonists come **only** from purchase, priced at
+`15 × hops^1.5` from the faction's own capital. So the gate is a shopping trip
+whose difficulty depends on where the capital happens to sit — and the entire
+content programme (Doctrine, modules, services, permissions, the transwarp
+capstone) lives at 4+, behind that gate.
+
+Both reviews treat natural population growth as a footnote. It is the unlock, it is
+a small independent change to `produce()`, and it has to land **before** the
+content programme rather than alongside it.
+
+## VII.7 Multiplayer: the answer, and what it changes
+
+**The stated intent:** single-player first as a testbed for all the mechanics, then
+the same game becomes a solid single-player experience *and* the base for a
+multiplayer build. Settings → Modules already exists as groundwork for the larger
+game.
+
+That converts the second review's Services and Permissions sections from premature
+to *deferred multiplayer content* — but it does **not** mean build them later,
+because "later" is where a permission model goes to be designed against a
+different set of assumptions than the one it ships into.
+
+The move that works:
+
+> **Build the multiplayer-shaped structure now, populated with AI principals.**
+
+| Multiplayer feature | Single-player shadow built now | Later |
+|---|---|---|
+| Other players may dock | Faction vessels and NPC traders may dock, governed by a per-world access list | Swap the principal list from factions to player IDs |
+| Planetary Services (repair, refuel, resupply, trade) | NPC traffic is *attracted* by tier, and services are what they come for | Real players become the customers |
+| Citadel permissions (dock / trade / refuel / transporter / supply network per-visitor) | The same capability list, evaluated per visiting faction | The list is already tested by AI |
+| Capital Citadel | A capital is a faction-level distinction the single-player build can already model | The faction becomes a real group of players |
+
+The permission *structure* is the multiplayer deliverable, and the AI is the test
+harness for it — which is the only way to exercise it at all, since real players
+are scarce and slow. This is also what makes Settings → Modules pay off: it is
+where capability toggles already live, so a per-world access list is the same
+shape as something already shipped.
+
+It also delivers something both reviews wanted *anyway*: a developed world
+attracting visitors (Part II.F, and the second review's "make a Citadel a
+destination"). The attraction mechanic is the single-player half of multiplayer
+economics.
+
+## VII.8 The merged position
+
+Six tiers, restored abilities, specialisation layered on 4–6, numeric spine
+unchanged underneath.
+
+| Level | Title | Verb | Restored ability | Specialisation |
+|---|---|---|---|---|
+| 1 | Outpost | **Claim** | Treasury, planet transporter, overnight shelter. **Undefended** — anyone who lands takes it. | — |
+| 2 | Settlement | **Defend** | **Combat Computer** — fighter garrison from derived drones, with a Planet / Sector / Reserve mode | — |
+| 3 | Colony | **Project** | **Planetary Cannon** — configurable (landing / sector / warning only), **burns ore**, so a Lava world supplies its own ammunition | — |
+| 4 | Fortified Colony | **Specialise** | ⚠ **collision — see below** | **Doctrine chosen** (one of five) + 1 module slot |
+| 5 | Planetary Base | **Fortify** | **Planetary Shielding** — defence becomes layered (shield → fighters → cannon → ground) | 2 slots; supply routes ×2 |
+| 6 | Citadel | **Control** | **Interdictor Field** — a zone of control around the world | 3 slots; supply routes ×3 |
+
+Underneath, unchanged: population cap, storage, shield, armour, development.
+
+⚠ **The level-4 collision.** Both reviews put an ability at level 4 and the second
+review also starts Doctrine there. Candidates: Transwarp (universal vs
+capital-only), or nothing at all — letting level 4's identity be purely
+"Doctrine", with Transwarp deferred to a Capital Citadel. **This is the first
+decision to make**, because Doctrine is the keystone of the whole specialisation
+layer and its alternatives are all level-4 content.
+
+## VII.9 Recommended order
+
+Not a wishlist — a sequence where each step is small enough to finish and
+independent of the ones after it.
+
+1. **Surface `productionEfficiency` on the colony card.** Part I §11.1. One label.
+   An invisible roll that halves output on half of all worlds is an unfairness, and
+   it should not survive contact with any of the content below.
+2. **Natural population growth.** Part I §11.2 and Part VII.6. Small, independent,
+   and the precondition for the whole 4+ content programme.
+3. **Legibility.** Tier glyphs on the galaxy map and sector view. Part I §11 and
+   Part V question 12. Cheapest high-emotion change available; do it early so the
+   rest of the work is visible as it lands.
+4. **Invasion combat, adapted from the port engine.** Part II.A. The Attack button
+   exists. One engine, one parameterised defender, Integrity as the variable.
+   This is the gate for every military ability, and it is a fraction of the
+   expected cost.
+5. **Restore the four abilities that need nothing new** — Combat Computer, Cannon,
+   Shielding, Interdictor — plus tier-1 undefended. All of these are now
+   meaningful because step 4 exists.
+6. **Doctrine at level 4**, and only after (5) so a Doctrine has something to
+   specialise *within*.
+7. **Supply routes**, as their own economic system rather than a TradeJob
+   variant. Part II.B.
+8. **Modules, Roles-as-display, Capital Citadel, Services, Permissions** — in that
+   order, and only as far as they are wanted. Roles must not ship before Doctrine
+   or they will disagree with it.
+9. **Transwarp**, last, after its own design note (Part VII.5) has resolved the
+   sector cap, the private-copy persistence problem, and the four dependent
+   pathfinding consumers.
+
+---
+---
+
+# Part VIII — Status of the Part V questions
+
+Two reviews have now been merged (Part VII). This is the disposition of each
+question originally asked in Part V, so a reader can see what was open and what
+was decided.
+
+| # | Question | Status |
+|---|---|---|
+| 1 | Tier count — more tiers, or specialisation? | **Answered.** Six tiers, specialisation at 4+. Both reviews converged independently (VII.2). |
+| 2 | Loss — tier loss, garrison, build progress? | **Answered, and reversed.** Integrity % and damage states; level stays a permanent achievement. The first review's tier-loss proposal is withdrawn (VII.3). |
+| 3 | Type × level — should grants vary by type? | **Partly answered.** Yes, and the ore-fed cannon is the worked example. The open part is legibility in the UI without a 10 × 6 matrix. |
+| 4 | Supply lanes — reserve, throughput, does the port economy survive? | **Open**, and now the largest economic decision in the system (Part II.B). Not blocking anything before step 7. |
+| 5 | Efficiency reroll — band or full range? | **Moot.** A tier-granted reroll was dropped in favour of simply *showing* the roll (step 1 of Part VII.9). The identity objection stands if it is ever revived. |
+| 6 | Sector influence — split into three designs? | **Open**, and answered in the negative: it was not accepted as a tier ability. Revisit only if attraction (step 3) is insufficient. |
+| 7 | Capital-gated capability? | **Accepted** as a concept — Capital Citadel is distinct from a normal Citadel (VII.8). The Transwarp collision at level 4 is now the **first decision to make**. |
+| 8 | Attraction vs repulsion? | **Answered: both.** Repulsion is the restored abilities; attraction is the multiplayer shadow (VII.7), which is the single-player half of multiplayer economics. |
+| 9 | The second economy axis? | **Deferred, with a caveat.** Tier-gated freight would gate an already-shipped feature behind hours of play (VII.6.1). Needs a decision before it is written into a Doctrine. |
+| 10 | Endgame rarity — a number, not an adjective? | **Open.** Depends on the Transwarp decision. |
+| 11 | Colonist growth — what rate, does it break the supply bill? | **Answered: do it, early.** Step 2 of Part VII.9. It gates the whole 4+ content programme (VII.6.2). |
+| 12 | Legibility outside the planet screen? | **Answered: tier glyphs on the galaxy map and sector view.** Step 3, deliberately early so the rest of the work is visible as it lands. |
+
+### Three decisions now outstanding
+
+1. **The level-4 collision.** Doctrine, or Transwarp, or both at 4? Everything in
+   the specialisation layer depends on the answer.
+2. **Does a Doctrine gate freight capacity?** VII.6.1 — a progression decision
+   about a shipped feature, not a new one.
+3. **Colonist growth rate**, and whether natural growth weakens the "ignored world"
+   pressure the storage floor creates.
+
+### One thing worth saying plainly
+
+Nine of twelve questions are now answered and the shape is clear. The remaining
+risk is not design — it is **sequencing**. Every item above writes to a world that
+the tick owns and that each screen holds a private copy of, and this project's
+documented failures are all interlocking state that disagrees. Building eight
+interlocking systems at once would reproduce that failure at eight times the
+scale, whatever order they were designed in.

@@ -49,8 +49,20 @@ player-avatar.md`) name the document rather than linking it, so those need no ch
   nearly built already** because `PortDefenseConfig` + `PortCombatService` give a
   working 0–4 turn-based defence system whose defender stat lookup is a pure
   function of an int, which is exactly what `Planet.levelDefense` already is;
-  **Part V** is twelve numbered questions to answer; **Part VI** records why the
-  document is split. **It also warns that there are two citadel systems and only
+  **Part V** is twelve numbered questions; **Part VI** records why the document is
+  split. **Part VII is the merged synthesis** of two independent reviews — what
+  they agree on, two concessions the second review won, where it contradicts itself
+  (multi-stage combat undercuts its own best insight; transwarp is scheduled at
+  level 4 *and* reserved for Capitals; Planet Roles duplicates Doctrine), the two
+  cross-cutting questions **neither** review caught (gating freight behind citadel
+  level would gate an already-shipped feature behind hours of play; the
+  geography-priced colonist gate is the precondition for all the 4+ content), and
+  a consolidated six-tier direction with a build order. **Part VIII** is the
+  status of each Part V question — nine of twelve now answered, three outstanding,
+  the first being the level-4 collision. Multiplayer is intended eventually, so
+  Services and Permissions are reframed as *single-player shadows built now with AI
+  principals* and a player-ID swap later, which is also what makes Settings →
+  Modules pay off. **It also warns that there are two citadel systems and only
   one is live** — `planet_classes.dart` holds a dead, sourced `citadelAbilities`
   table describing six classic TradeWars abilities nothing reads.
 
