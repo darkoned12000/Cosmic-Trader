@@ -944,12 +944,18 @@ unchanged underneath.
 
 Underneath, unchanged: population cap, storage, shield, armour, development.
 
-⚠ **The level-4 collision.** Both reviews put an ability at level 4 and the second
-review also starts Doctrine there. Candidates: Transwarp (universal vs
-capital-only), or nothing at all — letting level 4's identity be purely
-"Doctrine", with Transwarp deferred to a Capital Citadel. **This is the first
-decision to make**, because Doctrine is the keystone of the whole specialisation
-layer and its alternatives are all level-4 content.
+**Resolved.** The level-4 collision is decided: **level 4 is Doctrine**, and
+**Transwarp is the capstone at level 6**. Level 6's previous occupant,
+Interdictor, becomes a **Capital Citadel distinction** rather than a tier ability
+— which both reviews wanted for the galaxy-scale items, and which gives a capital
+an identity distinct from an ordinary level-6 world so not every mature planet
+becomes a strategic weapon.
+
+This also puts the most expensive ability in the codebase (Part VII.5) at the
+*top* of the curve rather than the bottom, which is the right way round: Transwarp
+touches the sector cap, the private-copy persistence problem, and four dependent
+pathfinding consumers, and none of that should be reachable until the specialisation
+layer exists.
 
 ## VII.9 Recommended order
 
@@ -959,8 +965,10 @@ independent of the ones after it.
 1. **Surface `productionEfficiency` on the colony card.** Part I §11.1. One label.
    An invisible roll that halves output on half of all worlds is an unfairness, and
    it should not survive contact with any of the content below.
-2. **Natural population growth.** Part I §11.2 and Part VII.6. Small, independent,
-   and the precondition for the whole 4+ content programme.
+2. **Homeworld colonist production.** Part I §11.2, Part VII.6, and the decisions
+   in Part VIII. Small, independent, and the precondition for the whole 4+ content
+   programme — the gates are 15,000 and 50,000 colonists, and today they are bought
+   at a price that varies **23×** with where your capital happens to sit.
 3. **Legibility.** Tier glyphs on the galaxy map and sector view. Part I §11 and
    Part V question 12. Cheapest high-emotion change available; do it early so the
    rest of the work is visible as it lands.
@@ -999,21 +1007,79 @@ was decided.
 | 4 | Supply lanes — reserve, throughput, does the port economy survive? | **Open**, and now the largest economic decision in the system (Part II.B). Not blocking anything before step 7. |
 | 5 | Efficiency reroll — band or full range? | **Moot.** A tier-granted reroll was dropped in favour of simply *showing* the roll (step 1 of Part VII.9). The identity objection stands if it is ever revived. |
 | 6 | Sector influence — split into three designs? | **Open**, and answered in the negative: it was not accepted as a tier ability. Revisit only if attraction (step 3) is insufficient. |
-| 7 | Capital-gated capability? | **Accepted** as a concept — Capital Citadel is distinct from a normal Citadel (VII.8). The Transwarp collision at level 4 is now the **first decision to make**. |
+| 7 | Capital-gated capability? | **Answered.** Transwarp is the level-6 capstone; **Interdictor is capital-gated**, which gives a Capital Citadel an identity no ordinary level-6 world has (VII.8). |
 | 8 | Attraction vs repulsion? | **Answered: both.** Repulsion is the restored abilities; attraction is the multiplayer shadow (VII.7), which is the single-player half of multiplayer economics. |
-| 9 | The second economy axis? | **Deferred, with a caveat.** Tier-gated freight would gate an already-shipped feature behind hours of play (VII.6.1). Needs a decision before it is written into a Doctrine. |
+| 9 | The second economy axis? | **Deferred — and the hold is explicitly not it.** The 5,000-unit freighter stays ungated and unchanged, and player ship holds are a different system with no effect on it (below). |
 | 10 | Endgame rarity — a number, not an adjective? | **Open.** Depends on the Transwarp decision. |
-| 11 | Colonist growth — what rate, does it break the supply bill? | **Answered: do it, early.** Step 2 of Part VII.9. It gates the whole 4+ content programme (VII.6.2). |
+| 11 | Colonist growth — what rate, does it break the supply bill? | **Answered, and re-aimed.** Not growth on ordinary worlds: **homeworlds produce colonists in bulk per game day**, normal growth stays negligible, and the distance premium becomes a transport cost rather than a 23× scarcity multiplier (below). Step 2 of Part VII.9. |
 | 12 | Legibility outside the planet screen? | **Answered: tier glyphs on the galaxy map and sector view.** Step 3, deliberately early so the rest of the work is visible as it lands. |
 
-### Three decisions now outstanding
+### Decisions taken
 
-1. **The level-4 collision.** Doctrine, or Transwarp, or both at 4? Everything in
-   the specialisation layer depends on the answer.
-2. **Does a Doctrine gate freight capacity?** VII.6.1 — a progression decision
-   about a shipped feature, not a new one.
-3. **Colonist growth rate**, and whether natural growth weakens the "ignored world"
-   pressure the storage floor creates.
+**1. Transwarp is the capstone.** Level 4 is Doctrine; level 6 is Transwarp;
+Interdictor moves to the Capital Citadel. See VII.8.
+
+**2. The freight hold stays at 5,000, ungated and unchanged.** A Doctrine must not
+gate it — and it is worth being precise about why, because there are two hold
+systems and only one of them is in play here:
+
+- `PlanetTradeService.freighterHold = 5000` is the **port's** hull. The player's
+  hold and engine are deliberately not involved; a job is a credit-and-time cost.
+- `Player.maxCargo` comes from `ShipDefinition.maxCargo` and has **no effect on
+  planet trade at all**. Upgrading ships or hold capacity cannot move this
+  mechanic, in either direction.
+
+The 5,000 figure is already very generous against the TradeWars original, where
+holds ran a few hundred. It stays until there is a reason.
+
+**One coupling to remember if it ever changes:** the hold is the **risk dial**. Run
+count is `ceil(units / freighterHold)` and order risk is `1 - Π(1-p)` over those
+runs, so raising the hold means fewer runs and a quietly *safer* quote. Any change
+there has to re-derive the risk percentage at the same time, or the quoted number
+changes meaning without anyone deciding it should.
+
+**3. Colonist supply comes from the homeworld, in bulk — not from normal growth.**
+
+The first review proposed a per-tick growth rate for ordinary worlds. That was the
+wrong problem: in TradeWars, ordinary worlds never grew colonists into
+significance either, and players bought them. What made the genre work was that the
+**main planet produced colonists locally**, which collapsed the distance premium to
+nothing because the supply was next door.
+
+The geography tax this codebase actually has, measured:
+
+| Distance from capital | Per colonist | 50,000 colonists (the 5→6 gate) |
+|---|---|---|
+| 1 hop | 15 cr | 750,000 |
+| 4 hops (median) | 120 cr | 6,000,000 |
+| 8 hops | 340 cr | **17,000,000** |
+
+`ColonistSupply.costFor` is **per colonist**, so two identical colonies differ by
+**23×** on capital position alone. That is a lottery, not a difficulty setting.
+
+So, following the source game:
+
+- **Homeworlds produce colonists in bulk, per game day** — scaled to this
+  economy's gates (15,000 and 50,000), not TradeWars' 1,000,000. A level-4 colony
+  should be supplyable in a draw or two.
+- **Normal planets keep negligible growth.** Flavour, as in the genre.
+- **Purchase from the capital remains, and so does the distance premium** — but it
+  now buys the *transport* of goods that exist, rather than conjuring colonists at
+  a scarcity price. The tax survives as a visible hauling cost that batching
+  mitigates, rather than as a multiplier on the colony's worth.
+- Harsh types stop being penalised twice: a Toxic colony is fed from the capital
+  on the same terms as an Ocean one.
+
+It also composes with what already exists — homeworld ship production is already a
+`RepopulationService` behaviour, so a colonist infusion is a sibling of a working
+system rather than a new one.
+
+### Still outstanding
+
+**Tuning only, no design open:** the homeworld infusion rate per game day, and
+whether it should be flat or scale with the homeworld's own population (which
+would make developing your capital matter directly, and is a natural candidate for
+the Capital Citadel identity in decision 1).
 
 ### One thing worth saying plainly
 

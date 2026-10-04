@@ -58,8 +58,14 @@ player-avatar.md`) name the document rather than linking it, so those need no ch
   level would gate an already-shipped feature behind hours of play; the
   geography-priced colonist gate is the precondition for all the 4+ content), and
   a consolidated six-tier direction with a build order. **Part VIII** is the
-  status of each Part V question — nine of twelve now answered, three outstanding,
-  the first being the level-4 collision. Multiplayer is intended eventually, so
+  status of each Part V question and the **decisions taken**: Transwarp is the
+  level-6 capstone with Interdictor capital-gated; the 5,000-unit freight hold
+  stays ungated and unchanged (and player ship holds are a *different* system with no
+  effect on it); and colonist supply moves to **bulk homeworld production** rather
+  than ordinary growth, because `ColonistSupply.costFor` is per colonist and two
+  identical colonies differ by **23×** on capital distance alone. Only tuning
+  remains open — the infusion rate, and whether it scales with the homeworld's own
+  population. Multiplayer is intended eventually, so
   Services and Permissions are reframed as *single-player shadows built now with AI
   principals* and a player-ID swap later, which is also what makes Settings →
   Modules pay off. **It also warns that there are two citadel systems and only
