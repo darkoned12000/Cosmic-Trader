@@ -21,17 +21,34 @@ import 'package:cosmic_trader/data/storage/npc_storage.dart';
 import 'package:cosmic_trader/data/storage/player_storage.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 
-/// A universe that **round-trips through JSON on every load**, like the real one.
+/// A universe that behaves like the real one: **one shared object graph**,
+/// written through to a JSON blob on every save.
 ///
-/// This is the correct default. The real `UniverseStorage.loadUniverse()`
-/// re-parses the file into a fresh object graph on every call, so two readers —
-/// a screen and the tick — hold *different* `Planet` instances and only the file
-/// is shared. A fake that hands back one shared list cannot reproduce that, and
-/// a test using it is testing a program the game does not run.
+/// It used to round-trip through JSON on *every load*, because that is what
+/// `UniverseStorage.loadUniverse()` did — and being stricter than production was
+/// the point, because a fake that hands back one shared list cannot reproduce
+/// isolation. Production no longer isolates: it caches one graph for the
+/// session, so a screen and the tick mutate the same `Planet` and a stale
+/// write-back is not merely unlikely but unrepresentable.
+///
+/// That inversion is worth stating, because it is the trap this class used to
+/// fall into and now had to be un-trapped from. A fake *stricter* than
+/// production is not safe either — it makes tests pass by demanding a guarantee
+/// the game does not make, and it silently becomes the thing carrying the
+/// behaviour under test. When the mechanism changes, the fake has to follow it,
+/// or the tests start asserting against a program that no longer runs.
+///
+/// The blob is still real, because durability still is: it backs [snapshot] for
+/// tests that genuinely want a deep copy, and it is what `writeBackSnapshot`
+/// overwrites when a test needs to inject the stale write that can no longer
+/// happen on its own.
 class FaithfulUniverse extends UniverseStorage {
   FaithfulUniverse(List<Sector> initial) : _blob = encode(initial);
 
   String _blob;
+
+  /// The one graph, exactly as the real storage holds one.
+  List<Sector>? _graph;
 
   /// Successful writes that reached the blob, so a test can assert a save
   /// happened rather than inferring it from what the screen shows.
@@ -58,7 +75,9 @@ class FaithfulUniverse extends UniverseStorage {
         .toList();
   }
 
-  /// The current universe as a fresh object graph.
+  /// A genuine deep copy of the stored universe — the thing [loadUniverse] no
+  /// longer hands out. Used where a test needs a snapshot it can mutate freely
+  /// without disturbing the live graph.
   List<Sector> snapshot() => decode();
 
   /// Announces a completed write the way the real storage does.
@@ -75,8 +94,13 @@ class FaithfulUniverse extends UniverseStorage {
   }
 
   /// Simulates `GameTickService` finishing a pass: it writes back the snapshot
-  /// it loaded **before** someone else's write landed. Used by the concurrent
-  /// write tests; harmless otherwise.
+  /// it loaded **before** someone else's write landed.
+  ///
+  /// This is now **fault injection, not simulation**. It cannot happen through
+  /// the normal API — a tick loading and saving the graph holds the same objects
+  /// a screen does, so there is no stale copy for it to write back. It overwrites
+  /// the *file* only, and deliberately leaves `_graph` alone, so a test can prove
+  /// the running game is untouched by a rollback of the durable state.
   void writeBackSnapshot(List<Sector> snapshot) {
     _blob = encode(snapshot);
     writes++;
@@ -84,17 +108,21 @@ class FaithfulUniverse extends UniverseStorage {
   }
 
   @override
+  List<Sector>? get sharedUniverse => _graph;
+
+  @override
   Future<void> ensureUniverse() async {}
 
   @override
   Future<List<Sector>> loadUniverse() async {
     reads++;
-    return decode();
+    if (blobThrows) throw StateError('universe blob is unreadable');
+    return _graph ??= decode();
   }
 
-  /// Merges by sector id, exactly as the real one does — including the refusal
-  /// paths, so a caller that ignores the `bool` fails the same way it would in
-  /// the app.
+  /// Merges by sector id into the shared graph, exactly as the real one does —
+  /// including the refusal paths, so a caller that ignores the `bool` fails the
+  /// same way it would in the app.
   @override
   Future<bool> saveSectors(List<Sector> updated) async {
     final existing = await loadUniverse();
@@ -112,6 +140,7 @@ class FaithfulUniverse extends UniverseStorage {
 
   @override
   Future<void> saveUniverse(List<Sector> sectors) async {
+    if (!identical(_graph, sectors)) _graph = sectors;
     _blob = encode(sectors);
     writes++;
     _announce();
@@ -121,16 +150,16 @@ class FaithfulUniverse extends UniverseStorage {
   void logSectorStats(List<Sector> _) {}
 }
 
-/// **One file still carries the unfaithful fake: `test/planet_colony_ui_test.dart`.**
+/// **One file still carries a private fake: `test/planet_colony_ui_test.dart`.**
 ///
-/// Its `_FakeUniverse` hands back the caller's own `List<Sector>`, so the test
-/// mutates a `Planet` directly and the screen sees it because they are the same
-/// object. Swapping it for [FaithfulUniverse] breaks **13 of that file's 36
-/// tests** — measured, not estimated — because those tests rely on the sharing
-/// to observe their subject at all. Fixing it means changing the fixture pattern
-/// (mutate, save, then read back) rather than the class, which is a task of its
-/// own. Left in place deliberately so the migration did not quietly weaken a
-/// third of a file's coverage on the way to a commit.
+/// Its `_FakeUniverse` hands back the caller's own `List<Sector>` *and* makes
+/// `saveSectors` a no-op. Under the old architecture that made it unfaithful in
+/// the dangerous direction — a screen's mutation and the tick's were always the
+/// same objects, so "the screen forgot to save" was unobservable. Under the
+/// shared graph it is faithful in the ways that matter (one graph, real writes
+/// observed), so it no longer needs migrating for correctness. It is still worth
+/// folding in eventually, because two fake styles is one more thing to keep in
+/// step with the real thing.
 ///
 /// A read-only universe, for screens that only ever load.
 ///
@@ -157,26 +186,39 @@ class ReadOnlyUniverse extends UniverseStorage {
 /// Reproduces the real storage's silent failure modes — it refuses to merge
 /// after a failed load, and drops a sector it cannot find — so a test can assert
 /// that a screen does not lose the player's change when the save fails.
+///
+/// Shares the graph like the real storage does. That is what makes it useful for
+/// the durability question specifically: the change stays live in memory (the
+/// simulation keeps running) while the file never catches up, which is exactly
+/// the split the real `saveUniverse` now has.
 class FailingUniverse extends UniverseStorage {
   FailingUniverse(List<Sector> initial)
       : _blob = FaithfulUniverse.encode(initial);
 
   final String _blob;
 
+  /// The one graph, populated on first load. Adopting on save matters here: a
+  /// write that never lands must still leave the running universe as truth, or
+  /// the test would be asserting against a screen that lost state.
+  List<Sector>? _graph;
+
   @override
   Future<void> ensureUniverse() async {}
 
   @override
-  Future<List<Sector>> loadUniverse() async => (jsonDecode(_blob) as List)
-      .cast<Map<String, dynamic>>()
-      .map(Sector.fromJson)
-      .toList();
+  Future<List<Sector>> loadUniverse() async =>
+      _graph ??= (jsonDecode(_blob) as List)
+          .cast<Map<String, dynamic>>()
+          .map(Sector.fromJson)
+          .toList();
 
   @override
   Future<bool> saveSectors(List<Sector> sectors) async => false;
 
   @override
-  Future<void> saveUniverse(List<Sector> sectors) async {}
+  Future<void> saveUniverse(List<Sector> sectors) async {
+    if (!identical(_graph, sectors)) _graph = sectors;
+  }
 
   @override
   void logSectorStats(List<Sector> _) {}

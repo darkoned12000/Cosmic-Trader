@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
 import 'package:cosmic_trader/screens/planet_screen.dart';
+import 'package:cosmic_trader/services/planet_production_service.dart';
 import 'support/storage_fakes.dart';
 
 /// A host that rebuilds the screen on player update, like `GameShell` does.
@@ -26,14 +27,43 @@ class _HostState extends State<_Host> {
       );
 }
 
-/// A write that lands **during** a tick must survive the tick's write-back.
+/// **The tick cannot clobber a screen's write, because it has nothing stale to
+/// clobber it with.** The hazard this file used to guard is unrepresentable.
 ///
-/// `GameTickService` loads the whole universe, runs the NPC pass over the roster
-/// (seconds of BFS-heavy work at scale), then writes that snapshot back. A
-/// recruit landing inside that window is overwritten by a copy taken before it
-/// existed — no error, no log, and indistinguishable from the feature never
-/// having worked. Reported as "credits and energy consumed, and I never see
-/// information on the colonists' transportation".
+/// The bug it replaced was real and expensive. `GameTickService` loaded the whole
+/// universe, ran the NPC pass over the roster (seconds of BFS-heavy work at
+/// scale), then wrote that snapshot back. A recruit landing inside that window
+/// was overwritten by a copy taken before it existed — no error, no log, and
+/// indistinguishable from the feature never having worked. Reported as "credits
+/// and energy consumed, and I never see information on the colonists'
+/// transportation".
+///
+/// It cost roughly **400 lines** in `planet_screen.dart` to survive: an
+/// `_unconfirmedShipments` intent re-asserted onto every fresh read, a bounded
+/// re-dispatch window because "a missing job is clobbered, never landed", a
+/// parallel ledger for withdrawals (the *infinite-money* variant, where the same
+/// revenue withdrew twice), a two-stage watch for a late stale write-back, and a
+/// third re-dispatch mechanism for paid-for market orders.
+///
+/// All of that guarded a single thing: **a second object graph existing**. Every
+/// screen called `loadUniverse()` and got a fresh parse, so "stale" was something
+/// the system could express. Storage now shares one graph for the session, so
+/// there is no second copy, and the hazard is not merely unlikely — it cannot be
+/// written down.
+///
+/// Two things moved rather than vanished, and it is worth knowing where:
+///
+/// - **End-to-end survival through the real tick** is `colonist_transit_tick_
+///   test.dart`, which drives `GameTickService.processTickNow()`. That is the
+///   behavioural half and it is unchanged.
+/// - **The storage-level identity claim** is `shared_universe_test.dart`, which
+///   drives the *real* `UniverseStorage` against a temp directory rather than a
+///   double.
+///
+/// What is left here is the part that is specifically about the hazard: that the
+/// screen and a tick pass are demonstrably looking at the same objects, and that a
+/// tick pass driven to completion leaves the player's purchase alone — with no
+/// injected clobber, because none is needed.
 void main() {
   late FaithfulUniverse store;
   late Player initial;
@@ -82,8 +112,17 @@ void main() {
             planets: [world()]),
       ];
 
-  Future<Planet> onDisk() async =>
+  /// The live world, read the way any reader would.
+  Future<Planet> live() async =>
       (await store.loadUniverse()).firstWhere((s) => s.id == 7).planets.first;
+
+  /// A `GameTickService` pass, in the shape that used to be the hazard: load,
+  /// work the whole universe, write the result back.
+  Future<void> tickPass() async {
+    final sectors = await store.loadUniverse();
+    PlanetProductionService.process(sectors);
+    await store.saveUniverse(sectors);
+  }
 
   setUp(() {
     store = FaithfulUniverse(galaxy());
@@ -110,12 +149,10 @@ void main() {
     );
   });
 
-  testWidgets('a recruit survives a tick writing back a pre-recruit snapshot',
-      (tester) async {
+  Future<void> mountScreen(WidgetTester tester) async {
     tester.view.physicalSize = const Size(1400, 4000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
       home: _Host(initial: initial),
@@ -123,87 +160,127 @@ void main() {
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
+  }
 
-    // The tick's snapshot, taken before the purchase exists.
-    final tickSnapshot = store.snapshot();
+  testWidgets('a screen and a tick pass are demonstrably the same world',
+      (tester) async {
+    await mountScreen(tester);
+
+    // Both read the universe the way the app does — `loadUniverse`. Before the
+    // shared graph these were two parses and two sets of `Planet` objects, which
+    // is the whole hazard. Asserting identity here is what makes the file's
+    // claim specific to *this* mechanism rather than to storage in general,
+    // where `shared_universe_test.dart` already covers it.
+    final asTheTickSeesIt = await store.loadUniverse();
+    final tickWorld =
+        asTheTickSeesIt.firstWhere((s) => s.id == 7).planets.first;
+
+    // Sector 7, not `first`: `galaxy()` puts the homeworld in slot 0, and a
+    // sector can hold several worlds — the same reason `live()` does not say
+    // `first`.
+    expect(identical(tickWorld, (await live())), isTrue);
+  });
+
+  testWidgets('a full tick pass leaves a screen-made purchase intact',
+      (tester) async {
+    await mountScreen(tester);
 
     await tester.tap(find.text('Recruit'));
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
-    expect((await onDisk()).colonistsInTransit, greaterThan(0));
+    final before = (await live()).colonistsInTransit;
+    expect(before, greaterThan(0));
 
-    // The tick finishes and writes its stale snapshot over the top.
-    store.writeBackSnapshot(tickSnapshot);
-    expect((await onDisk()).colonistsInTransit, 0,
-        reason: 'precondition: the clobber actually happened');
+    // The pass that used to destroy it: work the whole universe, then write it
+    // back. No injected stale snapshot, because there is no stale snapshot to
+    // inject — the tick and the screen loaded the same objects.
+    await tickPass();
 
-    // The screen's 1-second refresh must notice and re-assert, not quietly
-    // adopt the loss.
+    expect((await live()).colonistsInTransit, before,
+        reason: 'the tick wrote back the world it was given, and that world '
+            'contained the purchase');
+
+    // And the panel is still telling the player their colonists are coming,
+    // without any re-assertion machinery: the object it reads is the one the
+    // tick just worked.
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    expect(find.textContaining('colonists en route'), findsOneWidget);
+  });
+
+  testWidgets('a screen adopts a REPLACED graph, so regeneration is visible',
+      (tester) async {
+    await mountScreen(tester);
+    expect(find.text('Xandor'), findsWidgets);
+
+    // Regeneration installs a **brand-new list**: a regenerated galaxy is
+    // genuinely different sectors, not mutated ones, so `saveUniverse` adopts a
+    // different list object. Sharing holds identity for the whole session with
+    // exactly this one exception, and a screen that missed it would sit on the
+    // old universe forever — the same "reads once in initState" staleness the
+    // shared graph was supposed to end.
+    final regenerated = [
+      Sector(
+        id: 7,
+        name: 'Kronos Reach',
+        x: 0,
+        y: 0,
+        warpRoutes: const [],
+        planets: [
+          Planet(
+            id: 'w-2',
+            name: 'Yxvarra',
+            planetType: 'Ocean',
+            owner: FactionClass.trader,
+            scanned: true,
+            level: 1,
+            population: 500,
+            hull: 40000,
+            maxHull: 40000,
+          )
+        ],
+      )
+    ];
+    await store.saveUniverse(regenerated);
+
     for (var i = 0; i < 3; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
 
-    expect((await onDisk()).colonistsInTransit, greaterThan(0),
-        reason:
-            'the purchase must be restored to disk, not just to the screen');
-    expect(find.textContaining('colonists en route'), findsOneWidget,
-        reason: 'and the panel must still be telling the player it is coming');
+    expect(find.text('Yxvarra'), findsWidgets,
+        reason: 'the screen must pick up the regenerated universe, not keep '
+            'serving the one it was mounted with');
   });
 
-  testWidgets('the mitigation converges across REPEATED clobbers',
+  testWidgets('rolling the durable file back cannot undo a live purchase',
       (tester) async {
-    // A tick whose pass takes longer than its own 30s interval never sleeps:
-    // `processTickNow` skips overlapping fires, so every screen write lands
-    // inside a load→save window. That turns an intermittent race into a
-    // certainty, and it is the strongest explanation for a 100% failure rate.
-    // So the mitigation has to survive being clobbered over and over, not once.
-    tester.view.physicalSize = const Size(1400, 4000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await mountScreen(tester);
 
-    await tester.pumpWidget(MaterialApp(
-      theme: ThemeData.dark(useMaterial3: true),
-      home: _Host(initial: initial),
-    ));
-    for (var i = 0; i < 12; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
+    // A snapshot of the stored file from before the purchase — the durable-state
+    // equivalent of the old clobber, and the one thing that can still happen.
+    final beforePurchase = store.snapshot();
 
-    final tickSnapshot = store.snapshot();
     await tester.tap(find.text('Recruit'));
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
+    expect((await live()).colonistsInTransit, greaterThan(0));
 
-    for (var round = 0; round < 4; round++) {
-      store.writeBackSnapshot(tickSnapshot);
-      for (var i = 0; i < 2; i++) {
-        await tester.pump(const Duration(seconds: 1));
-      }
-      expect((await onDisk()).colonistsInTransit, greaterThan(0),
-          reason: 'round $round: the shipment must be back on disk');
-      expect(find.textContaining('colonists en route'), findsOneWidget,
-          reason: 'round $round: and still on screen');
+    store.writeBackSnapshot(beforePurchase);
+
+    // The **file** is rolled back. The running game is not: the graph is the
+    // simulation and the file is only its durability, so a lost or stale file
+    // costs progress on restart rather than the session in progress. This is the
+    // inversion that makes the old test's precondition unreachable — it could not
+    // observe the loss at all, because there is nothing left to lose.
+    expect((await live()).colonistsInTransit, greaterThan(0),
+        reason:
+            'a rollback of durable state must not reach into the simulation');
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(seconds: 1));
     }
-  });
-
-  test('the mechanism: a stale whole-universe write does clobber a fresh one',
-      () async {
-    // The raw storage behaviour the reconciliation exists for. If this ever stops
-    // being true, the reconciliation is dead weight and should be reconsidered —
-    // but do not delete it without deleting the screen's intent-tracking too.
-    final snapshot = await store.loadUniverse();
-    final fresh = await store.loadUniverse();
-    // Sector 7, not `first`: `galaxy()` puts the homeworld in slot 0, and the
-    // whole point is that a sector can hold several worlds.
-    fresh.firstWhere((s) => s.id == 7).planets.first.dispatchColonists(100);
-    await store.saveSectors(fresh);
-    expect((await onDisk()).colonistsInTransit, 100);
-
-    await store.saveUniverse(snapshot);
-    expect((await onDisk()).colonistsInTransit, 0,
-        reason: 'a whole-universe write from a stale snapshot overwrites newer '
-            'writes — this is the hazard, and why the screen reconciles');
+    expect(find.textContaining('colonists en route'), findsOneWidget);
   });
 }

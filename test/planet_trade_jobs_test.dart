@@ -1993,9 +1993,19 @@ void main() {
       PlanetTradeService.advanceAll(loaded, rng: _rng);
       await store.saveUniverse(loaded);
 
-      var reloaded = await store.loadUniverse();
-      // Must be a different object graph (the productionRemainder lesson).
-      expect(identical(loaded, reloaded), isFalse);
+      // Reload from the **blob**, which is what models a restart. It used to
+      // come from `loadUniverse()`, asserting the graph was a different object —
+      // "must be a different object graph (the productionRemainder lesson)".
+      //
+      // That assertion is now inverted. Storage shares one graph for the
+      // session, so a load *cannot* hand back a second copy: the production-
+      // Remainder bug needed a re-parse to throw the carry away, and there is no
+      // re-parse left to do it. The lesson underneath still holds — a counter
+      // that is not persisted resets — but it is a claim about **durability**,
+      // so the guard has to cross the durability boundary. `snapshot()` is that
+      // boundary: a genuine decode of the stored JSON, exactly what a relaunched
+      // app sees, and nothing like the in-memory reload it replaces.
+      var reloaded = store.snapshot();
       final job = reloaded.first.planets.first.tradeJobs.single;
       expect(job.unitsRemaining, 4);
       expect(job.ticksRemaining, 1);

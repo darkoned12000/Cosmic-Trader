@@ -23,44 +23,6 @@ import 'package:cosmic_trader/services/game_clock.dart';
 import 'package:cosmic_trader/services/planet_trade_service.dart';
 import 'package:cosmic_trader/data/models/trade_job.dart';
 
-/// One placed market order awaiting confirmation, as data rather than as
-/// live job objects: the poll re-reads the universe into a fresh graph, so
-/// holding object references would pin the stale copy.
-class _PendingShare {
-  _PendingShare({
-    required this.jobId,
-    required this.portSectorId,
-    required this.commodity,
-    required this.direction,
-    required this.units,
-    required this.ticksPerRun,
-    required this.unitPrice,
-  });
-
-  final String jobId;
-  final int portSectorId;
-  final String commodity;
-  final TradeDirection direction;
-  final int units;
-  final int ticksPerRun;
-  final int unitPrice;
-}
-
-/// An order this screen placed that the stored universe has not yet
-/// confirmed — reconciled in [_syncFromDisk].
-class _PendingOrder {
-  _PendingOrder({
-    required this.planetId,
-    required this.orderId,
-    required this.shares,
-  });
-
-  final String planetId;
-  final String orderId;
-  final List<_PendingShare> shares;
-  int age = 0;
-}
-
 class PlanetScreen extends StatefulWidget {
   final Player player;
   final Function(Player) onPlayerUpdate;
@@ -118,80 +80,78 @@ class _PlanetScreenState extends State<PlanetScreen> {
   List<Sector> _allSectors = [];
   bool _loading = true;
 
-  /// Live refresh. Colony production runs on the game tick, which mutates the
-  /// planet in place — the screen already holds the same object references, so
-  /// the numbers were *current* and simply never repainted. That made a live
-  /// colony look frozen until you left the tab and came back.
+  /// Live refresh: repaints when the game tick changes something on screen.
   ///
   /// A poll rather than a push, because the tick service has no notifier for
-  /// this and adding one just for this screen is not worth the coupling. Guarded
-  /// by [_fingerprint] so `setState` only fires when something actually moved —
-  /// the tick is 30s, so the alternative is ~30 pointless rebuilds a minute.
+  /// this. Guarded by [_fingerprint] so `setState` only fires when something
+  /// actually moved — the tick is 30s, so the alternative is ~30 pointless
+  /// rebuilds a minute.
+  ///
+  /// The poll **reads nothing at all**. It used to re-parse the whole universe
+  /// out of the file, because this screen held a private object graph. Storage
+  /// now hands out one shared graph, so the tick is mutating the very `Planet`s
+  /// this screen already holds. All that remains is noticing the change and
+  /// repainting.
   Timer? _refresh;
 
   /// Cheap digest of everything on the planet screen that the tick can change.
   int _fingerprint = 0;
 
-  /// True while this screen has a write in flight.
+  /// Sectors whose write did not land, retried on the next refresh.
   ///
-  /// The reload in [_syncFromDisk] must not run during one, or it can read the
-  /// file *before* the screen's own write lands and swap in a stale sector,
-  /// visibly undoing the action the player just took.
-  bool _writeInFlight = false;
+  /// `saveSectors` has two silent refusals (the last load failed, or an id is
+  /// not in the stored universe) and swallows a third as a `debugPrint`, so a
+  /// caller that ignores its `bool` cannot tell the player either — which is how
+  /// a purchase came to take the credits and show nothing.
+  ///
+  /// This is about **durability, not correctness**. The in-memory universe is the
+  /// simulation and already holds the change, so a failed write costs progress on
+  /// restart, not the running game. It also used to have to stop the refresh
+  /// from *reverting* the change, which is the half that no longer has anything
+  /// to guard.
+  final Set<int> _unwritten = {};
 
-  /// Writes this screen's copy of [sector] to disk, suppressing the poll.
-  ///
-  /// Every mutating action on this screen has to go through here rather than
-  /// calling [UniverseStorage.saveSectors] directly, because the poll and the
-  /// write race each other.
   /// Writes one sector back and reports whether it landed.
   ///
-  /// The bool is the point. This used to be `Future<void>`, and
-  /// `UniverseStorage.saveSectors` has two silent exits — it refuses outright
-  /// when the last load failed, and it drops a sector whose id it cannot find in
-  /// the file it just read — plus a `catch` that only `debugPrint`s. A caller
-  /// that cannot tell "written" from "quietly dropped" cannot tell the player
-  /// either, which is how a purchase came to take the credits and show nothing.
-  ///
-  /// A failure is **remembered**, not just reported: see [_pendingWrite].
+  /// The bool is the point — see [_unwritten] for why a caller has to be able to
+  /// tell "written" from "quietly dropped".
   Future<bool> _persist(Sector sector) async {
-    _writeInFlight = true;
     try {
       final ok = await UniverseStorage.instance.saveSectors([sector]);
-      _pendingWrite = ok ? null : sector;
+      if (ok) {
+        _unwritten.remove(sector.id);
+      } else {
+        _unwritten.add(sector.id);
+      }
       return ok;
     } catch (e) {
       debugPrint('[PlanetScreen] persist failed: $e');
-      _pendingWrite = sector;
+      _unwritten.add(sector.id);
       return false;
-    } finally {
-      _writeInFlight = false;
     }
   }
 
   /// Writes several sectors back and reports whether they landed.
   ///
   /// The multi-sector counterpart to [_persist]: a market order mutates the
-  /// world's sector *and* every port sector that fills it, and persisting
-  /// only the first would strand the reservations — paid for, never written,
+  /// world's sector *and* every port sector that fills it, and persisting only
+  /// the first would strand the reservations — paid for, never written,
   /// resurrected on the next load.
   Future<bool> _persistAll(List<Sector> sectors) async {
-    _writeInFlight = true;
     try {
       final ok = await UniverseStorage.instance.saveSectors(sectors);
-      if (ok) {
-        _pendingWrite = null;
-        _pendingWriteSectors = null;
-      } else {
-        _pendingWriteSectors = sectors;
+      for (final s in sectors) {
+        if (ok) {
+          _unwritten.remove(s.id);
+        } else {
+          _unwritten.add(s.id);
+        }
       }
       return ok;
     } catch (e) {
       debugPrint('[PlanetScreen] persistAll failed: $e');
-      _pendingWriteSectors = sectors;
+      _unwritten.addAll(sectors.map((s) => s.id));
       return false;
-    } finally {
-      _writeInFlight = false;
     }
   }
 
@@ -202,118 +162,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// A sector can hold up to `planetsPerSector` worlds, and the screen can only
   /// show one at a time, so this is state the player controls.
   String? _selectedPlanetId;
-
-  /// A sector whose last write did **not** land, kept so the 1-second refresh
-  /// cannot revert it. Null means disk agrees with this screen.
-  ///
-  /// This is the mitigation for `saveSectors`'s silent failure modes, not a
-  /// substitute for them: a retry is attempted on every refresh, so a transient
-  /// refusal self-heals, and the player is told when it does not.
-  Sector? _pendingWrite;
-
-  /// Sectors from a multi-sector write (a market order touches the world's
-  /// sector *and* every port sector that fills it) that did not land.
-  ///
-  /// Same contract as [_pendingWrite]: retried on every refresh until disk
-  /// agrees, and the refresh keeps this screen's copies while any of it is
-  /// outstanding.
-  List<Sector>? _pendingWriteSectors;
-
-  /// Withdrawals this screen made that the stored universe has not yet
-  /// confirmed — reconciled in [_syncFromDisk] like [_unconfirmedShipments].
-  ///
-  /// The tick loads the whole universe, works it for seconds, then writes it
-  /// back. A withdrawal landing inside that window is overwritten by a
-  /// snapshot taken before it existed: the treasury jumps back to its
-  /// pre-withdrawal value and the same credits can be withdrawn again — an
-  /// infinite-money glitch with no error anywhere. Reproduced in
-  /// `test/planet_revenue_withdrawal_test.dart` with a stale write-back.
-  ///
-  /// Held as intent (which world, how much left, what it held at dispatch)
-  /// and re-asserted onto each fresh read until the stored value drops below
-  /// its pre-withdrawal figure — which proves the deduction survived. The
-  /// fixed amount cannot eat legitimate earnings: it subtracts what left and
-  /// never zeroes, so a sale landing meanwhile stays in the treasury. The
-  /// pilot is credited exactly once, in the tap handler, never here.
-  final List<({String planetId, int withdrawn, int revenueAtDispatch})>
-      _unconfirmedWithdrawals = [];
-
-  bool _hasPendingWithdrawal(String planetId) =>
-      _unconfirmedWithdrawals.any((w) => w.planetId == planetId);
-
-  /// Orders this screen placed that the stored universe has not yet
-  /// confirmed — reconciled in [_syncFromDisk].
-  ///
-  /// The withdraw intent above closes the money glitch; this closes the
-  /// order side of the same race: a tick snapshot taken before the order
-  /// existed overwrites it, leaving paid-for jobs that never were (the
-  /// likely true story behind "credits gone, no jobs"). Unlike withdrawals
-  /// the re-dispatch is bounded: a missing share is re-created only while
-  /// the order is younger than [_orderConfirmPolls] polls, because no share
-  /// can legitimately complete inside that window (one run is at least one
-  /// 30-second tick; the window is ~8 seconds) — so a missing job is
-  /// clobbered, never landed. Past the bound the order is assumed landed
-  /// and logged, because re-creating blindly could duplicate goods.
-  final List<_PendingOrder> _unconfirmedOrders = [];
-
-  /// Polls a placed order stays guarded. See [_unconfirmedOrders] for why
-  /// the bound is also the correctness argument.
-  static const int _orderConfirmPolls = 8;
-
-  /// Settled withdrawals still being watched for a late stale write-back.
-  ///
-  /// Settling on the first confirming poll proves the deduction survived the
-  /// one snapshot that was read — not that no older, still-in-flight tick
-  /// pass will land afterwards and restore it (a pass can run seconds while
-  /// the poll is 1s). Each entry carries the job digest at settle time: a
-  /// treasury climbing back with an unchanged digest cannot be earnings (a
-  /// sale landing always moves a countdown), so it is a restore and the
-  /// intent is re-registered. A changed digest means real landings happened
-  /// meanwhile — accept, possibly wrongly if a restore raced the same pass,
-  /// which is the documented residual. Bounded by age: entries expire after
-  /// [_withdrawWatchPolls] polls rather than accumulating forever.
-  final List<
-      ({
-        String planetId,
-        int withdrawn,
-        int revenueAtDispatch,
-        int jobDigest,
-        int age
-      })> _watchingWithdrawals = [];
-
-  /// Polls a settled withdrawal stays watched. Covers any tick pass that was
-  /// already in flight at settle time: passes are seconds-long, polls are
-  /// 1s, so a stale save lands (or doesn't) well inside the window.
-  static const int _withdrawWatchPolls = 10;
-
-  /// Which jobs were in flight, as one int. A sale landing always moves a
-  /// countdown or removes a finished job, so an unchanged digest across a
-  /// treasury increase rules earnings out.
-  int _jobDigest(Planet planet) {
-    var digest = planet.tradeJobs.length;
-    for (final j in planet.tradeJobs) {
-      digest = Object.hash(digest, j.id, j.unitsRemaining, j.ticksRemaining);
-    }
-    return digest;
-  }
-
-  /// Shipments this screen dispatched that the stored universe has not yet
-  /// confirmed **landed** — see the reconciliation in [_syncFromDisk].
-  ///
-  /// Held as the *intent* (which world, how many, and the population it started
-  /// from) rather than as a snapshot of the sector, because the tick legitimately
-  /// owns the rest of that sector: re-writing a whole stale sector would revert
-  /// its port restock and any NPC that moved through. Re-dispatching onto the
-  /// freshly-read world touches only the one field the player actually changed.
-  ///
-  /// Settled by the **population** moving, not by a single sighting of
-  /// `colonistsInTransit > 0`. The first version cleared the intent as soon as
-  /// disk agreed once, which left the shipment unguarded for the rest of its
-  /// flight — and the clobber that matters happens *after* the write, when the
-  /// tick finishes its pass. A guard that stops guarding one tick too early is
-  /// not a guard.
-  final List<({String planetId, int headcount, int populationAtDispatch})>
-      _unconfirmedShipments = [];
 
   /// The world to display: the selection if it still exists, else the first
   /// living one, else the first of any.
@@ -398,22 +246,12 @@ class _PlanetScreenState extends State<PlanetScreen> {
   void initState() {
     super.initState();
     _loadUniverse();
-    // Reload from disk rather than fingerprinting a private copy.
-    //
-    // This screen and [GameTickService] each call `loadUniverse()`, which
-    // **parses a fresh object graph every time**. The tick decrements the
-    // countdown on *its* copy and saves it; this screen was fingerprinting
-    // *its own* copy, which nothing else mutates. So a running build appeared
-    // frozen at whatever it was set to, forever, and then vanished on the way
-    // out. The same divergence hid every production change made by the tick.
-    //
-    // Reading every second is affordable next to a tick that already re-reads
-    // the whole file every 30s, and it is what makes the progress bar move
-    // promptly: the countdown only actually changes once per tick, so this
-    // polls for a change and repaints within a second of it happening.
+    // Repaint on tick-driven change. Guarded by `_fingerprint`, so this costs
+    // nothing when the tick is idle and is what makes the construction and
+    // transit countdowns move within a second of the tick that advanced them.
     _refresh = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      _syncFromDisk();
+      _pollForTickChanges();
     });
   }
 
@@ -423,328 +261,61 @@ class _PlanetScreenState extends State<PlanetScreen> {
     super.dispose();
   }
 
-  /// Re-reads the universe and swaps in the current sector if it changed.
+  /// Repaints if the tick changed anything on the shown world.
   ///
-  /// Swaps the whole list rather than merging, so the screen holds exactly what
-  /// the tick last wrote. Only the selected world's id is carried across, since
-  /// a re-parse produces new object identities and would otherwise reset the
-  /// selection to slot 0 on every poll.
-  Future<void> _syncFromDisk() async {
-    if (_writeInFlight) return;
+  /// This was a 284-line reconciliation and is now five lines, which is the
+  /// clearest measure of what the shared graph bought. It used to re-read the
+  /// universe into a fresh copy and then re-assert every unconfirmed shipment,
+  /// withdrawal, order and settled-withdrawal-watch onto it, because a writer
+  /// holding a stale snapshot could silently overwrite any of them.
+  ///
+  /// All of that guarded against a *second object graph existing*. There is one
+  /// now, so there is nothing to re-assert and nothing to adopt — a stale copy is
+  /// not merely unlikely, it is unrepresentable. The only question left is "did
+  /// the numbers move?", which [_fingerprint] answers.
+  ///
+  /// It also retries an unlanded write. `saveSectors` can refuse silently, and
+  /// durability is worth a retry — but the change is *already* live in memory, so
+  /// this is about surviving a restart, not about protecting the running game.
+  Future<void> _pollForTickChanges() async {
+    if (_unwritten.isNotEmpty) {
+      final retry = _unwritten.toList();
+      _unwritten.clear();
+      for (final id in retry) {
+        final sector = _sectorById(id);
+        if (sector != null) await _persist(sector);
+      }
+    }
+    if (!mounted || _loading) return;
 
-    // **A write we could not land must not be reverted by a read.**
+    // Adopt a **replaced** graph. Sharing makes the graph the same object for
+    // the whole session, with one exception: `generateWithSettings` installs a
+    // brand-new list, because a regenerated galaxy is genuinely different
+    // sectors rather than mutated ones. A screen mounted across a regeneration
+    // would otherwise hold the old list forever and show a universe that no
+    // longer exists.
     //
-    // Disk is behind memory here: the player made a change, the save silently
-    // refused (or threw), and the file still holds the old value. Adopting the
-    // fresh read would undo what they just did — which is precisely the reported
-    // bug: credits deducted, no panel, and one second later the purchase gone
-    // without a word. `saveSectors` has two silent exits and a swallowed
-    // `catch`, so this is reachable without anything looking broken.
-    //
-    // So retry the write, and while it is outstanding, keep our own copy. The
-    // refresh resumes the moment a write lands, which is the only condition
-    // under which disk is trustworthy again.
-    final pending = _pendingWrite;
-    if (pending != null) {
-      await _persist(pending);
-      if (_pendingWrite != null) return;
-    }
-    final pendingAll = _pendingWriteSectors;
-    if (pendingAll != null) {
-      await _persistAll(pendingAll);
-      if (_pendingWriteSectors != null) return;
+    // Identity, not equality: the list is the same object in the overwhelmingly
+    // common case, and comparing identities costs nothing where comparing
+    // contents would cost a deep walk of every sector on every tick.
+    final graph = UniverseStorage.instance.sharedUniverse;
+    if (graph != null && !identical(graph, _allSectors)) {
+      _allSectors = graph;
+      _fingerprint = -1; // force the repaint below
     }
 
-    final previousId = _currentSector?.id;
-    final List<Sector> fresh;
-    try {
-      fresh = await UniverseStorage.instance.loadUniverse();
-    } catch (_) {
-      return; // a transient read failure must not blank the screen
-    }
-    if (!mounted || fresh.isEmpty) return;
-    // A write that started while we were reading wins: the file we just read may
-    // predate it, and clobbering it would make a button look inert.
-    if (_writeInFlight) return;
-
-    // **A change this screen made must survive the tick's write-back.**
-    //
-    // `GameTickService` loads the whole universe, runs the NPC pass over the
-    // roster (seconds of BFS-heavy work at scale), then writes that snapshot
-    // back unconditionally. A recruit landing inside that window is overwritten
-    // by a copy taken before it existed — no error, no log, and indistinguishable
-    // from the feature never having worked. Reproduced in
-    // `test/concurrent_write_clobber_test.dart`.
-    //
-    // So the screen holds its own intent until the stored universe agrees. If
-    // the stored world has the shipment, the intent is settled; if it does not,
-    // the shipment is re-dispatched onto the freshly-read world and written
-    // again. It converges rather than fighting: the next tick loads what we just
-    // wrote, so it cannot clobber the same shipment twice.
-    final intent = _unconfirmedShipments;
-    if (intent.isNotEmpty) {
-      var rewrote = false;
-      final settled =
-          <({String planetId, int headcount, int populationAtDispatch})>[];
-      for (final s in intent) {
-        final stored = _planetById(fresh, s.planetId);
-        // Gone, or the population has moved: either way there is nothing left to
-        // guard. Population is the settle signal because it is what the shipment
-        // *becomes* — a single sighting of `colonistsInTransit > 0` only proves
-        // the write landed, not that it will survive the tick now in flight.
-        if (stored == null || stored.population > s.populationAtDispatch) {
-          settled.add(s);
-          continue;
-        }
-        // Still on its way, and the write landed: nothing to do this pass.
-        if (stored.colonistsInTransit > 0) continue;
-        stored.dispatchColonists(s.headcount);
-        final sector = _sectorHolding(fresh, s.planetId);
-        if (sector != null) {
-          await _persist(sector);
-          rewrote = true;
-        }
-      }
-      intent.removeWhere(settled.contains);
-      if (rewrote) {
-        if (!mounted) return;
-        _allSectors = fresh;
-        _fingerprint = _fingerprintOf(_resolvePlanetFrom(fresh));
-        setState(() {});
-        return;
-      }
-    }
-
-    // **A withdrawal must survive the same write-back.** Same mechanism as
-    // above, smaller settle signal: the stored treasury dropping below its
-    // pre-withdrawal figure proves the deduction is in the file. Anything at
-    // or above it means a stale snapshot overwrote us (or landed on top of
-    // us), so the fixed amount is subtracted again — never to zero, so a
-    // sale landing in the same window keeps its earnings. Converges because
-    // every tick pass starts from a fresh load: the first pass that starts
-    // after a re-assert carries it, and the next poll settles.
-    //
-    // Settling starts a short watch rather than ending the story (see
-    // [_watchingWithdrawals]): a still-in-flight stale pass can land after
-    // the confirming poll and restore the treasury with no intent left to
-    // catch it.
-    final withdrawals = _unconfirmedWithdrawals;
-    if (withdrawals.isNotEmpty) {
-      var rewrote = false;
-      final settledW =
-          <({String planetId, int withdrawn, int revenueAtDispatch})>[];
-      for (final w in withdrawals) {
-        final stored = _planetById(fresh, w.planetId);
-        // Gone, or the deduction is visible: watch briefly, then let go.
-        if (stored == null || stored.accumulatedRevenue < w.revenueAtDispatch) {
-          settledW.add(w);
-          if (stored != null) {
-            _watchingWithdrawals.add((
-              planetId: w.planetId,
-              withdrawn: w.withdrawn,
-              revenueAtDispatch: w.revenueAtDispatch,
-              jobDigest: _jobDigest(stored),
-              age: 0,
-            ));
-          }
-          continue;
-        }
-        stored.accumulatedRevenue -= w.withdrawn;
-        if (stored.accumulatedRevenue < 0) stored.accumulatedRevenue = 0;
-        final sector = _sectorHolding(fresh, w.planetId);
-        if (sector != null) {
-          await _persist(sector);
-          rewrote = true;
-        }
-      }
-      withdrawals.removeWhere(settledW.contains);
-      if (rewrote) {
-        if (!mounted) return;
-        _allSectors = fresh;
-        _fingerprint = _fingerprintOf(_resolvePlanetFrom(fresh));
-        setState(() {});
-        return;
-      }
-    }
-
-    // The settled-withdrawal watch: a late stale restore re-registers the
-    // intent (the pilot was credited once, at the tap — this only moves the
-    // treasury back down). Entries expire by age so the list cannot grow.
-    if (_watchingWithdrawals.isNotEmpty) {
-      final keep = <({
-        String planetId,
-        int withdrawn,
-        int revenueAtDispatch,
-        int jobDigest,
-        int age
-      })>[];
-      for (final w in _watchingWithdrawals) {
-        final stored = _planetById(fresh, w.planetId);
-        if (stored == null || w.age + 1 >= _withdrawWatchPolls) continue;
-        if (stored.accumulatedRevenue >= w.revenueAtDispatch &&
-            _jobDigest(stored) == w.jobDigest) {
-          // Restored with no landing to explain it: guard again.
-          _unconfirmedWithdrawals.add((
-            planetId: w.planetId,
-            withdrawn: w.withdrawn,
-            revenueAtDispatch: w.revenueAtDispatch,
-          ));
-          continue;
-        }
-        keep.add((
-          planetId: w.planetId,
-          withdrawn: w.withdrawn,
-          revenueAtDispatch: w.revenueAtDispatch,
-          jobDigest: _jobDigest(stored),
-          age: w.age + 1,
-        ));
-      }
-      _watchingWithdrawals
-        ..clear()
-        ..addAll(keep);
-    }
-
-    // Placed-order confirmation: re-dispatch shares a stale snapshot erased.
-    //
-    // Presence is the settle signal — every share's job id in the stored
-    // planet means the write landed. A missing share younger than
-    // [_orderConfirmPolls] polls is re-reserved and re-created under the same
-    // job id (no recharge: the pilot already paid), because no share can
-    // legitimately complete inside the window — one run is at least one
-    // 30-second tick and the window is ~8 seconds — so a missing job is
-    // clobbered, never landed. Past the bound the order is assumed landed
-    // and logged, since re-creating blindly could duplicate goods the tick
-    // already delivered.
-    if (_unconfirmedOrders.isNotEmpty) {
-      var rewrote = false;
-      final keepOrders = <_PendingOrder>[];
-      for (final o in _unconfirmedOrders) {
-        final stored = _planetById(fresh, o.planetId);
-        if (stored == null) continue;
-        final have = {for (final j in stored.tradeJobs) j.id};
-        final missing = [
-          for (final s in o.shares)
-            if (!have.contains(s.jobId)) s
-        ];
-        if (missing.isEmpty) continue;
-        if (o.age + 1 >= _orderConfirmPolls) {
-          ActionLogProvider.global.warning(
-            'Order ${o.orderId} unconfirmed after $_orderConfirmPolls polls — '
-            'assuming its runs landed.',
-          );
-          continue;
-        }
-        final touched = <Sector>[];
-        final homeSector = _sectorHolding(fresh, o.planetId);
-        if (homeSector != null) touched.add(homeSector);
-        for (final m in missing) {
-          final reservation = PlanetTradeService.reserveShare(
-            universe: fresh,
-            share: TradeAllocation(
-              portSectorId: m.portSectorId,
-              units: m.units,
-              hops: 0,
-              ticksPerRun: m.ticksPerRun,
-              unitPrice: m.unitPrice,
-            ),
-            commodity: m.commodity,
-            direction: m.direction,
-            actorFaction: widget.player.faction.name,
-          );
-          if (reservation == null) continue;
-          final job = PlanetTradeService.create(
-            planet: stored,
-            playerId: widget.player.id,
-            portSectorId: m.portSectorId,
-            commodity: m.commodity,
-            direction: m.direction,
-            units: m.units,
-            ticksPerRun: m.ticksPerRun,
-            unitPrice: m.unitPrice,
-            unitsPerRun: PlanetTradeService.freighterHold,
-            orderId: o.orderId,
-            escrowed: reservation.escrowed,
-            jobId: m.jobId,
-          );
-          if (job == null) {
-            PlanetTradeService.releaseReservation(
-              universe: fresh,
-              portSectorId: m.portSectorId,
-              commodity: m.commodity,
-              direction: m.direction,
-              units: m.units,
-              unitPrice: m.unitPrice,
-              escrowed: reservation.escrowed,
-            );
-            continue;
-          }
-          for (final s in fresh) {
-            if (s.id == m.portSectorId && !touched.any((t) => t.id == s.id)) {
-              touched.add(s);
-            }
-          }
-        }
-        o.age++;
-        keepOrders.add(o);
-        if (touched.isNotEmpty) {
-          await _persistAll(touched);
-          rewrote = true;
-        }
-      }
-      _unconfirmedOrders
-        ..clear()
-        ..addAll(keepOrders);
-      if (rewrote) {
-        if (!mounted) return;
-        _allSectors = fresh;
-        _fingerprint = _fingerprintOf(_resolvePlanetFrom(fresh));
-        setState(() {});
-        return;
-      }
-    }
-
-    final next = _fingerprintOf(_resolvePlanetFrom(fresh));
-    if (next == _fingerprint && previousId == _currentSector?.id) {
-      _allSectors = fresh;
-      return;
-    }
+    final next = _fingerprintOf(_resolvePlanet(_currentSector));
+    if (next == _fingerprint) return;
     _fingerprint = next;
-    setState(() {
-      _allSectors = fresh;
-    });
+    setState(() {});
   }
 
-  /// The world with [planetId] anywhere in [all], or null.
-  ///
-  /// By **id**, not by `planets.first`: a sector holds several worlds and the
-  /// one the shipment belongs to is not necessarily slot 0.
-  Planet? _planetById(List<Sector> all, String planetId) {
-    for (final sector in all) {
-      for (final planet in sector.planets) {
-        if (planet.id == planetId) return planet;
-      }
+  /// The sector with [id], or null.
+  Sector? _sectorById(int id) {
+    for (final sector in _allSectors) {
+      if (sector.id == id) return sector;
     }
     return null;
-  }
-
-  /// The sector holding [planetId], or null.
-  Sector? _sectorHolding(List<Sector> all, String planetId) {
-    for (final sector in all) {
-      for (final planet in sector.planets) {
-        if (planet.id == planetId) return sector;
-      }
-    }
-    return null;
-  }
-
-  /// The selected world, resolving against an explicit sector list.
-  Planet? _resolvePlanetFrom(List<Sector> all) {
-    if (all.isEmpty) return null;
-    final sector = all.firstWhere(
-      (s) => s.id == widget.player.currentSectorId,
-      orElse: () => all.first,
-    );
-    return _selectFrom(sector.planets);
   }
 
   Future<void> _loadUniverse() async {
@@ -1583,8 +1154,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
   /// reports take.
   Widget _buildTreasuryVault(Planet planet, ColorScheme cs) {
     final revenue = planet.accumulatedRevenue;
-    final pending = _hasPendingWithdrawal(planet.id);
-    final canTake = revenue > 0 && !pending;
+    final canTake = revenue > 0;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -1607,9 +1177,7 @@ class _PlanetScreenState extends State<PlanetScreen> {
           Text(
             revenue > 0
                 ? '${compact(revenue)} cr earned, awaiting collection'
-                : pending
-                    ? 'Confirming last withdrawal…'
-                    : 'No sales collected yet — sell runs land here.',
+                : 'No sales collected yet — sell runs land here.',
             style: TextStyle(
               fontSize: 11,
               color: cs.onSurface.withValues(alpha: 0.6),
@@ -1622,18 +1190,14 @@ class _PlanetScreenState extends State<PlanetScreen> {
                 child: PlanetMiniButton('Withdraw', Colors.green, canTake,
                     () => _withdrawRevenue(planet),
                     key: const Key('market-withdraw'),
-                    disabledReason: pending
-                        ? 'Confirming last withdrawal…'
-                        : 'No revenue to withdraw yet'),
+                    disabledReason: 'No revenue to withdraw yet'),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: PlanetMiniButton('Send to Bank', Colors.teal, canTake,
                     () => _bankRevenue(planet),
                     key: const Key('market-bank'),
-                    disabledReason: pending
-                        ? 'Confirming last withdrawal…'
-                        : 'No revenue to bank yet'),
+                    disabledReason: 'No revenue to bank yet'),
               ),
             ],
           ),
@@ -1695,25 +1259,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
     }
     widget.onPlayerUpdate(
         widget.player.copyWith(credits: widget.player.credits - due));
-    // Guard the order until the stored universe confirms it (see
-    // [_unconfirmedOrders]): a tick snapshot taken before it existed would
-    // otherwise erase paid-for jobs without a word.
-    _unconfirmedOrders.add(_PendingOrder(
-      planetId: planet.id,
-      orderId: result.orderId,
-      shares: [
-        for (final j in result.jobs)
-          _PendingShare(
-            jobId: j.id,
-            portSectorId: j.portSectorId,
-            commodity: j.commodity,
-            direction: j.direction,
-            units: j.unitsTotal,
-            ticksPerRun: j.ticksPerRun,
-            unitPrice: j.unitPrice,
-          ),
-      ],
-    ));
     if (mounted) setState(() {});
 
     final touched = <Sector>[home];
@@ -1749,8 +1294,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
   Future<void> _cancelMarketOrder(Planet planet, String orderId) async {
     final home = _currentSector;
     if (home == null) return;
-    // A cancelled order needs no confirmation guard any more.
-    _unconfirmedOrders.removeWhere((o) => o.orderId == orderId);
     final result = PlanetTradeService.cancelOrder(planet, _allSectors, orderId);
     if (result.refund > 0) {
       widget.onPlayerUpdate(widget.player
@@ -1794,15 +1337,9 @@ class _PlanetScreenState extends State<PlanetScreen> {
   Future<void> _moveRevenue(Planet planet, {required bool toBank}) async {
     final home = _currentSector;
     if (home == null) return;
-    if (_hasPendingWithdrawal(planet.id)) return;
     final amount = planet.accumulatedRevenue;
     if (amount <= 0) return;
     planet.accumulatedRevenue = 0;
-    _unconfirmedWithdrawals.add((
-      planetId: planet.id,
-      withdrawn: amount,
-      revenueAtDispatch: amount,
-    ));
     if (toBank) {
       widget.onPlayerUpdate(widget.player.copyWith(
         bankBalance: widget.player.bankBalance + amount,
@@ -1883,18 +1420,6 @@ class _PlanetScreenState extends State<PlanetScreen> {
     // memory; durability is a separate question, and a failure to persist is
     // reported rather than swallowed.
     if (mounted) setState(() {});
-
-    // Held until the stored universe confirms the shipment **landed**. A
-    // successful write is not enough: the tick can overwrite it seconds later
-    // with a snapshot taken before this purchase existed, and the player would
-    // watch the panel vanish.
-    _unconfirmedShipments.add((
-      planetId: planet.id,
-      headcount: sending,
-      // `dispatchColonists` moves nobody into `population` yet, so this is the
-      // pre-shipment figure — the baseline the landing has to beat.
-      populationAtDispatch: planet.population,
-    ));
 
     final wrote = await _persist(sector);
     if (!wrote && mounted) {

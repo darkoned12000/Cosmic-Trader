@@ -64,9 +64,23 @@ void main() {
     tester.view.physicalSize = const Size(1400, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+    // A **fresh key per pump**, so each iteration gets a fresh `State`.
+    //
+    // The screen loads the universe once, in `initState`, and deliberately never
+    // re-reads: storage hands out one shared graph, so there is nothing stale to
+    // re-read. `pumpWidget` with a structurally identical tree **reuses the
+    // existing `State`**, so `initState` did not run again and the screen kept
+    // serving the *previous* iteration's world. That used to be masked because
+    // the old `_syncFromDisk` re-parsed the file every second and quietly
+    // picked up the new store.
+    //
+    // Worth stating as its own trap: a refactor that removes needless re-reading
+    // also removes an accidental source of test freshness, and the failure reads
+    // as "the feature is broken" rather than "the fixture is stale".
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
-      home: PlanetScreen(player: player, onPlayerUpdate: (_) {}),
+      home: PlanetScreen(
+          key: UniqueKey(), player: player, onPlayerUpdate: (_) {}),
     ));
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 60));
