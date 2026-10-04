@@ -42,7 +42,7 @@ void main() {
   /// family as a rank lookup that returns on the first match: it answers "is
   /// there one?" when the question is "is there exactly one, everywhere?".
   List<String> keysOf(String screen) =>
-      RegExp('${screen}\\(\\s*\\n\\s*key:\\s*([A-Za-z_][A-Za-z0-9_]*),')
+      RegExp('$screen\\(\\s*\\n\\s*key:\\s*([A-Za-z_][A-Za-z0-9_]*),')
           .allMatches(source())
           .map((m) => m.group(1)!)
           .toList();
