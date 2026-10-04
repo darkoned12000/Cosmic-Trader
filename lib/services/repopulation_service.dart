@@ -148,6 +148,77 @@ class RepopulationService {
     return spawned;
   }
 
+  /// Controlled-homeworld **colonist** infusion. See
+  /// [Planet.colonistInfusionTicks] for why a capital makes its own colonists.
+  ///
+  /// The gating is deliberately identical to [produce]: same worlds, same
+  /// captured-yard freeze, same live-primary-idles-backup rule. Two passes over
+  /// the same list rather than one shared loop, because [produce] returns the
+  /// ships it built and naming that method "produce" while it also grew
+  /// populations would make the name lie — the same reason the ship and colonist
+  /// timers are separate fields.
+  ///
+  /// The infusion is **capped at [Planet.colonistMax]**, and it is worth being
+  /// precise about what that cap is for: **it is a guard rail, not a balance
+  /// lever.** `colonistMaxByType` runs from 2,000,000 (Terran) to 100,000
+  /// (Toxic), scaled up to 12x by Citadel level — so a capital would need on the
+  /// order of 120,000 ticks to fill a level-1 Terran one. The clamp will not bind
+  /// in normal play.
+  ///
+  /// It binds for one honest reason: to guarantee no state exists in which
+  /// `population > colonistMax`, which the colony card would render as "400% of
+  /// cap" and which nothing else in the model defends against. Reusing the
+  /// existing derived cap is cheaper than inventing a second ceiling, and the
+  /// alternative — letting a capital accumulate without bound — has no upside.
+  ///
+  /// Mutates [Planet.population] in place. The tick saves the universe, so both
+  /// the countdown and the colonists it produced survive a restart.
+  ///
+  /// Returns the worlds that infused, for logging and for tests that need to
+  /// know the pass did something.
+  static List<Planet> produceColonists(List<Sector> sectors) {
+    final infused = <Planet>[];
+    if (sectors.isEmpty) return infused;
+
+    bool livePrimary(FactionClass f) => sectors.any((s) => s.planets.any((p) =>
+        p.isHomeworld &&
+        !p.isBackupHomeworld &&
+        !p.isDestroyed &&
+        p.homeworldOf == f &&
+        (p.owner == null || p.owner == f)));
+
+    // Iterate worlds, not sectors, for the reason [produce] does: a sector can
+    // hold a capital and a frontier world, or capitals for two factions.
+    for (final s in sectors) {
+      for (final planet in s.planets) {
+        if (!planet.isHomeworld ||
+            planet.isDestroyed ||
+            planet.homeworldOf == null) {
+          continue;
+        }
+        final faction = planet.homeworldOf!;
+        // Captured yards run cold — same as ships.
+        if (planet.owner != null && planet.owner != faction) continue;
+        if (planet.isBackupHomeworld && livePrimary(faction)) continue;
+
+        planet.colonistTimer--;
+        if (planet.colonistTimer > 0) continue;
+        planet.colonistTimer = planet.colonistInterval;
+
+        final room = planet.colonistMax - planet.population;
+        // Nothing to give, or a cadence that has nothing to do. Note the timer is
+        // still reset: an infusion is a cadence, not a queue, exactly as the ship
+        // yards behave when a faction is at its cap.
+        if (room <= 0) continue;
+        final added =
+            planet.colonistInfusion < room ? planet.colonistInfusion : room;
+        planet.population += added;
+        infused.add(planet);
+      }
+    }
+    return infused;
+  }
+
   /// Ticks controlled-homeworld production (C4a): each friendly-controlled,
   /// intact homeworld counts down [Planet.productionTimer]; at zero it
   /// rolls out one ship of its faction and resets to [Planet.spawnInterval].

@@ -199,6 +199,33 @@ class _StepButton extends StatelessWidget {
 /// share of one **day's** — wrong by a factor of [Planet.supplyInterval]. A help
 /// text that states a number the model does not use is worse than no help text,
 /// so this one cannot state a stale one.
+/// Why two identical colonies can produce different amounts.
+///
+/// `productionEfficiency` is rolled in [Planet.minEfficiency]..[maxEfficiency]
+/// when a world is generated and never changes, while
+/// [Planet.developmentMultiplier] starts at 1.00 and rises with the Citadel
+/// level. Their product is [Planet.yieldScale], which is the multiplier every
+/// per-day figure on this screen is already showing — so before this row
+/// existed, two worlds of the same type with the same colonists produced visibly
+/// different numbers and the screen said nothing about why.
+///
+/// The Citadel half is the part worth watching: it is the only one a player can
+/// move, and levelling a world is exactly the purchase this number is meant to
+/// justify.
+String yieldTooltipText(Planet planet) {
+  String pct(double v) => '${(v * 100).round()}%';
+  return 'This world\'s yield.\n\n'
+      'Natural yield ${pct(planet.productionEfficiency)} — rolled when the '
+      'world was found, between ${pct(Planet.minEfficiency)} and '
+      '${pct(Planet.maxEfficiency)}, and never changes. Two worlds of the same '
+      'type can differ by up to 3x on this alone.\n\n'
+      'Citadel development ${pct(planet.developmentMultiplier)} — rises with '
+      'the world\'s level, and is the only part you can change.\n\n'
+      'Together ${pct(planet.yieldScale)}, applied to the output rather than '
+      'to the colonists, so a better-yield world reaches the same ceiling '
+      'sooner but never exceeds what the world can physically do.';
+}
+
 String supplyTooltipText(Planet planet) {
   final pct = (Planet.supplyShareOfOutput * 100).round();
   final days = Planet.supplyInterval;
@@ -395,6 +422,16 @@ class PlanetColonyCard extends StatelessWidget {
                 '${compact(planet.population)} / ${compact(planet.colonistMax)}'),
             PlanetInfoRow('On tracks', compact(planet.assignedColonists)),
             PlanetInfoRow('Reserve', compact(planet.reserveColonists)),
+            // The one figure on this screen that explains why two identical
+            // colonies differ. `productionEfficiency` is a generation-time roll
+            // in [0.5, 1.5) and `developmentMultiplier` is 1.00 at level 1, so
+            // roughly half of all generated worlds started below a yield of 1.0
+            // — and every per-day figure below already included it. Sourced from
+            // the model rather than from a stored string, so the row cannot
+            // disagree with the arithmetic the tick runs.
+            PlanetInfoRow(
+                'World yield', '${(planet.yieldScale * 100).round()}%',
+                info: yieldTooltipText(planet)),
             PlanetInfoRow(
                 'Supply draw',
                 '${compact(planet.supplyDraw)} every '

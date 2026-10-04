@@ -372,6 +372,22 @@ class GameTickService {
         }
       });
 
+      // Homeworld colonist infusion: a capital grows its own colonists in bulk,
+      // which is what makes buying them affordable — colonists cost
+      // `ColonistSupply.costFor` PER colonist, so without a local supply two
+      // identical colonies differed by 23x purely on capital distance.
+      //
+      // **Separate from the yard pass above**, though the gating is identical.
+      // Folding it in would make `produce` grow populations as well as build
+      // ships, and the name would then be wrong. The extra sweep is a few hundred
+      // comparisons.
+      DevProfiler.instance.trace('tick_colonist_infusion', () {
+        final infused = RepopulationService.produceColonists(sectors);
+        if (infused.isNotEmpty) {
+          log.system('${infused.length} capital(s) produced colonists');
+        }
+      });
+
       // Colony production: the planet screen has always displayed a per-tick
       // rate, and until this existed nothing applied it — the only code that
       // wrote a planet's stores was the credits-based transfer in the screen.

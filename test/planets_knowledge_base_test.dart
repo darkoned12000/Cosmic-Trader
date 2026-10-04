@@ -110,6 +110,34 @@ void main() {
               'one number for both');
     });
 
+    testWidgets('quotes the capital\'s colonist infusion from the model',
+        (tester) async {
+      // The guide has to say capitals produce colonists at all: without this
+      // paragraph a player reads the per-colonist price table below it, concludes
+      // distance is the whole story, and has no way to learn that a capital is a
+      // source. That was the guide's position before the feature existed, and it
+      // was not wrong then — it became wrong the moment the model changed, which is
+      // exactly the drift this file exists to catch.
+      final text = await guideText(tester);
+      expect(text, contains('Your capital grows its own'));
+      expect(text, contains('${Planet.colonistInfusionTicks} ticks'),
+          reason: 'the cadence is a model constant and must be quoted, not '
+              'typed — it has already been retuned once');
+      // Both ends of the level range, so retuning the table cannot leave one end
+      // described and the other stale.
+      expect(text, contains('${Planet.colonistInfusionByLevel[1]}'));
+      expect(text, contains('${Planet.colonistInfusionByLevel[6]}'));
+    });
+
+    testWidgets('says the purchase price is per colonist', (tester) async {
+      // The other half of the same drift. `ColonistSupply.costFor` is
+      // `pricePerColonist * count`, and the guide's table is headed "Credits per
+      // colonist" — so the multiplication is the player's assumption to check,
+      // and the reason a distant capital was worth twenty times a near one.
+      final text = await guideText(tester);
+      expect(text, contains('per colonist'));
+    });
+
     testWidgets('quotes the efficiency range from the model', (tester) async {
       final text = await guideText(tester);
       expect(text, contains('${Planet.minEfficiency}–${Planet.maxEfficiency}'));

@@ -273,6 +273,21 @@ class Planet {
   int productionTimer;
   int spawnInterval;
 
+  /// Countdown to this capital's next colonist infusion. See
+  /// [colonistInfusionTicks].
+  ///
+  /// **Persisted, and that is load-bearing rather than tidy.** A timer that lives
+  /// only in memory is not a countdown: it reloads at full on every restart and
+  /// the infusion can be deferred indefinitely. This is the same lesson as
+  /// `productionRemainder` and `Port.regenRemainder`, and it is on the model
+  /// rather than in the tick for that reason.
+  int colonistTimer;
+
+  /// Ticks between infusions. Defaults to [colonistInfusionTicks]; kept per-world
+  /// like [spawnInterval] so a generated capital can be given a different cadence
+  /// without every call site knowing.
+  int colonistInterval;
+
   // Visual
   String? imagePath;
 
@@ -323,6 +338,8 @@ class Planet {
     this.maxHull = 1000,
     this.productionTimer = 0,
     this.spawnInterval = 10,
+    this.colonistTimer = 0,
+    this.colonistInterval = colonistInfusionTicks,
     this.isBackupHomeworld = false,
     this.isDestroyed = false,
     this.imagePath,
@@ -444,6 +461,9 @@ class Planet {
     // that forgets the isDestroyed check to schedule ghosts.
     productionTimer = 0;
     spawnInterval = 0;
+    // And a corpse with a running colonist infusion would hand a fresh load of
+    // colonists to a world that no longer exists.
+    colonistTimer = 0;
     // Same reasoning for a build: a corpse with a running construction timer
     // would quietly finish an upgrade the tick then granted to a dead world.
     constructionTicksRemaining = 0;
@@ -523,6 +543,8 @@ class Planet {
       'maxHull': maxHull,
       'productionTimer': productionTimer,
       'spawnInterval': spawnInterval,
+      'colonistTimer': colonistTimer,
+      'colonistInterval': colonistInterval,
       'isBackupHomeworld': isBackupHomeworld,
       'isDestroyed': isDestroyed,
       'imagePath': imagePath,
@@ -616,6 +638,9 @@ class Planet {
       maxHull: (json['maxHull'] as num?)?.toDouble() ?? 1000,
       productionTimer: json['productionTimer'] as int? ?? 0,
       spawnInterval: json['spawnInterval'] as int? ?? 10,
+      colonistTimer: json['colonistTimer'] as int? ?? 0,
+      colonistInterval:
+          json['colonistInterval'] as int? ?? colonistInfusionTicks,
       isBackupHomeworld: json['isBackupHomeworld'] as bool? ?? false,
       isDestroyed: json['isDestroyed'] as bool? ?? false,
       imagePath: json['imagePath'] as String?,
@@ -1004,6 +1029,63 @@ class Planet {
   /// Ticks between ships from a pirate outpost, which the generator sets
   /// separately from a faction capital's cadence.
   static const int pirateOutpostSpawnInterval = 12;
+
+  // ---------------------------------------------------------------------------
+  // Homeworld colonist infusion
+  //
+  // A capital produces its own colonists, in bulk, on a cadence. This is the
+  // TradeWars rule ("the main planet refreshed a million colonists every 24
+  // hours") and it is here for a specific reason: **supply locality**. Colonists
+  // otherwise cost `ColonistSupply.costFor(count, hops)` *per colonist*, so two
+  // otherwise identical colonies differed by **23x** purely on where their
+  // faction's capital happened to sit — 750,000 credits for 50,000 colonists at
+  // one hop against 17,000,000 at eight. That is a lottery, not a difficulty
+  // setting.
+  //
+  // A capital holding colonists collapses that to a *transport* cost: you still
+  // pay `15 x hops^1.5` per colonist to move them, but you are buying goods that
+  // exist rather than conjuring them at a scarcity price. The premium is
+  // untouched, so the distance is still a decision — it just stops scaling the
+  // colony's worth by 23x.
+  //
+  // Normal planets deliberately still grow at a negligible rate. In TradeWars they
+  // did not grow into significance either, and players bought colonists; the thing
+  // that made the genre work was the main planet producing them locally, not
+  // ordinary worlds filling up on their own.
+  // ---------------------------------------------------------------------------
+
+  /// Ticks between colonist infusions from a capital.
+  ///
+  /// 240 ticks is two hours of play (120/hour), so a session reliably contains
+  /// one or two. A whole game day is 2,880 ticks — **24 hours of actual play** —
+  /// so infusing once per day would mean most pilots never see one.
+  static const int colonistInfusionTicks = 240;
+
+  /// Colonists added to a capital per infusion, by Citadel level.
+  ///
+  /// **Scaled by level, not by population** — and the distinction is load-bearing.
+  /// Population-scaled would compound against itself: the infusion raises
+  /// population, which raises the next infusion, so a capital would run away
+  /// exponentially over 2,880 ticks. Level is bounded at six entries and does not
+  /// grow from colonists alone, so levelling your capital is a real reward with no
+  /// feedback loop behind it.
+  ///
+  /// Per game day that is 48,000 at level 1 rising to 240,000 at level 6, against
+  /// level gates of 15,000 and 50,000 — so a mid-level capital can supply a
+  /// level-5 colony in a handful of infusions, and the credit and haul paths
+  /// remain open for anyone who wants them faster.
+  static const Map<int, int> colonistInfusionByLevel = {
+    1: 4000,
+    2: 6000,
+    3: 9000,
+    4: 12000,
+    5: 16000,
+    6: 20000,
+  };
+
+  /// Colonists this capital adds on its next infusion.
+  int get colonistInfusion =>
+      colonistInfusionByLevel[level.clamp(1, 6)] ?? colonistInfusionByLevel[1]!;
 
   /// The range [productionEfficiency] is rolled in when the galaxy is generated.
   ///

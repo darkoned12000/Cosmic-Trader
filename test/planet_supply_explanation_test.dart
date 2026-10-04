@@ -7,6 +7,7 @@ import 'package:cosmic_trader/data/models/planet_classes.dart';
 import 'package:cosmic_trader/data/models/player.dart';
 import 'package:cosmic_trader/data/models/sector.dart';
 import 'package:cosmic_trader/data/storage/universe_storage.dart';
+import 'package:cosmic_trader/widgets/planet/planet_info_row.dart';
 import 'package:cosmic_trader/screens/planet_screen.dart';
 import 'support/storage_fakes.dart';
 
@@ -140,16 +141,27 @@ void main() {
       // `TooltipTriggerMode.tap` fixes the gesture without touching hover.
       await _pumpPlanet(tester);
 
-      // The Supply draw bubble is the first info icon on the card.
-      final icon = find.byIcon(Icons.info_outline_rounded);
-      expect(icon, findsWidgets);
+      // The **Supply draw** bubble, scoped by its row.
+      //
+      // This was `find.byIcon(Icons.info_outline_rounded).first`, which was
+      // correct while the card had exactly one info row and silently stopped
+      // being correct when the World yield row was added above it — `.first`
+      // opened a *different* bubble and the assertion failed on a supply
+      // explanation that was working perfectly. Same family as "a finder that
+      // happens to be unique is a finder that will silently find the wrong thing
+      // later": it was never unique, it was unique by accident.
+      final icon = find.descendant(
+        of: find.widgetWithText(PlanetInfoRow, 'Supply draw'),
+        matching: find.byIcon(Icons.info_outline_rounded),
+      );
+      expect(icon, findsOneWidget);
 
       // **`find.textContaining`, not `find.byType(Text)`.** A shown tooltip
       // renders its message as a `RichText` in the overlay, so a `Text`-based
       // assertion reports "no tooltip" for a tooltip that is plainly open — it
       // cost a debugging round here, and the failure looked exactly like the
       // gesture not working.
-      await tester.tap(icon.first);
+      await tester.tap(icon);
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.textContaining('Nothing dies'), findsWidgets,

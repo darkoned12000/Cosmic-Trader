@@ -133,8 +133,14 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
               '',
               'A Duran Hegemony pilot draws Duran colonists; a Vinari draws Vinari. Nobody ships in settlers of another species, so a world under your control is the only supply of your own people — and if you lose it, you cannot grow.',
               '',
+              'Your capital grows its own. Every ${Planet.colonistInfusionTicks} ticks a controlled homeworld adds colonists to its population, and a reserve capital takes over if the main one falls. A levelled capital adds more, from ${_infusion(1)} every ${Planet.colonistInfusionTicks} ticks at Outpost to ${_infusion(6)} at Citadel.',
+              '',
+              'That is what makes buying affordable rather than possible. The per-colonist price below is severe at distance, and it is charged per colonist: so without a local supply, two identical colonies could differ by more than twenty times on nothing but where their capital happened to sit. Distance is still a real cost; it just buys you the transport of people who already exist.',
+              '',
               'Hops from homeworld    Credits per colonist    100,000 colonists    1,000,000 colonists',
               ..._transportRows(),
+              '',
+              'You can also fly there yourself, load your hold from the capital\'s population, and carry them back — which costs cargo space and one shipment of fuel instead of the per-colonist price. Both routes stay open; buying is for the pilot in a hurry, hauling is for the one already going that way.',
               '',
               'Your capital is the cheapest place to settle, and a reserve capital takes over if the main one is captured or lost. A faction with neither is an exile and buys from Terra Prime at a punishing rate — expensive, but never stuck.',
               '',
@@ -308,6 +314,16 @@ class PlanetsKnowledgeBaseScreen extends StatelessWidget {
     }
     return rows;
   }
+
+  /// A capital's colonists per infusion at [level], for the guide.
+  ///
+  /// Derived from the model rather than typed, for the reason this file's other
+  /// generated tables are generated: a help screen quoting a number the model does
+  /// not name drifts the first time that number is retuned, and it has been
+  /// retuned repeatedly.
+  int _infusion(int level) =>
+      Planet.colonistInfusionByLevel[level.clamp(1, 6)] ??
+      Planet.colonistInfusionByLevel[1]!;
 
   /// Colonist price by distance, derived from the transport model.
   List<String> _transportRows() {
