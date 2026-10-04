@@ -797,7 +797,7 @@ existing planet phases. T7 and T8 are deferred by decision, not by dependency.
 | # | Phase | Size | Depends on | Guard |
 |---|---|---|---|---|
 | **T1** | **`TradeJob` model + `PlanetTradeService`.** A job: id, planet id, port id, commodity, direction, runs total/remaining, ticks per run, ticks remaining, reserved units, credits paid, status. The service owns create / advance / cancel. No UI. | Medium | — | Unit tests driving the service directly: a job advances one run per `hops`-scaled interval, lands its cargo exactly once, and cancels cleanly |
-| **T2** | **The tick advances jobs.** `GameTickService` steps every job each pass and writes through. | Small | T1 | **DONE.** The `productionRemainder` lesson applies here. The tick re-parses the universe every pass, so a job that lives only in memory resets every tick and never progresses. Guard: mutate → save → reload → advance, for a multi-run job |
+| **T2** | **The tick advances jobs.** `GameTickService` steps every job each pass and writes through. | Small | T1 | **DONE.** The `productionRemainder` lesson applies here: a job that lives only in memory resets on every reload and never progresses. Storage now shares one universe graph, so the *per-pass* reload that used to cause it is gone — but a **restart** still re-reads from the file, so the fields still have to be persisted. Guard: mutate → save → reload **from the stored JSON** → advance, for a multi-run job. Note the reload must cross the durability boundary (a genuine decode), not just call `loadUniverse()`, which now returns the live graph and would prove nothing |
 | **T3** | **Port selection.** Given a planet, commodity, direction and volume: find ports that can actually perform the trade, nearest first, split across them when one cannot absorb the order. | Medium | — | Pure function over a universe. Guard: a 100,000-unit order against ports whose combined capacity is 60,000 splits into jobs summing to 60,000 and reports the shortfall, and never selects a port that does not trade that commodity |
 | **T4** | **Port Report: quantities and distance.** A column for what a port will still take, and hops from the player. | Small | — | Widget test on the rendered rows. The quantity data is already public (`supply`, `demand`, `effectiveMax*`); distance is not computed today |
 | **T5** | **The gate and the UI.** `GameSettings.planetTradingEnabled` + a new **Settings → Modules** panel, and Buy/Sell in Transfers with a job-status row. | Medium | T1-T4 | **DONE.** Widget test pins the gate both ways (absent off, present on); every job row carries a per-run `TickProgressBar` countdown |
@@ -2093,9 +2093,12 @@ load-bearing: a Volcanic ore track peaks at 17.36 units/tick and a Glacial organ
 track at 0.17, so without a carry **any track under 2,880 units/day banks nothing at
 all, ever**.
 
-It was a bare `= {}` with no `toJson`/`fromJson` entry, and the tick re-parses the
-universe every pass — so every planet arrived with an empty remainder and
-`floor(0 + perTick)` was computed forever. Measured across all 26 producible tracks:
+It was a bare `= {}` with no `toJson`/`fromJson` entry, and the tick re-parsed the
+whole universe every pass — so every planet arrived with an empty remainder and
+`floor(0 + perTick)` was computed forever. (The shared graph has since removed the
+per-pass reload; a restart still re-reads from the file, so the field still has to
+be persisted. The lesson is durability, and it outlived the architecture that
+provoked it.) Measured across all 26 producible tracks:
 
 | | before | after |
 |---|---|---|

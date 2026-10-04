@@ -845,8 +845,17 @@ disagree — which is this project's signature failure. Roles should be the
 services, permissions and Capital Citadels is seven interlocking new systems
 where any two can produce a bug. This project's documented failure mode is
 specifically *interlocking state that disagrees* — the trade write-clobber, the
-production remainder, the escrow slice — and every one of these writes to a world
-the tick owns and that each screen holds a private copy of.
+production remainder, the escrow slice.
+
+**One of those hazards is now closed, and it was the load-bearing one.** Storage
+shares a single universe graph for the session, so every system listed here
+writes to the *same* `Planet` objects the tick owns: a stale write-back is
+unrepresentable rather than merely unlikely, and ~400 lines of reconciliation in
+`planet_screen.dart` were deleted rather than maintained. The remaining risk is
+narrower and different in kind, and is set out in VII.9: a shared mutable world
+means a screen can now observe a tick pass **mid-flight**, where private copies
+used to hide it behind the file. Sequencing is still the right instinct, but the
+argument is no longer "every one of these writes to a different copy".
 
 ## VII.5 Transwarp's real cost, which both reviews understated
 
@@ -1084,8 +1093,17 @@ the Capital Citadel identity in decision 1).
 ### One thing worth saying plainly
 
 Nine of twelve questions are now answered and the shape is clear. The remaining
-risk is not design — it is **sequencing**. Every item above writes to a world that
-the tick owns and that each screen holds a private copy of, and this project's
-documented failures are all interlocking state that disagrees. Building eight
-interlocking systems at once would reproduce that failure at eight times the
-scale, whatever order they were designed in.
+risk is not design — it is **sequencing**. Every item above writes to a world the tick
+owns, and this project's documented failures are all interlocking state that
+disagrees. Building eight interlocking systems at once would reproduce that at
+eight times the scale, whatever order they were designed in.
+
+The obvious reason for that caution — that each screen held a *different* copy of
+the same world — **no longer holds**: storage shares one graph, so those systems
+now write to the same objects rather than to copies that silently disagree. The
+residual risk is the mirror image, and it is smaller but real: a shared mutable
+world can be observed **mid-pass**. A citadel upgrade that completes partway
+through a tick's production pass, read by a screen that repaints on the write
+signal, can show a world whose colonies have produced but whose port has not yet
+regenerated. None of the systems above needs atomicity across the whole universe
+today; that is the thing to check when one does.

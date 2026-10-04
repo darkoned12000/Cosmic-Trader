@@ -185,6 +185,19 @@ void main() {
       final healed = await corrupt.loadUniverse();
       expect(healed, hasLength(1));
       expect(corrupt.sharedUniverse, isNotNull);
+
+      // **Writes work again too**, which is the part that was actually broken.
+      // `_lastLoadFailed` used to be sticky: set by one bad parse, and cleared
+      // only by a successful load or a regeneration. Because every read went to
+      // disk, a transient failure meant *every* sector write was refused for the
+      // rest of the session while the game played on happily from memory — the
+      // reported symptom being a purchase that deducted credits and showed
+      // nothing. Not caching the failure is what makes the retry happen at all,
+      // so this asserts the user-visible consequence and not just the cache.
+      expect(await corrupt.saveSectors([healed.first]), isTrue,
+          reason:
+              'a transient load failure must not refuse writes for the rest '
+              'of the session');
     });
   });
 
