@@ -30,6 +30,18 @@ class UniverseStorage {
 
   String? _cachedPath;
 
+  /// Points this storage at [dir] instead of the platform documents directory.
+  ///
+  /// Test-only, and deliberately a real directory rather than a fake: the whole
+  /// point of the guards in `test/support/storage_fakes.dart` is that a double
+  /// which reimplements the mechanism under test vouches only for itself. The
+  /// caching, adopting and write-failure paths in this file can be exercised for
+  /// real against a temp directory, and should be — they are the load-bearing
+  /// part of the session now.
+  @visibleForTesting
+  set testDirectory(String? dir) =>
+      _cachedPath = dir == null ? null : '$dir/universe.json';
+
   Future<String> _getBasePath() async {
     final dir = await getApplicationDocumentsDirectory();
     return dir.path;
@@ -48,25 +60,54 @@ class UniverseStorage {
   /// data. Cleared by every successful or absent load.
   bool _lastLoadFailed = false;
 
+  /// **The one universe object graph**, owned here for the process lifetime.
+  ///
+  /// Every reader used to call [loadUniverse] and get a *fresh* parse, so two
+  /// holders of "the same" sector were mutating different `Planet` objects and
+  /// only disk was shared. That isolation is the root of the most serious class
+  /// of bug this project has: a writer holding a snapshot taken before someone
+  /// else's change could overwrite that change with no error anywhere, because
+  /// "stale" was a thing the system could express.
+  ///
+  /// With one graph there is no window. A tick pass and a screen are mutating the
+  /// same `Planet`, so a stale write-back is not merely unlikely, it is
+  /// unrepresentable — there is no second copy to have been stale.
+  ///
+  /// It is also the largest single performance win available in this codebase.
+  /// [saveUniverse] encodes the *entire* file on every write, and the planet
+  /// screen re-parsed the whole universe once a second; caching removes both.
+  ///
+  /// The cost is memory (the whole graph resident, which matters only at very
+  /// large universe sizes) and, more importantly, **write isolation**. A screen
+  /// previously could not corrupt the tick's state at all. That safety net is
+  /// replaced by ordering discipline — no screen may mutate a world in the middle
+  /// of a tick pass — which is a rule in a comment rather than a structure in a
+  /// type, and worth knowing is the weaker of the two.
+  List<Sector>? _graph;
+
+  /// The shared graph, or null before the first successful load. Not a
+  /// lazily-created empty list: "not loaded" and "loaded and empty" are
+  /// different states, and conflating them lets a failed first read look like a
+  /// universe.
+  List<Sector>? get sharedUniverse => _graph;
+
+  /// Discard the cache and re-parse from disk on the next [loadUniverse].
+  ///
+  /// Nothing in the game needs this — the whole point is that there is one graph
+  /// for the session. It exists for tests that swap the file underneath the
+  /// storage, and as the seam a future multiplayer authority would reload from.
+  @visibleForTesting
+  void invalidateCache() => _graph = null;
+
   /// Bumped once per **successful write**, so a screen holding the universe in
-  /// memory can learn that someone else changed it.
+  /// memory can learn that someone else changed it and repaint.
   ///
-  /// Every screen keeps a private object graph, because [loadUniverse] re-parses
-  /// the file on each call, so two widgets reading "the same" sector are
-  /// mutating different `Planet` objects and only disk is shared. That is fine
-  /// for writes and wrong for reads: the Sector tab loaded the universe once in
-  /// `initState` and never re-read, so a Genesis Torpedo fired from the Ship
-  /// screen wrote to disk and the Sector Contents panel went on showing the
-  /// sector as it had been — a freshly paid-for world that did not appear until
-  /// you left the tab and came back. Each screen patched this locally where it
-  /// burned (the planet screen polls with `_syncFromDisk`), which cannot work
-  /// for a write made from a screen that knows nothing about the Sector tab.
-  ///
-  /// A revision counter rather than a shared in-memory universe because that is
-  /// the architectural fix and this is the cheap 90% of it: it costs one int
-  /// and it makes every *existing* write path announce itself, including writes
-  /// added later. Readers still re-parse, so this buys freshness, not shared
-  /// identity — two callers can still hold different `Planet` objects.
+  /// This used to be the whole cross-screen freshness mechanism, and its own
+  /// comment admitted it bought "freshness, not shared identity" — two callers
+  /// could still hold different `Planet` objects. Now that [sharedUniverse] is
+  /// the single graph, this no longer carries correctness; it carries
+  /// *notification*. Nothing re-reads to obtain the change, because there is
+  /// nothing stale to obtain: the screen is already looking at it.
   ///
   /// Only successful writes bump it. A refused or failed write leaves the file
   /// as it was, and telling readers to re-read would be a lie they cannot
@@ -88,10 +129,23 @@ class UniverseStorage {
     _lastLoadFailed = false;
   }
 
-  /// Load the full universe from disk. Corrupt files are quarantined
-  /// aside (recoverable) with a loud log instead of silently becoming
-  /// an empty universe that later writes would cement.
+  /// The universe: **the shared graph**, loaded from disk on first call only.
+  ///
+  /// Callers mutate the returned list and its `Planet`s directly. That is
+  /// intended — it is what makes the tick and a screen the same writer — and it
+  /// means a caller that wants a private copy must make one itself, because this
+  /// no longer provides isolation.
+  ///
+  /// Corrupt files are quarantined aside (recoverable) with a loud log instead
+  /// of silently becoming an empty universe that later writes would cement. A
+  /// **failed load deliberately does not populate the cache**: the empty list
+  /// handed back is not truth, and caching it would make a corrupt file look
+  /// like an empty universe for the rest of the session. The next call retries
+  /// the read, so a transient failure self-heals and a subsequent successful
+  /// load or generation re-establishes the graph.
   Future<List<Sector>> loadUniverse() async {
+    final cached = _graph;
+    if (cached != null) return cached;
     try {
       final path = await _filePath;
       final file = File(path);
@@ -104,6 +158,7 @@ class UniverseStorage {
       final sectors =
           list.map((e) => Sector.fromJson(e as Map<String, dynamic>)).toList();
       _lastLoadFailed = false;
+      _graph = sectors;
       return sectors;
     } catch (e) {
       debugPrint('Error loading universe: $e');
@@ -117,8 +172,18 @@ class UniverseStorage {
     }
   }
 
-  /// Save the full universe to disk.
+  /// Save the universe, and make [sectors] the shared graph.
+  ///
+  /// Adopting the argument is what lets a fresh list — the generator's, a test
+  /// fixture's — become the session's truth, which is why [generateWithSettings]
+  /// needs no separate wiring. Adopting is a no-op in the normal case, where the
+  /// caller is saving the graph it was handed by [loadUniverse].
   Future<void> saveUniverse(List<Sector> sectors) async {
+    // Adopt **before** the write is attempted, so a write that fails still
+    // leaves the graph as the live truth. The in-memory universe is the
+    // simulation; the file is its durability. A failed write costs you a
+    // session's worth of progress on restart, not the running game.
+    if (!identical(_graph, sectors)) _graph = sectors;
     try {
       final path = await _filePath;
       final file = File(path);
@@ -152,6 +217,11 @@ class UniverseStorage {
 
   /// Delete the universe (useful for regeneration).
   Future<void> deleteUniverse() async {
+    // Drop the graph too. Leaving it cached would be the worst of both worlds:
+    // the file is gone, so a load returns empty, but every existing holder still
+    // points at the old graph and keeps mutating a universe that no longer
+    // exists — and the next write would resurrect it from memory.
+    _graph = null;
     try {
       final path = await _filePath;
       final file = File(path);
@@ -239,12 +309,20 @@ class UniverseStorage {
     return actualSettings;
   }
 
-  /// Save a subset of sectors by patching them into the existing file.
-  /// Loads the full file, merges [updatedSectors] by ID, and writes back.
-  /// More efficient than a full save when only a few sectors changed.
-  /// Refuses when the preceding load failed or the base is empty
-  /// (storage review C1/H1): patching onto a failed read would cement
-  /// the emptiness over the good file.
+  /// Save a subset of sectors by patching them into the shared graph.
+  ///
+  /// Merges [updatedSectors] into the graph by id, then writes the graph back.
+  /// When the caller is holding the graph's own sectors — the normal case, now
+  /// that [loadUniverse] hands out the shared list — every merge is a
+  /// self-assignment and this is simply "write the file".
+  ///
+  /// It still *merges* rather than assuming that, because "patch these foreign
+  /// copies into the universe" is a reasonable thing for a caller to mean, and
+  /// silently ignoring it would write an unrelated universe.
+  ///
+  /// Refuses when the preceding load failed or the graph is empty (storage
+  /// review C1/H1): patching onto a failed read would cement the emptiness over
+  /// the good file.
   Future<bool> saveSectors(List<Sector> updatedSectors) async {
     try {
       final existing = await loadUniverse();
