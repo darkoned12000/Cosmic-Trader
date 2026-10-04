@@ -52,9 +52,47 @@ class GameShell extends StatefulWidget {
 class _GameShellState extends State<GameShell> {
   late Player _player;
   int _currentIndex = 0;
-  Key _universeKey = UniqueKey();
+
+  /// **One key per universe-reading screen, not one shared by all of them.**
+  ///
+  /// These were a single `_universeKey` handed to `SectorView`, `GalaxyMap` and
+  /// `PortScreen`. Duplicate keys among siblings are a documented Flutter
+  /// invariant — `Column` asserts "Duplicate keys found" — but `IndexedStack` does
+  /// not enforce it, so this ran only by accident of `updateChildren`'s
+  /// index-advancing and would break silently on a reorder, with no error to
+  /// point at. It survived because nothing tested it: the only container that
+  /// checks this is one this screen does not use.
+  ///
+  /// The *intent* was always "these three reload together when the universe is
+  /// regenerated", so they stay coupled — through [_bustUniverseKeys], which is
+  /// where the coupling belongs.
+  Key _sectorViewKey = UniqueKey();
+
+  /// Found by `test/game_shell_keys_test.dart`: this was the one navigation
+  /// screen with **no** key at all, so a regeneration left it mounted on the old
+  /// universe while every sibling was re-keyed. The duplicate-key fix is what
+  /// surfaced it — a check for "no two share a key" cannot notice a screen that
+  /// shares with nobody, and an unkeyed screen is the same defect wearing the
+  /// opposite sign.
+  Key _shipStatusKey = UniqueKey();
+  Key _galaxyMapKey = UniqueKey();
+  Key _portKey = UniqueKey();
   Key _computerKey = UniqueKey();
   Key _planetKey = UniqueKey();
+
+  /// Re-keys every screen that reads the universe, together.
+  ///
+  /// Called after a regeneration: the galaxy is a different set of sectors, so a
+  /// mounted screen holding the old graph is showing something that no longer
+  /// exists. Separate keys, one bump — the two requirements are not the same
+  /// thing and conflating them is what produced the duplicate.
+  void _bustUniverseKeys() {
+    _sectorViewKey = UniqueKey();
+    _galaxyMapKey = UniqueKey();
+    _portKey = UniqueKey();
+    _shipStatusKey = UniqueKey();
+  }
+
   GameSettings _settings = GameSettings.defaults();
   int _playerUpdateVersion = 0;
   List<NpcShip> _npcs = [];
@@ -296,7 +334,7 @@ class _GameShellState extends State<GameShell> {
             recentKills: const [],
           );
         }
-        _universeKey = UniqueKey();
+        _bustUniverseKeys();
       });
       _updatePlayer(_player);
       if (mounted) {
@@ -658,7 +696,7 @@ class _GameShellState extends State<GameShell> {
                   index: _currentIndex,
                   children: [
                     SectorView(
-                      key: _universeKey,
+                      key: _sectorViewKey,
                       npcs: _npcs,
                       player: _player,
                       onPlayerUpdate: _updatePlayer,
@@ -669,23 +707,24 @@ class _GameShellState extends State<GameShell> {
                       settings: _settings,
                     ),
                     GalaxyMap(
-                      key: _universeKey,
+                      key: _galaxyMapKey,
                       npcs: _npcs,
                       currentSectorId: _player.currentSectorId,
                       onSectorSelected: _onSectorSelected,
                       playerId: _player.id,
                     ),
                     ShipStatusView(
+                        key: _shipStatusKey,
                         player: _player,
                         onPlayerUpdate: _updatePlayer,
                         worldCap: _settings.planetsPerSector),
                     ComputerScreen(
-                      key: _universeKey,
+                      key: _computerKey,
                       player: _player,
                       onPlayerUpdate: _updatePlayer,
                     ),
                     PortScreen(
-                      key: _universeKey,
+                      key: _portKey,
                       player: _player,
                       onPlayerUpdate: _updatePlayer,
                     ),
@@ -931,7 +970,7 @@ class _GameShellState extends State<GameShell> {
                         index: _currentIndex,
                         children: [
                           SectorView(
-                            key: _universeKey,
+                            key: _sectorViewKey,
                             npcs: _npcs,
                             player: _player,
                             onPlayerUpdate: _updatePlayer,
@@ -942,13 +981,14 @@ class _GameShellState extends State<GameShell> {
                             settings: _settings,
                           ),
                           GalaxyMap(
-                            key: _universeKey,
+                            key: _galaxyMapKey,
                             npcs: _npcs,
                             currentSectorId: _player.currentSectorId,
                             onSectorSelected: _onSectorSelected,
                             playerId: _player.id,
                           ),
                           ShipStatusView(
+                              key: _shipStatusKey,
                               player: _player,
                               onPlayerUpdate: _updatePlayer,
                               worldCap: _settings.planetsPerSector),
@@ -958,7 +998,7 @@ class _GameShellState extends State<GameShell> {
                             onPlayerUpdate: _updatePlayer,
                           ),
                           PortScreen(
-                            key: _universeKey,
+                            key: _portKey,
                             player: _player,
                             onPlayerUpdate: _updatePlayer,
                           ),

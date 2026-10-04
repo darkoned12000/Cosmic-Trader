@@ -784,15 +784,36 @@ class _PlanetScreenState extends State<PlanetScreen> {
           ),
         if (planet.owner == null) const SizedBox(width: 12),
         Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () {
-              ActionLogProvider.global.info('Attacking ${planet.name}...');
-            },
-            icon: const Icon(Icons.local_fire_department_rounded, size: 18),
-            label: const Text('Attack'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: cs.error,
-              side: BorderSide(color: cs.error.withValues(alpha: 0.5)),
+          child: Tooltip(
+            // Tap-triggered, not the default long press: hover works for free on
+            // desktop, but on a touch screen the reason a control is unavailable
+            // is exactly the thing nobody can discover.
+            triggerMode: TooltipTriggerMode.tap,
+            message: 'Invasion is not implemented yet. A world defends '
+                'itself, but it cannot be taken — attacking one does '
+                'nothing.',
+            child: OutlinedButton.icon(
+              // **Disabled, and it says why.** This used to log
+              // `Attacking ${planet.name}...` and then do nothing — a past-tense
+              // claim about an action that never happens, which is the most
+              // expensive kind of lie in a game. The expensive instance of this
+              // class was a detonation line saying "your notoriety **rises**"
+              // after the scale went signed: the number was right and the
+              // sentence was the loudest thing on screen.
+              //
+              // Left visible rather than removed, because the feature is real and
+              // next: `Planet.defenseLevel` is already on the same 0–4 scale
+              // `PortDefenseConfig.defenseStats` is a pure function of, so
+              // invasion reuses the port combat engine rather than needing a
+              // second one. A control with an engine behind it and no wiring yet
+              // should say so, not pretend.
+              onPressed: null,
+              icon: const Icon(Icons.local_fire_department_rounded, size: 18),
+              label: const Text('Attack'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: cs.error,
+                side: BorderSide(color: cs.error.withValues(alpha: 0.5)),
+              ),
             ),
           ),
         ),

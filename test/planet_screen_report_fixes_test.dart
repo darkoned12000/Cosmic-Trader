@@ -135,6 +135,72 @@ void main() {
     });
   });
 
+  group('the Attack button does not claim an action it never performs', () {
+    // It used to be live and logged `Attacking Xandor...`, then did nothing. A
+    // past-tense claim about an action that never happens is the most expensive
+    // kind of lie in a game, and the guard has to read the *control*, not the
+    // log: a screen that swallows the press would pass an assertion about the
+    // absence of the line.
+
+    /// A world held by **another** faction. `_buildActions` returns the owner's
+    /// card early when the player owns the world, so the Attack button is not on
+    /// screen at all for your own colony — the row below is the only place it
+    /// appears, and getting that wrong is what would make this guard vacuous.
+    Planet rivalWorld({int level = 3}) => Planet(
+          id: 'w-1',
+          name: 'Xandor',
+          planetType: 'Jungle',
+          owner: FactionClass.duran,
+          scanned: true,
+          level: level,
+          population: 100000,
+          hull: 40000,
+          maxHull: 40000,
+        );
+
+    testWidgets('it is disabled, and tapping it does nothing', (tester) async {
+      await pump(tester, rivalWorld(), pilot());
+
+      final attack = find.widgetWithText(OutlinedButton, 'Attack');
+      expect(attack, findsOneWidget,
+          reason: 'precondition: a rival world offers the control');
+
+      final button = tester.widget<OutlinedButton>(attack);
+      expect(button.enabled, isFalse,
+          reason: 'a live button that logs an attack and does nothing is the '
+              'defect');
+
+      // And the press is genuinely inert: no log line, no exception.
+      final logBefore = ActionLogProvider.global.entries.length;
+      await tester.tap(attack, warnIfMissed: false);
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      expect(ActionLogProvider.global.entries.length, logBefore,
+          reason: 'the press must not claim an attack happened');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('and it explains itself on tap', (tester) async {
+      await pump(tester, rivalWorld(), pilot());
+
+      // The reason has to be reachable without a mouse. The default gesture is
+      // a long press, which nobody would guess at on a touch screen — hence
+      // `TooltipTriggerMode.tap` on the control.
+      await tester.tap(find.text('Attack'), warnIfMissed: false);
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      // `find.textContaining`, not `find.text`: a tooltip renders as RichText,
+      // so a `byType(Text)` assertion reports "no tooltip" for one plainly open.
+      expect(find.textContaining('not implemented'), findsOneWidget,
+          reason: 'the reason a control is unavailable is the thing a player '
+              'cannot discover any other way');
+      expect(find.textContaining('does nothing'), findsOneWidget);
+    });
+  });
+
   group('the level preview opens for every tier a world can still reach', () {
     // `levelTitles.length` is 6 and the highest *level* is also 6, so the old
     // `if (to >= length) return` rejected the 5->6 preview \u2014 a real upgrade with a
