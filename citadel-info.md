@@ -1020,7 +1020,7 @@ was decided.
 | 8 | Attraction vs repulsion? | **Answered: both.** Repulsion is the restored abilities; attraction is the multiplayer shadow (VII.7), which is the single-player half of multiplayer economics. |
 | 9 | The second economy axis? | **Deferred — and the hold is explicitly not it.** The 5,000-unit freighter stays ungated and unchanged, and player ship holds are a different system with no effect on it (below). |
 | 10 | Endgame rarity — a number, not an adjective? | **Open.** Depends on the Transwarp decision. |
-| 11 | Colonist growth — what rate, does it break the supply bill? | **Answered, and re-aimed.** Not growth on ordinary worlds: **homeworlds produce colonists in bulk per game day**, normal growth stays negligible, and the distance premium becomes a transport cost rather than a 23× scarcity multiplier (below). Step 2 of Part VII.9. |
+| 11 | Colonist growth — what rate, does it break the supply bill? | **Answered, re-aimed, and BUILT.** Not growth on ordinary worlds: **capitals produce colonists in bulk** (`RepopulationService.produceColonists`, every 240 ticks, scaled by Citadel level rather than by population so it cannot compound against itself). Normal growth stays negligible; the distance premium becomes a transport cost rather than a 23× scarcity multiplier. Does not touch the supply bill, which is drawn from goods and never from colonists. Step 2 of Part VII.9. |
 | 12 | Legibility outside the planet screen? | **Answered: tier glyphs on the galaxy map and sector view.** Step 3, deliberately early so the rest of the work is visible as it lands. |
 
 ### Decisions taken
@@ -1083,12 +1083,33 @@ It also composes with what already exists — homeworld ship production is alrea
 `RepopulationService` behaviour, so a colonist infusion is a sibling of a working
 system rather than a new one.
 
-### Still outstanding
+### Still outstanding — and the one tuning question is now closed
 
-**Tuning only, no design open:** the homeworld infusion rate per game day, and
-whether it should be flat or scale with the homeworld's own population (which
-would make developing your capital matter directly, and is a natural candidate for
-the Capital Citadel identity in decision 1).
+There was one open item here: the homeworld infusion rate, and whether it should
+scale with the homeworld's own population. **Both answered, and built**
+(`RepopulationService.produceColonists`).
+
+**Level, not population.** Population-scaling would have compounded against
+itself — the infusion raises the population that sets the next infusion, so a
+capital runs away exponentially over 2,880 ticks. Citadel level is bounded at six
+entries and does not grow from colonists alone, so developing your capital is a
+real reward with no feedback loop behind it. That was the more interesting of the
+two options on the table and it is the one that survives contact with the
+arithmetic; the Capital Citadel identity from decision 1 is still free to add a
+*second*, multiplicative source if it wants one.
+
+**Every 240 ticks, not per game day.** A game day is 2,880 ticks, which is **24
+hours of actual play** — so "once per day, as TradeWars did" would mean most
+pilots never see an infusion at all. 240 ticks is two hours of play, so a session
+reliably contains one or two.
+
+**The cap is a guard rail, not a balance lever.** `colonistMaxByType` runs from
+2,000,000 (Terran) to 100,000 (Toxic), so filling a level-1 Terran capital takes
+on the order of 120,000 ticks and the clamp will not bind in normal play. It binds
+only to guarantee no `population > colonistMax` state exists for the colony card
+to render as "400% of cap". Worth stating plainly because it is easy to write a
+comment claiming that levelling "raises how much your capital can hold" and present
+it as a benefit — it is true, and it is irrelevant at these magnitudes.
 
 ### One thing worth saying plainly
 

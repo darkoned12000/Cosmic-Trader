@@ -1261,15 +1261,25 @@ The one thing that changed shape is the ban countdown: a tick deadline has
 `23:58:31`. A seconds-resolution display would be inventing precision the deadline
 does not have.
 
-### 4. Colonists are bought, not transported — MEDIUM, **PARTIALLY FIXED**
+### 4. Colonists are bought, not transported — MEDIUM, **DONE, and partly untrue**
 
 Was `_transferPrices['colonists'] = 20` credits per colonist with no cargo hold
 consumed. That table is **deleted**; colonists now come from your own faction's
-homeworld priced by distance (`15 x hops^1.5`) plus a per-shipment energy cost.
+homeworld priced by distance (`15 x hops^1.5`) plus a per-shipment energy cost,
+**and the capital produces its own** (see *Sourcing Colonists* above).
 
-Still true: colonists are an **abstract count with no cargo-hold constraint**, so
-the economy remains a pure credit-and-fuel cost rather than a hauling problem.
-That half is Phase D and remains open.
+The "abstract count with no cargo-hold constraint" half of this entry was **wrong
+by the time it was written**, and it is worth recording that rather than quietly
+deleting it. `'colonists'` is in the planet screen's `resourceTypes`, and the
+withdraw path writes into `player.cargo[type]` — so a pilot can fly to their
+capital, take colonists off its population, fly to the colony and deposit them,
+bounded by the hull's hold and one shipment's energy. The physical route has
+always worked.
+
+Which matters for the balance above: **the 23× per-colonist premium taxes the
+credit path only.** Anyone willing to fly bypasses it entirely and pays cargo
+space instead. So capitals producing colonists does not make hauling necessary —
+it makes *buying* cheap, and leaves two routes with genuinely different costs.
 
 ### 5. A removed faction name crashes the whole universe load — HIGH, FIXED
 
@@ -1932,7 +1942,7 @@ fixed number cannot serve both a small colony and a very large one.** Derive it.
 > are what `Planet.produce()` runs and what the screen displays — one
 > implementation, two readers.
 
-### Sourcing Colonists — per-faction, priced by distance
+### Sourcing Colonists — per-faction, priced by distance, **and now produced**
 
 **Colonists come from the player's own faction homeworld**, not from a shared
 pool. A Duran Hegemony pilot draws Duran colonists; a Vinari draws Vinari.
@@ -1940,6 +1950,46 @@ Nobody ships in settlers of another species, so a world under your control is
 the only supply of your own people. This is a lore constraint that turns out to
 be a good mechanical one: it means **losing your capital costs you the ability to
 grow**, not merely the ability to replace losses.
+
+**And the capital grows its own.** `RepopulationService.produceColonists` adds
+colonists to a controlled homeworld's `population` every
+`Planet.colonistInfusionTicks` (240) ticks, scaled by the capital's Citadel level
+— `Planet.colonistInfusionByLevel`, from 4,000 at Outpost to 20,000 at Citadel.
+This is the TradeWars rule ("the main planet refreshed a million colonists every
+24 hours") and it is here to fix a specific problem rather than for flavour.
+
+**The problem was the geography tax.** `ColonistSupply.costFor(count, hops)` is
+*per colonist*, priced `15 × hops^1.5`. So 50,000 colonists — the level 5→6 gate
+— cost **750,000 credits** one hop from your capital and **17,000,000** eight
+hops away. Two otherwise identical colonies differed by **23×** on capital
+position alone, which is a lottery rather than a difficulty setting, and it is
+the precondition for every tier above 3.
+
+A capital holding colonists turns the premium into a *transport* cost: the price
+is untouched, so distance stays a decision, but you are buying goods that exist
+rather than conjuring them at a scarcity price. The physical haul route — fly
+there, load the hold from the capital's population, fly back — was always
+available and remains so; buying is for the pilot in a hurry.
+
+Three decisions inside that, each recorded because the obvious alternative is
+wrong:
+
+- **Level-scaled, not population-scaled.** Population-scaling compounds against
+  itself — the infusion raises the population that sets the next infusion — so a
+  capital would run away over 2,880 ticks. Level is bounded and does not grow from
+  colonists alone.
+- **Every 240 ticks, not per game day.** A game day is 2,880 ticks = 24 hours of
+  *actual play*, so a daily infusion would mean most pilots never see one.
+- **Capped at `colonistMax`, and the cap never binds.** `colonistMaxByType` runs
+  2,000,000 down to 100,000, so filling a level-1 Terran capital takes ~120,000
+  ticks. The clamp is a guard rail against a `population > colonistMax` state the
+  colony card would render as "400% of cap", not a balance lever.
+
+Gating is identical to the ship yards: captured capitals run cold, a reserve
+capital idles while its primary lives and takes over when it does not, and
+destroyed worlds are silent. Ordinary planets deliberately still grow at a
+negligible rate — in TradeWars they did not grow into significance either, and
+buying colonists was the mechanism.
 
 Source resolution (`ColonistSupply.sourceFor`) is deliberately delegated to
 `RepopulationService.homeworldSectors`, which already encodes the control rules:
