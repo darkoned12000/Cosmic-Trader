@@ -40,9 +40,10 @@ class ScanService {
   /// Scan [planet]: spend energy, set the flag, credit the owner, persist, log.
   ///
   /// [onPersist] is supplied by the caller because *how* to save is a property
-  /// of the screen, not of the rule — the planet screen wraps its save in a
-  /// write-in-flight guard so its own poll cannot clobber the write, and that
-  /// must not be duplicated here or bypassed.
+  /// of the screen, not of the rule. The planet screen's version reports whether
+  /// the write landed and retries it if not, and that must not be duplicated
+  /// here or bypassed — a caller that swallows the result is a scan the player
+  /// pays for twice with nothing on disk.
   ///
   /// Every step is committed before the call returns. A scan that costs energy
   /// but never persists is a scan the player pays for twice.

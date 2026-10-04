@@ -56,35 +56,22 @@ class _SectorViewState extends State<SectorView> {
     super.initState();
     ActionLogProvider.global.system('Sector View V2 initialized');
     _loadUniverse();
-    // Re-read whenever *anything* writes the universe, wherever it was written
+    // Repaint whenever *anything* writes the universe, wherever it was written
     // from. Without this the tab showed a snapshot taken at mount: firing a
-    // Genesis Torpedo from the Ship screen wrote to disk, the snackbar confirmed
-    // it, and the Sector Contents panel sitting right beside it went on showing
-    // the sector as it had been — a world you had just paid for, invisible
-    // until you left the tab and came back.
+    // Genesis Torpedo from the Ship screen wrote the world, the snackbar
+    // confirmed it, and the Sector Contents panel sitting right beside it went on
+    // showing the sector as it had been — a world you had just paid for,
+    // invisible until you left the tab and came back.
+    //
+    // The signal comes from storage because the writer knows nothing about this
+    // tab; patching the launching screen cannot work. What the listener now does
+    // with it is *only* repaint — the data is already in this widget's hands
+    // because it holds the shared graph. The re-read below is a cache hit, kept
+    // for the one case identity does not survive (see [_refreshFromDisk]).
     UniverseStorage.instance.revision.addListener(_onUniverseChanged);
   }
 
-  /// Coalescing flags for the revision listener.
-  ///
-  /// A burst of writes (a tick that saved several sectors, or a scan plus a
-  /// claim) must not start a read per write, and — the part that matters —
-  /// two reads racing must not resolve out of order. If one is already in
-  /// flight, set [_refreshQueued] instead of starting another: the in-flight
-  /// read may have begun before the newest write landed, so the *next* one is
-  /// the one guaranteed to see it. Starting a second read unconditionally would
-  /// make the older of the two results win whenever it resolved second, which
-  /// is a staler view than doing nothing.
-  bool _refreshInFlight = false;
-  bool _refreshQueued = false;
-
-  void _onUniverseChanged() {
-    if (_refreshInFlight) {
-      _refreshQueued = true;
-      return;
-    }
-    _refreshFromDisk();
-  }
+  void _onUniverseChanged() => _refreshFromDisk();
 
   /// Re-reads the universe **without** the `ensureUniverse` side effect.
   ///
@@ -92,8 +79,19 @@ class _SectorViewState extends State<SectorView> {
   /// missing, so calling it from a write listener would close a loop: write →
   /// bump → refresh → ensure → write → bump. [initState] still calls it once,
   /// which is the only place that is allowed to author a universe.
+  ///
+  /// There used to be in-flight/queued coalescing here, to stop two reads racing
+  /// and resolving out of order. That guarded a real hazard and it is now
+  /// structurally impossible: the reads were two *different parses* of the file,
+  /// so the older one could land last and win. Storage shares one graph, so every
+  /// read returns the same list and the order two of them resolve in cannot
+  /// change the result. The coalescing flags are gone rather than left in place
+  /// describing a race that no longer has anywhere to occur.
+  ///
+  /// What the read *is* still for: `generateWithSettings` installs a brand-new
+  /// list, and this tab has to notice. That is the single case where the shared
+  /// graph's identity changes, and it is a one-line comparison away.
   Future<void> _refreshFromDisk() async {
-    _refreshInFlight = true;
     try {
       final sectors = await UniverseStorage.instance.loadUniverse();
       if (!mounted) return;
@@ -105,12 +103,6 @@ class _SectorViewState extends State<SectorView> {
       // A failed read must not blank the tab; the snapshot already on screen
       // is older but true, and the next write will try again.
       debugPrint('SectorView universe refresh failed: $e');
-    } finally {
-      _refreshInFlight = false;
-      if (_refreshQueued) {
-        _refreshQueued = false;
-        _onUniverseChanged();
-      }
     }
   }
 

@@ -45,9 +45,13 @@ class Sector {
   ///
   /// The consequence to keep in mind is that `isDestroyed` on a world *in this
   /// list* is now an invariant violation rather than a normal state. It still
-  /// means something on a detached instance — a screen's private copy, which
-  /// [Planet.produce] checks — and `_planetsFromJson` purges corpses from older
-  /// saves so the invariant survives a reload.
+  /// means something on a detached instance — which [Planet.produce] checks —
+  /// and `_planetsFromJson` purges corpses from older saves so the invariant
+  /// survives a reload.
+  ///
+  /// (There used to be a second source of detached instances: every screen held
+  /// its own parse of the universe. Storage shares one graph now, so this list
+  /// has one owner.)
   List<Planet> planets;
 
   /// Worlds still fit to colonise. Identical to [planets] in practice, since

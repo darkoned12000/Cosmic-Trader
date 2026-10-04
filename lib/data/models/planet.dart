@@ -1024,13 +1024,22 @@ class Planet {
   /// units/day banks nothing at all, ever**, and the world looks broken rather
   /// than slow.
   ///
-  /// **Persisted, and that is load-bearing rather than tidy.** The tick service
-  /// re-parses the whole universe on every pass, so a remainder that lived only
-  /// in memory arrived empty every tick and `_drawProduction` computed
-  /// `floor(0 + perTick)` forever — 13 of 26 tracks banking literally nothing, and
-  /// no colony able to bank the organics or industrial for even a 1→2 build.
+  /// **Persisted, and that is load-bearing rather than tidy.** A remainder that
+  /// lived only in memory arrived empty on every reload and `_drawProduction`
+  /// computed `floor(0 + perTick)` forever — 13 of 26 tracks banking literally
+  /// nothing, and no colony able to bank the organics or industrial for even a
+  /// 1→2 build.
+  ///
+  /// It was the *reload* that did it, not sharing: the tick re-parsed the whole
+  /// universe each pass, so the carry was discarded every 30 seconds. Storage
+  /// now shares one graph, which removes that particular discard — but a restart
+  /// still re-reads from the file, so the field still has to be persisted. The
+  /// lesson is durability, and durability outlived the architecture that
+  /// provoked it.
+  ///
   /// Every production test held a single long-lived `Planet` across its ticks, so
-  /// the suite was green throughout and could not see it by construction.
+  /// the suite was green throughout and could not see the original bug by
+  /// construction.
   final Map<String, double> productionRemainder;
 
   /// Units of one track produced this tick, carrying the remainder forward.

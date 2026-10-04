@@ -145,9 +145,13 @@ class TradeJob {
   ///
   /// Stored rather than recomputed on payout because the premium is a function
   /// of the **order's risk**, which is a function of the hops and run count as
-  /// they were when the order was placed — and the universe is re-parsed every
-  /// tick, so a later recalculation could read a different route. A premium that
-  /// drifts from the quote the player accepted is worse than no premium at all.
+  /// they were when the order was placed. Port pricing and sector adjacency both
+  /// move under the player, so a later recalculation could read a different
+  /// route. A premium that drifts from the quote the player accepted is worse
+  /// than no premium at all.
+  ///
+  /// It is a *quote*, so it is recorded — not derived from live state at the
+  /// moment of payout.
   int premiumPaid = 0;
 
   /// Whether this share carries any cover. Read more often than the enum

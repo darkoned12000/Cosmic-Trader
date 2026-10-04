@@ -412,11 +412,21 @@ class GameTickService {
       // taken this tick's output rather than being counted as part of it.
       //
       // **No player is passed, and that is the point.** The tick loads `players`
-      // but never saves them, so crediting one here would be discarded — and
-      // saving would be a start-of-pass snapshot, the read-modify-write clobber
-      // that ate colonist recruits. Sell proceeds land in the *world's*
-      // `accumulatedRevenue` and its owner withdraws them. See
-      // `PlanetTradeService.advanceAll`.
+      // but never saves them, so crediting one here would be discarded. Sell
+      // proceeds land in the *world's* `accumulatedRevenue` and its owner
+      // withdraws them. See `PlanetTradeService.advanceAll`.
+      //
+      // This is **not** the clobber the shared universe fixed, and the
+      // difference matters. `Sector` and `Planet` are mutable objects in one
+      // shared graph, so a tick pass and a screen are looking at the same
+      // instances. `Player` is immutable: every update is a `copyWith`, and each
+      // holder has its own copy. `players` here is therefore a start-of-pass
+      // snapshot in exactly the old way, and writing one back would discard any
+      // screen-side update made since — the same class of bug the shared graph
+      // removed for the universe, still fully live for players. Crediting a
+      // player from the tick means holding an owed amount and draining it
+      // somewhere the player actually is, which is what
+      // `_applyFreightIndemnity` does in the shell.
       DevProfiler.instance.trace('tick_trade_jobs', () {
         // The shared `_tickRng` is threaded in so the per-run failure roll is
         // testable against a fixed generator and shares the tick's one
@@ -648,8 +658,10 @@ class GameTickService {
       // This used to be gated on `portsRegened > 0 || processed > 0 ||
       // collided > 0`, a hand-maintained list of "things the tick might have
       // changed". Every entry was a way for a real mutation to be silently
-      // discarded: the tick re-parses the whole universe each pass, so anything
-      // not written here is simply gone by the next read.
+      // discarded on the next read. The tick no longer re-parses between passes
+      // — it shares one graph — so the mechanism is narrower than it was, but
+      // not gone: the next read after a restart comes from the file, and
+      // anything unwritten is lost then.
       //
       //  * `collided` was added after a collision happened in the object graph,
       //    was logged as having happened, and was resurrected on the next load —
